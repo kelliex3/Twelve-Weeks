@@ -78,7 +78,7 @@ const MAP_IMAGES = new Set([
   'chase',
   'jackson-market',
 ]);
-const LOGO = 'twelve_weeks_logo';
+const LOGO = IMG_BASE + 'logo-bw.png';        // black-on-white logo (was the Discord app asset 'twelve_weeks_logo')
 const SITE = 'https://twelve-weeks.com';
 
 /**
@@ -249,7 +249,7 @@ function build(s, T, opts) {
   const key = text(s.map);
   const assets = {};
   // corner badge = the clan's faction emblem, hover = week / day / survivors; no clan yet: the logo (with a map picture only)
-  const fac = s.clan === 'WLF' ? 'fac-wlf' : s.clan === 'Seraphites' ? 'fac-sera' : null;
+  const fac = s.clan === 'WLF' ? 'fac-wlf-bw' : s.clan === 'Seraphites' ? 'fac-sera-bw' : null;   // black on white
   if (key && /^[a-z0-9_-]{1,32}$/.test(key) && imgs.has(key)) {
     assets.largeImage = IMG_BASE + key + '.jpg';
     assets.largeText = both(map, statLine) || map || undefined;

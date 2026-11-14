@@ -27,13 +27,13 @@ assert.deepStrictEqual(a.timestamps, { start: 1763054400 });
 assert.strictEqual(a.partySize, 8);
 assert.strictEqual(a.partyMax, 8);
 assert.strictEqual(a.assets.largeImage, ingame.IMG_BASE + 'bookstore.jpg');
-assert.strictEqual(a.assets.smallImage, ingame.IMG_BASE + 'fac-wlf.png'); // the faction badge
+assert.strictEqual(a.assets.smallImage, ingame.IMG_BASE + 'fac-wlf-bw.png'); // the faction badge
 assert.strictEqual(a.assets.smallText, 'WLF · Week 3, day 4 · 14 survivors');
 assert.strictEqual(a.assets.largeText, 'Bookstore · 5 kills · 3 downs · 1 execution');
-assert.strictEqual(card('v=1\nst=match\nmap=bookstore\nmapn=Bookstore\n').assets.smallImage, 'twelve_weeks_logo'); // no clan yet: the logo
+assert.strictEqual(card('v=1\nst=match\nmap=bookstore\nmapn=Bookstore\n').assets.smallImage, 'https://twelve-weeks.com/assets/rpc/logo-bw.png'); // no clan yet: the logo
 a = card('v=1\nst=menu\nclan=Seraphites\nwk=2\n'); // no map: logo big, faction badge
-assert.strictEqual(a.assets.largeImage, 'twelve_weeks_logo');
-assert.strictEqual(a.assets.smallImage, ingame.IMG_BASE + 'fac-sera.png');
+assert.strictEqual(a.assets.largeImage, 'https://twelve-weeks.com/assets/rpc/logo-bw.png');
+assert.strictEqual(a.assets.smallImage, ingame.IMG_BASE + 'fac-sera-bw.png');
 assert.strictEqual(a.assets.smallText, 'Seraphites · Week 2');
 assert.strictEqual(a.buttons[0].url, 'https://twelve-weeks.com');
 assert.strictEqual(card('v=1\nst=match\nmode=sr\nlv=1\n').state, '1 life left');
@@ -41,7 +41,7 @@ assert.strictEqual(card('v=1\nst=match\nmode=sr\nlv=1\n').state, '1 life left');
 // Interrogation: count, then the safebox
 a = card('v=1\nst=match\nmap=hillcrest\nmapn=Hillcrest\nmode=int\nmoden=Interrogation\nin=3\nein=2\ninn=5\n');
 assert.strictEqual(a.state, 'Interrogations 3/5 · enemy 2');
-assert.strictEqual(a.assets.largeImage, 'twelve_weeks_logo'); // no picture for this map: the logo
+assert.strictEqual(a.assets.largeImage, 'https://twelve-weeks.com/assets/rpc/logo-bw.png'); // no picture for this map: the logo
 assert.strictEqual(card('v=1\nst=match\nmode=int\nin=5\ninn=5\nbox=1\n').state, 'Fighting for the safebox');
 
 // Survivors rounds, dead / spectating, post match, menus

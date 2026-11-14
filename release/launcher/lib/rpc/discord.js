@@ -62,7 +62,7 @@ function createDiscordAdapter({ config, log, player }) {
       partyId: activity.partyId,
       partySize: activity.partySize,
       partyMax: activity.partyMax,
-      largeImageKey: activity.assets?.largeImage || 'twelve_weeks_logo',
+      largeImageKey: activity.assets?.largeImage || 'https://twelve-weeks.com/assets/rpc/logo-bw.png',
       largeImageText: activity.assets?.largeText,
       smallImageKey: activity.assets?.smallImage,
       smallImageText: activity.assets?.smallText,
