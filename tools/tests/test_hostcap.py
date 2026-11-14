@@ -156,6 +156,35 @@ check(out[0] == T["B"], "2-player start, both neutral: queue order kept")
 hostcap.MODE = 1
 out = daemon.best_host_order([T["D"], T["A"]])
 check(out[0] == T["D"], "2-player start, mode 1: queue order kept (log only)")
+# a 2-player start also scores the hosts on their pings to online players in no match (the usual join-in-progress arrivals)
+hostcap.MODE = 2
+_ping_bak, _pres_bak, _hc_bak = dict(daemon.PING), dict(daemon.PRES.players), daemon.HOSTCAP
+class _V:                                                      # clean capacity view: D lagged as host, everyone else unknown
+    def verdict(self, t, n): return (2, "lagged") if t == T["D"] else (1, "unknown")
+daemon.HOSTCAP = _V()
+import time as _t
+daemon.PRES.players.clear()
+for _n in ("A", "B", "C"):
+    daemon.PRES.players[T[_n]] = {"name": _n, "last": _t.time()}
+setp("B", "C", 300); setp("B", "A", 280); setp("C", "A", 150)     # B far from both; C and the idle A close
+logs.clear()
+out = daemon.best_host_order([T["B"], T["C"]])
+check(out[0] == T["C"], "2-player start + idle online A: C (worst 300, total 450) hosts, not queue-first B (300 / 580) (%s)" % daemon.tag(out[0]))
+check(any(l[:2] == ("HOST-PICK", "2 players + likely joiners") for l in logs), "logs 'HOST-PICK 2 players + likely joiners'")
+del daemon.PRES.players[T["A"]]
+out = daemon.best_host_order([T["B"], T["C"]])
+check(out[0] == T["B"], "no idle online player: queue order kept (%s)" % daemon.tag(out[0]))
+daemon.PRES.players[T["A"]] = {"name": "A", "last": _t.time()}
+daemon.PING.pop((T["C"], T["A"]), None); daemon.PING.pop((T["A"], T["C"]), None)
+out = daemon.best_host_order([T["B"], T["C"]])
+check(out[0] == T["B"], "idle player with an unknown ping to one of them: not counted, queue order kept (%s)" % daemon.tag(out[0]))
+setp("C", "A", 150); del daemon.PRES.players[T["B"]]                 # (B idle too would put C 300 ms out of the lag window)
+out = daemon.best_host_order([T["D"], T["C"]])
+check(out[0] == T["C"], "capacity still decides inside the window: lagged D loses to unknown C (%s)" % daemon.tag(out[0]))
+daemon.PING.clear(); daemon.PING.update(_ping_bak)
+daemon.PRES.players.clear(); daemon.PRES.players.update(_pres_bak)
+daemon.HOSTCAP = _hc_bak
+hostcap.MODE = 1
 
 # --- daemon wiring: perf_op with trailer (host tx + client loss) needs a live match record; fakes
 class FakeMM:

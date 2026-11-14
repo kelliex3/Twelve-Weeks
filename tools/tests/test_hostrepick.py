@@ -42,7 +42,7 @@ check(any("would migrate to 2" in l for l in LOG), "logged")
 # a noisy single sample resets the streak
 rp, clk, LOG = mk(); clk.adv(125)
 rp.check("m", T0, R, 0, evidence(), 600)
-clk.adv(90); rp.check("m", T0, R, 0, {0: key(283, 494), 1: key(283, 373), 2: key(280, 301)}, 500)
+clk.adv(90); rp.check("m", T0, R, 0, {0: key(283, 494), 1: key(283, 480), 2: key(280, 470)}, 500)   # (totals close: no total-rule gain either)
 clk.adv(90); a, w = rp.check("m", T0, R, 0, evidence(), 400)
 check(a == "hold", "good, bad, good: streak was reset, no migration")
 # target flip resets too
@@ -51,10 +51,10 @@ rp.check("m", T0, R, 0, evidence(), 600)
 clk.adv(90); a, w = rp.check("m", T0, R, 0, {0: key(283, 494), 1: key(150, 200), 2: key(211, 301)}, 500)
 check(a == "hold", "different best target: streak restarts")
 
-# --- worth it: >= 40 ms AND >= 20 % lower
+# --- worth it: >= 40 ms AND >= 20 % lower (same totals: the total rule below stays out of it)
 for cur, best, ok in ((283, 211, True), (283, 250, False), (100, 55, True), (100, 70, False), (60, 15, True), (300, 245, False), (500, 410, False)):
     rp, clk, LOG = mk(); clk.adv(125)
-    sc = {0: key(cur, 400), 1: key(best, 300), 2: key(cur, 400)}
+    sc = {0: key(cur, 400), 1: key(best, 400), 2: key(cur, 400)}
     rp.check("m", T0, R, 0, sc, 600); clk.adv(90)
     a, w = rp.check("m", T0, R, 0, sc, 500)
     check((a == "migrate") == ok, "cur %d best %d -> %s" % (cur, best, "migrate" if ok else "hold"))
@@ -351,6 +351,31 @@ fd, tp = tempfile.mkstemp(suffix=".log"); os.close(fd)
 open(tp, "w").write("\n".join(L2) + "\nother line\n")
 check(repick_stats.main([tp]) == 0, "main reads a log file"); os.remove(tp)
 
+
+
+# --- total rule: a host in South America with two players in Europe. Worst 315 -> 274 (13 %) failed the worst rule; the
+# total 589 -> 429 drops 160 ms (27 %) with a worst that is not worse: migrate. The confirm comes REPICK_CONFIRM_GAP_S later, not a full interval.
+for cur, best, ok, what in (((315, 589), (274, 429), True, "01660bc0: 315/589 -> 274/429"),
+                            ((315, 589), (315, 520), False, "same worst, total -69 ms"),
+                            ((315, 589), (330, 300), False, "worst gets worse, big total gain"),
+                            ((300, 1000), (300, 880), False, "total -120 ms but only 12 %")):
+    rp, clk, LOG = mk(); clk.adv(125)
+    sc = {0: key(*cur), 1: key(*best), 2: key(cur[0], cur[1] + 50)}
+    a1, w1 = rp.check("m", T0, R, 0, sc, 600)
+    clk.adv(hostmig.REPICK_CONFIRM_GAP_S + 1)
+    due2 = rp.due("m", T0)
+    a, w = rp.check("m", T0, R, 0, sc, 570)
+    good = (a == "migrate") == ok and (not ok or (due2 and "total rule" in str(w1)))
+    check(good, "total rule: %s -> %s (confirm due after %d s: %s)" % (what, a, hostmig.REPICK_CONFIRM_GAP_S, due2))
+# a check without 'would migrate' keeps the full interval
+rp, clk, LOG = mk(); clk.adv(125)
+rp.check("m", T0, R, 0, {0: key(200, 400), 1: key(200, 400), 2: key(200, 400)}, 600)
+clk.adv(hostmig.REPICK_CONFIRM_GAP_S + 1)
+check(not rp.due("m", T0), "no 'would migrate': next check only after the full %d s interval" % hostmig.REPICK_INTERVAL)
+# 2 players: one link - neither rule moves the host
+rp, clk, LOG = mk(); clk.adv(125)
+a, w = rp.check("m", T0, frozenset({0, 1}), 0, {0: key(315, 315), 1: key(100, 100)}, 600)
+check(a == "hold", "2 players: hold")
 
 print("\n%d failure(s)" % len(FAILS))
 sys.exit(1 if FAILS else 0)

@@ -780,6 +780,12 @@ REPICK_MIN_LEFT = _envi("T2R_HOST_REPICK_MIN_LEFT_S", 90)   # never with less th
 REPICK_MIN_GAIN_MS = _envi("T2R_HOST_REPICK_GAIN_MS", 40)   # the best host's worst ping must be this much lower ...
 REPICK_MIN_GAIN_FRAC = _envi("T2R_HOST_REPICK_GAIN_PCT", 20) / 100.0    # ... and this fraction lower than the current host's
 REPICK_CONFIRM = _envi("T2R_HOST_REPICK_CONFIRM", 2)        # same target on this many consecutive checks
+REPICK_CONFIRM_GAP_S = _envi("T2R_HOST_REPICK_CONFIRM_GAP_S", 30)  # after a 'would migrate' the confirming check comes this soon (not a full interval)
+# Example: a host in South America with two players in Europe; worst ping 315 -> 274 ms with a European host = 13 %, under the 20 % rule,
+# so it stayed although the two European players talked through South America, 585 ms instead of 155): with one far player the worst ping is the
+# far player's link whoever hosts. A host whose worst ping is not worse and whose TOTAL is clearly lower also wins.
+REPICK_TOTAL_GAIN_MS = _envi("T2R_HOST_REPICK_TOTAL_GAIN_MS", 100)    # the total ping must drop by this much ...
+REPICK_TOTAL_GAIN_FRAC = _envi("T2R_HOST_REPICK_TOTAL_GAIN_PCT", 20) / 100.0    # ... and this fraction of the current host's total
 REPICK_GAP_S = _envi("T2R_HOST_REPICK_GAP_S", 180)          # a 2nd migration needs this long since the 1st
 REPICK_MAX = _envi("T2R_HOST_REPICK_MAX", 2)                # per match; the 2nd only when the roster changed since the 1st
 # Capacity override (match 82599fb6: a ~1 Mbit host saturated, every ping to it 83 -> 790-970 ms, nothing handed over: the ping score
@@ -971,7 +977,10 @@ class HostRepick:
             self._d = ("guard", "total", best)
             self._say(mid, "hold: host is fine (worst %d ms, best other has a higher total %d > %d ms)" % (cur[0], cands[best][1], cur[1]))
             return "hold", "total worse"
-        if best == host or cands[best][0] > cur[0] - REPICK_MIN_GAIN_MS or cands[best][0] > cur[0] * (1 - REPICK_MIN_GAIN_FRAC):
+        worst_gain = best != host and cands[best][0] <= cur[0] - REPICK_MIN_GAIN_MS and cands[best][0] <= cur[0] * (1 - REPICK_MIN_GAIN_FRAC)
+        total_gain = (best != host and cands[best][0] <= cur[0] and cur[1] - cands[best][1] >= REPICK_TOTAL_GAIN_MS
+                      and cands[best][1] <= cur[1] * (1 - REPICK_TOTAL_GAIN_FRAC))
+        if not (worst_gain or total_gain):
             r["streak"] = (None, 0)
             self._d = ("stay", "best" if best == host else "small", best)
             self._say(mid, "hold: host is fine (worst %d ms%s)" % (cur[0], "" if best == host else ", best other %d ms - not worth it" % cands[best][0]))
@@ -984,10 +993,12 @@ class HostRepick:
         n = n + 1 if tgt == best else 1
         r["streak"] = (best, n)
         lab = (labels or {}).get(best, best)
-        text = "would migrate to %s: worst %d -> %d ms (total %d -> %d), check %d of %d" % (lab, cur[0], cands[best][0], cur[1], cands[best][1], n, REPICK_CONFIRM)
+        text = "would migrate to %s: worst %d -> %d ms (total %d -> %d%s), check %d of %d" % (lab, cur[0], cands[best][0], cur[1], cands[best][1],
+                                                                                    "" if worst_gain else ", total rule", n, REPICK_CONFIRM)
         self._d = ("would", "confirm" if n < REPICK_CONFIRM else "go", best, n)
         self._say(mid, text)
         if n < REPICK_CONFIRM:
+            r["next"] = min(r["next"], now + REPICK_CONFIRM_GAP_S)
             return "hold", text
         return "migrate", best
 

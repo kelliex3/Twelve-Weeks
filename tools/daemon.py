@@ -3547,10 +3547,39 @@ def best_host_order(players):
             i = out.index(a[0]); out[0], out[i] = out[i], out[0]
             log("NO-HOST", tag(pl[0]), "may not host -", tag(out[0]), "hosts")
         return out
+    def likely_joiners(pl):         # online players in no live match (post-match screens, menus): the usual join-in-progress arrivals
+        try:
+            busy = set()
+            for mid, mp in list(MM.matches.items()):    # (team_order runs under MM.lock: read the dicts, never take the lock)
+                if mid in MM.ended:
+                    continue
+                dep = MM.departed.get(mid, ())
+                busy.update(t for t in mp if t not in dep)
+            return [t for t in PRES_TOKENS() if t not in pl and t not in busy]
+        except Exception as e:
+            log("HOST-PICK joiners ERR", repr(e))
+            return []
     def cap_first(pl):              # no ping pick: capacity alone (T2R_HOST_CAP=2) - a player that lagged as host never hosts before one that did not
         out = first_allowed(pl)
         if hostcap.MODE < 2 or len(out) < 2:
             return out
+        # 2 players = one link, the ping cannot choose between them - but a third player often joins in progress
+        # seconds later (often queued the second the match formed). Online players in no match whose pings to both are known count as
+        # likely joiners: the host is scored on the pings to them too (worst, then total) before capacity decides as below.
+        if len(out) == 2 and pair_ping(out[0], out[1]) is not None:
+            try:
+                a = host_allowed(out)
+                extra = [t for t in likely_joiners(out) if all(pair_ping(t, c) is not None for c in out)]
+                if extra and len(a) == 2:
+                    view = out + extra
+                    keyed = [(c, hostmig.host_key([pair_ping(c, o) for o in view if o != c], perf_penalty(c))) for c in a]
+                    alt, lines = hostcap.pick(keyed, max(len(view), 3), HOSTCAP.verdict, label=tag)
+                    log("HOST-PICK", "2 players + likely joiners", [tag(t) for t in extra], "|", "; ".join(lines), "->", tag(alt))
+                    if alt and alt != out[0]:
+                        i = out.index(alt); out[0], out[i] = out[i], out[0]
+                    return out
+            except Exception as e:
+                log("HOST-PICK joiners ERR", repr(e))
         try:
             n = max(len(out), 3)                # a 2-player match grows by join in progress: judge for at least 3
             a = host_allowed(out)
