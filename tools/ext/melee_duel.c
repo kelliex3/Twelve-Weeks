@@ -204,6 +204,14 @@ static struct {
     uint64_t mv_id[MDU_MOVES_N]; int mv_cd[MDU_MOVES_N], init;
     uint64_t hold_until, vsw_end[T2R_MAX_PEERS], vsw_at[T2R_MAX_PEERS]; int n_dodged;   // beat 2: engaged-hold after a dodge / counter, the victim-side window ends of the partner's duel swings
 } g_mdu = {.pair_row = -1, .slot = -1};
+// ps59: SP always plays the synced -hit pair, whatever the enemy placement, so SP's own reaction table has no 2h row. Before, a wall
+// along the victim's recoil cut the recoil to a short hand-off, ps47 then sent the plain contact (hand-off < 0.52 s), and the victim
+// played a generic 1h head reaction for a 2h blow. Now a combo -hit pair whose ONLY problem is a wall on the victim's recoil (floors
+// fine, room >= CD49_ROOM_M) plays with its full hand-off, the travel clamp holding the victim at the wall (paired.c 'pair wall stop'),
+// as ps49 does for finishers - no cut, no ps47 plain contact. A step at the end spot is still cut / plain as before.
+// t2r-wall-pair-ps59-old.txt = old. Proof line "ps59 wall-held".
+static int g_mdu59_wall;           // ps59: the current swing's pair meets a wall only on the victim's recoil - played whole, held at the wall
+static int mdu59_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-wall-pair-ps59-old.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
 static uint64_t g_mdu49_vtc[T2R_MAX_PEERS];   // ps49: the partner's swing contact on our clock, as its SWING message said (before the window trims)
 static uint64_t mdu49_vic_contact(uint32_t slot) { return slot < T2R_MAX_PEERS ? g_mdu49_vtc[slot] : 0; }
 static uint64_t mdu49_att_contact(uint32_t slot) { return g_mdu.sw_on && g_mdu.slot == (int)slot && !g_mdu.sw_done ? g_mdu.sw_tc : 0; }
@@ -1802,8 +1810,8 @@ static void mdu_swing_note(int started, uint64_t move) {
     }
     if (g_mdu.slot < 0) { mdu_engage(s, "our swing", 0); uint8_t p[3] = {(uint8_t)r, (uint8_t)m->set, (uint8_t)bq_cap_flags()}; mdu_send(MDUO_ENGAGE, p, 3); }
     uint64_t h = puppet_handle((uint32_t)s);
-    mdl_begin_row(r, SID_PLAYER, -1, m->tc_ms);                             // Measure this row's striking hand + angle on our body (melee_dodge.c)
-    g_mdu.sw_on = 1; g_mdu.sw_row = r; g_mdu.sw_t0 = now; g_mdu.sw_tc = now + m->tc_ms; g_mdu.sw_done = 0; g_mdu.eng_contact = 0; g_mdu.sw_d0 = d; g_mdu.gate = -1; g_mdu.gate_tries = 0; g_mdu.gate_short_s = 0.0f;
+    mdl_begin_row(r, SID_PLAYER, -1, m->tc_ms);                             // measure this row's striking hand + angle on our body (melee_dodge.c)
+    g_mdu.sw_on = 1; g_mdu.sw_row = r; g_mdu.sw_t0 = now; g_mdu.sw_tc = now + m->tc_ms; g_mdu.sw_done = 0; g_mdu.eng_contact = 0; g_mdu.sw_d0 = d; g_mdu.gate = -1; g_mdu.gate_tries = 0; g_mdu.gate_short_s = 0.0f; g_mdu59_wall = 0;
     g_mdu_sw_opener = m->step <= 1 && now - g_mdu_next_ms > 200;
     if (mdu_p32_row(r) >= 3) {   // ps33: a 1h blunt blow 5 / 6
         g_p33_done = 1; if (mdu_p32_row(r) == 3) g_p33_hand = !strcmp(m->move, "1hblunt-stun-breaker-combo-left-1");   // (the next blow 5 takes the other hand)
@@ -2252,8 +2260,12 @@ static void mdu_gate_poll(int s, uint64_t h, const float *vl, const float *me) {
         }
         if (got > 0.0f) {
             g_mdu.gate_short_s = got * vd; g_mdu.gate = -1;
+            g_mdu59_wall = !mdu59_off() && (g_pg_last_bad & 2) && !(g_pg_last_bad & 8) && g_pg_last_vwall >= CD49_ROOM_M;     // ps59: a wall only - played whole at the contact
             DULOG("DUEL: u%04x REACT space for %s: %s %.2f m along the victim's recoil - recoil cut to a %.2f s hand-off (%.2f m, was %.2f s), gating that path", g_mdu.uid, CD_PAIRS[cd].name,
                   (g_pg_last_bad & 2) ? "the wall" : "a step at the end spot; room", (double)((g_pg_last_bad & 2) ? g_pg_last_vwall : room), (double)g_mdu.gate_short_s, (double)gd, (double)(ph0 * vd));
+        } else if (!mdu59_off() && (g_pg_last_bad & 2) && !(g_pg_last_bad & 8) && g_pg_last_vwall >= CD49_ROOM_M) {
+            g_mdu.gate = 1; g_mdu59_wall = 1;
+            DULOG("DUEL: ps59 wall-held u%04x %s: the wall %.2f m along the victim's recoil is closer than its first 0.30 s, floors fine - the pair plays whole, the travel clamp holds the victim at the wall (SP always plays it)", g_mdu.uid, CD_PAIRS[cd].name, (double)g_pg_last_vwall);
         } else DULOG("DUEL: u%04x REACT space for %s: the wall %.2f m along the victim's recoil is closer than its first 0.30 s - no room for the pair", g_mdu.uid, CD_PAIRS[cd].name, (double)g_pg_last_vwall);
     }
 }
@@ -2844,7 +2856,8 @@ static void mdu_contact(uint64_t now) {
     }
     if (g_ps.role == 2) { DULOG("DUEL: u%04x contact dropped: we are the victim half of a running pair (a pin escape / counter) - our press must not cut it", g_mdu.uid); g_mdu.hit_ms = now; return; }   // (the pinner's mashed press aborted the escape pair, 'a new move')
     float end_s = mdu_end_s(m, h);
-    if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < end_s) { DULOG("DUEL: u%04x %s: victim hand-off %.2f s (was %.2f s) - its recoil stops short of the wall", g_mdu.uid, m->move, (double)g_mdu.gate_short_s, (double)end_s); end_s = g_mdu.gate_short_s; }
+    if (g_mdu59_wall && !mdu59_off() && g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < end_s) { DULOG("DUEL: ps59 wall-held u%04x %s: the full hand-off %.2f s (the wall cut would be %.2f s) - the victim half plays whole, the travel clamp holds it at the wall", g_mdu.uid, m->move, (double)end_s, (double)g_mdu.gate_short_s); }
+    else if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < end_s) { DULOG("DUEL: u%04x %s: victim hand-off %.2f s (was %.2f s) - its recoil stops short of the wall", g_mdu.uid, m->move, (double)g_mdu.gate_short_s, (double)end_s); end_s = g_mdu.gate_short_s; }
     g_mdu_chain = (g_mdu_chain_slot == s && now - g_mdu_chain_ms < 1300) ? g_mdu_chain + 1 : 1; g_mdu_chain_ms = now; g_mdu_chain_slot = s;
     if (g_mdu_chain >= MDU_VIC_FREE_STEP && end_s > MDU_VIC_FREE_S) { DULOG("DUEL: u%04x blow %d of the chain: the victim is free at %.2f s (was %.2f) - room to dodge / run", g_mdu.uid, g_mdu_chain, (double)MDU_VIC_FREE_S, (double)end_s); end_s = MDU_VIC_FREE_S; }
     // (some hits did nothing - no damage, no hit reaction): a wall cut the
