@@ -28,7 +28,7 @@ function post(url, body, onProgress, opts = {}) {
         headers: {
           'Content-Type': 'application/zip',
           'Content-Length': body.length,
-          'User-Agent': 'Factions2-Launcher',
+          'User-Agent': 'TwelveWeeks-Launcher',
         },
         timeout: opts.timeout || 120000,
       },

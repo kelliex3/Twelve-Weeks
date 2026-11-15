@@ -540,7 +540,7 @@ def hide_findmatch_credits(wdir):
     return n
 
 
-def rename_factions2(wdir):
+def rename_brand(wdir):
     """The boat menu's MULTIPLAYER button reads TWELVE WEEKS, and every "THE LAST OF US MP" text reads "THE LAST OF US TWELVE WEEKS"
     (all widget pages; case kept: upper / title)."""
     import re as _re

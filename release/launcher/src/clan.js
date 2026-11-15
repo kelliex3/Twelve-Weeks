@@ -381,7 +381,7 @@ const Clan = (() => {
   function summary(r) {   // title block + the bottom-left survivors box of the home screen
     lastSummary = r;
     const ok = r && r.ok && r.hasClan && r.status === 'alive';
-    const spm = document.body.classList.contains('sp-mode');   // SP: the plain game's title, no FACTIONS II line
+    const spm = document.body.classList.contains('sp-mode');   // SP: the plain game's title, no TWELVE WEEKS line
     $('t-fac').textContent = ok ? T(r.factionName) : ''; $('t-fac').hidden = !ok; $('t-sub').hidden = ok || spm;
     $('t-main').textContent = ok ? T('WEEK {w}: DAY {d}', { w: r.week, d: r.dayOfWeek }) : spm ? 'THE LAST OF US PART II' : 'THE LAST OF US';
     if (r && r.ok && r.hasClan && typeof Feed !== 'undefined') Feed.setClan(r);

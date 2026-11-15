@@ -28,7 +28,7 @@ import sp_maps  # noqa: E402
 OUT = r".\maps-edit"
 SHIPPED = ["train-station", "hospital-ellie", "wilds-houses", "capitol-shops", "into-the-city", "overpass", "p1-bookstore", "chase", "jackson-market",
            "downtown", "jackson-suburbs", "outpost"]          # SP-section maps (data/<key>-spawns.json + sp_maps.json)
-STOCK = ["forest", "gas-station", "school", "shipyard", "resort", "seraphite-camp", "houses"]   # stock Factions II maps (pak-driven, editor_stock.py)
+STOCK = ["forest", "gas-station", "school", "shipyard", "resort", "seraphite-camp", "houses"]   # stock maps (pak-driven, editor_stock.py)
 ALL = SHIPPED + STOCK
 
 

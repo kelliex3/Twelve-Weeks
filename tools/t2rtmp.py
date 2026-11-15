@@ -1,4 +1,4 @@
-"""Temp-file hygiene for every Factions II tool and test (%TEMP% grew to 95 GB, mostly leaked tempfile.mkdtemp() dirs of tests).
+"""Temp-file hygiene for every tool and test (%TEMP% grew to 95 GB, mostly leaked tempfile.mkdtemp() dirs of tests).
 
 `import t2rtmp` (once, before the first tempfile call) does four things:
   * T2R_TMP=<dir>      all temp files of this process (and of its children: TMP/TEMP/TMPDIR) go there instead of %TEMP%

@@ -25,13 +25,13 @@ function prepareRuntime(app) {
     process.env.F2_NO_GAME = process.env.F2_NO_GAME || '1';
     process.env.F2_MUTE = '1';
     if (!process.env.F2_SHOT) {
-      process.env.F2_USERDATA = path.join(os.tmpdir(), 'factions2-launcher-dev');
+      process.env.F2_USERDATA = path.join(os.tmpdir(), 'twelve-weeks-launcher-dev');
     }
   }
 
   if (process.env.F2_USERDATA) app.setPath('userData', process.env.F2_USERDATA);
   else if (process.env.F2_SHOT || process.env.F2_NO_GAME) {
-    app.setPath('userData', path.join(os.tmpdir(), 'factions2-launcher-test'));
+    app.setPath('userData', path.join(os.tmpdir(), 'twelve-weeks-launcher-test'));
   } else if (app.isPackaged) {
     // the product was renamed (Twelve Weeks); Electron derives userData from the app name, so pin the old folder: settings and logins stay
     app.setPath('userData', path.join(app.getPath('appData'), install.ROOT_NAME));

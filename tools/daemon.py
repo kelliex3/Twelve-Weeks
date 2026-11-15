@@ -6860,7 +6860,7 @@ def handle_batch(conn, addr, st, batch):
                 except Exception as e: log("jip: ERR", repr(e))
     elif 0x0f in ops:                                     # BOOT handshake
         if not st["authed"] and st["token"] and len(st["token"]) == 64 and is_banned(st["token"], st["name"]):
-            # FACTIONS II pressed on the boat menu: the client opens the session and logs in. Refuse right here: the note (op 0x11,
+            # TWELVE WEEKS pressed on the boat menu: the client opens the session and logs in. Refuse right here: the note (op 0x11,
             # shown by the MP-menu page tick) + 0x0d with payload 2 = the client's MM_REJECT variant that sets winmm's flag 0x180167979, which
             # the same page tick turns into FUN_180065480 = quit to the title (boat menu). Nothing is queued / announced / counted online.
             log("BOOT", addr, "refused (banned)", tag(st["token"]), "steam", BRIDGES.steamid(st["token"]) or token_steamid(st["token"]))

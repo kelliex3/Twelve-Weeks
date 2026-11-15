@@ -246,7 +246,7 @@ body.sp-mode .rowbar.st:has(#srv-state) { display: none !important; }
 /* testing-server tag (title block) and the confirmation dialog (veil like the startup overlay, panel like the alert) */
 #test-tag { margin-top: 8px; white-space: nowrap; display: inline-block; padding: 3px 10px; font-size: 11px; font-weight: 700; letter-spacing: .22em; color: #fff; background: rgba(14, 16, 18, .94); border: 1px solid var(--panel-line); border-left: 4px solid var(--accent); }
 #test-tag[hidden] { display: none; }
-/* the tag below FACTIONS II grows the title block: the menu moves down by the tag's height so it never clips into the first button */
+/* the tag below the title grows the title block: the menu moves down by the tag's height so it never clips into the first button */
 #title:has(#test-tag:not([hidden])) ~ #menu { top: 160px; }
 #title:has(#test-tag:not([hidden])):has(#t-sub:not([hidden])) ~ #menu { top: 172px; }
 #confirm { position: absolute; inset: 0; z-index: 70; background: rgba(5, 6, 7, .84); display: flex; align-items: center; justify-content: center; }

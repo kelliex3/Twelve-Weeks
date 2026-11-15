@@ -3344,7 +3344,7 @@ static void feature_weapon_pose_diag(void) {
 }
 
 // ---------------------------------------------------------------- visible armour
-// Factions 2's armour meshes (actor mp-ellie-helmet-lvl-1 / mp-ellie-torso-armored-lvl-1, loaded
+// The cut multiplayer's armour meshes (actor mp-ellie-helmet-lvl-1 / mp-ellie-torso-armored-lvl-1, loaded
 // with every MP level by pak68.txt) worn while a player has armour: ours (g_armor) and every
 // puppet whose MSG_ARMOR says so. The game's gas-mask recipe (anim-gas-mask-impl): spawn-object(
 // art, SimpleAttachable, 0, 0, 1, 0, 0, 0, 0), attach(obj, character, attach point, 0.0);
@@ -3472,7 +3472,7 @@ static int armor_rigid_mask(uint64_t chr, int hero, uint64_t obj[2], int mask, i
 // Logs "armor rig: ...".
 #define ARMOR_RIG_SUFFIX "-t2r-arm"
 static const char *const ARMOR_RIG_MESH[2] = {"slaver-male-helmet-02", "slaver-vest-04-torso"};   // = dc_data_patches.ARMOUR_RIG_HELMET / _TORSO
-// The FEMALE looks (rows 12..15: they wore the old Factions 2 blue rigid meshes) have their own pieces: the same Rattler
+// The FEMALE looks (rows 12..15: they wore the old cut-multiplayer blue rigid meshes) have their own pieces: the same Rattler
 // helmet + plate carrier in their base-female-skel authoring (tools/models/armour_female.py), other part names (ARMOR_RIG_MESH_F).
 // Their twins are optional (a build without T2R_FEMALE / with T2R_NO_FEMALE_ARMOUR has none: those looks keep the rigid attach).
 static const char *const ARMOR_RIG_MESH_F[2] = {"slaver-fhelm1-rattler-helmet-02", "slaver-fvest1-01-torso"};   // = dc_data_patches.ARMOUR_RIG_F_HELMET / _TORSO
@@ -39395,7 +39395,7 @@ static void install_edge_guard(void) {
     FlushInstructionCache(GetCurrentProcess(), site, 10);
     xlog("edge guard installed");
 }
-// Level entity-table lookup guard (exe+1e9f87c, a job thread, the frame the menu world finished loading after "quit MP -> FACTIONS II again"):
+// Level entity-table lookup guard (exe+1e9f87c, a job thread, the frame the menu world finished loading after "quit MP -> TWELVE WEEKS again"):
 // the find-by-id walker FUN_141e9f810(level, id, out) reads [[[level+0x130]+0x108]+0x538] = an entity list {+0x10 count, +0x38 array of entity*} and
 // loops array[i]. The list pointer was STALE (the reloaded menu world's slot: the memory read back as string data - "blood-loc..." - with
 // +0x38 = 0xec00), so array[0] faulted. The walker's own answer for "not here" is *out = 0 / return 0 (exe+1e9f8a3), which the caller
@@ -41310,7 +41310,7 @@ static void feature_test_autofind(void) {
     int st = *(volatile int *)VMA(0x180167968);
     typedef void (*fn_push)(uint64_t, const char *);
     // the boat (title) screen: its pages live on their OWN page stack 0x1f5962a2ce9803c8 (not the MP menu stack 0xeb22d2a512e236b3 that
-    // top_page() reads, hence top_page()==0 there). The FACTIONS II button (page-game-select item buttonMultiplayer, tags.action
+    // top_page() reads, hence top_page()==0 there). The TWELVE WEEKS button (page-game-select item buttonMultiplayer, tags.action
     // "push-fullscreen to1/connecting") just pushes to1/connecting on that stack; winmm's match page tick (FUN_180063370, ctx+0x2b80 == 0)
     // polls the top of that stack and, when it is page 0x5e9c41f501722276 (to1/connecting), runs FUN_180065240 -> FUN_180055fe0 (starts
     // the net connect) and later FUN_18000b7a0 (MP menu level) with ctx+0x2b80 = 1. So push the same page on the same stack.
@@ -41323,7 +41323,7 @@ static void feature_test_autofind(void) {
         if (last_boat && now - last_boat < 30000) return;
         last_boat = now;
         ((fn_push)VMA(0x18000E040))(0x1f5962a2ce9803c8ULL, "to1/connecting");
-        xlog("test autofind: boat screen (title stack top %llx) - pushed to1/connecting on the title stack (= FACTIONS II)", (unsigned long long)btop);
+        xlog("test autofind: boat screen (title stack top %llx) - pushed to1/connecting on the title stack (= TWELVE WEEKS)", (unsigned long long)btop);
         return;
     }
     static ULONGLONG ev_since;                    // the clan event page (works on builds without ev_tick's own test close too)
@@ -55385,7 +55385,7 @@ static void ls_tick(void) {                    // every frame (also while the le
 // No native starts a gui2 animation label or sets a rotation, so tools/features/load_indicator_widgets.py bakes LI_STEPS copies
 // of the sprite at fixed rotations (group "t2rSpin", hidden) and this shows the copy for the current time. Two surfaces:
 //   0  the engine's loading.widget, up whenever LoadingScreen is enabled (boot / menu-world load, menu <-> match, map change)
-//   1  to1/connecting (the FACTIONS II entry page, which can stay on screen over the menu world's load)
+//   1  to1/connecting (the TWELVE WEEKS entry page, which can stay on screen over the menu world's load)
 // No progress bar: the engine reports no measurable progress for these loads (the menu world's "levels spawned" is a flag, the
 // stock taskProgressBar stays empty), and a made-up one would lie. Cost while hidden: one byte read + a page poll every 100 ms.
 // Stuck guards: gone with its surface, hidden at once in a match (state 6) unless our LOADING screen still owns it, LI_MAX_MS cap.
@@ -55427,7 +55427,7 @@ static void li_surface(int s, int up, uint64_t key, uint64_t now) {
         if (!L->on) {
             L->on = 1; L->t0 = now;
             xlog("load indicator: shown on the %s (%s, match state %d)", s ? "entry page" : "loading screen",
-                 s ? "FACTIONS II entry" : g_ls_own ? "match load" : g_ms_fade_st ? "menu world load" : "engine load", match_substate());
+                 s ? "TWELVE WEEKS entry" : g_ls_own ? "match load" : g_ms_fade_st ? "menu world load" : "engine load", match_substate());
         }
     }
     if (now - L->t0 > LI_MAX_MS) {

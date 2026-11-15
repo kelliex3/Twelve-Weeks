@@ -1,7 +1,7 @@
 # Adds art-only spawners to a level pak so their art groups (actor packs) load with the level:
 # each "name=artgroup" argument clones spawner -Src as <name> with ArtGroup <artgroup>,
 # AutoSpawn on (spawned 500 m below the origin; art of non-spawning spawners is not loaded). spawn-object(<artgroup>, ...) can then create copies
-# at runtime (Factions 2 armor meshes). Used by build_dll.py on the staged mod pak.
+# at runtime (the cut multiplayer's armor meshes). Used by build_dll.py on the staged mod pak.
 param([string]$Pak, [string]$Src, [string[]]$Add)
 $srcName = $Src
 $u = if ($env:T2R_SCENE_EDITOR) { $env:T2R_SCENE_EDITOR } else { Join-Path $PSScriptRoot "../local/SceneEditor/unpacked" }

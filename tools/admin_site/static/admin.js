@@ -1,5 +1,5 @@
 "use strict";
-// Factions II admin: single page, polls the local API every 3 s; a view is only re-rendered when its HTML changed (no flicker).
+// Twelve Weeks admin: single page, polls the local API every 3 s; a view is only re-rendered when its HTML changed (no flicker).
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const TABS = ["overview", "players", "matches", "teams", "clans", "reports", "logs", "notes"];

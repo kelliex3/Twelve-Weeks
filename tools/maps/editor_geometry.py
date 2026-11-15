@@ -23,7 +23,7 @@ KEYS = ["train-station", "hospital-ellie", "wilds-houses", "capitol-shops", "int
         "downtown", "jackson-suburbs", "outpost",
         "forest", "gas-station", "school", "shipyard", "resort", "seraphite-camp", "houses"]
 STOCK = {"forest": "forest", "gas-station": "gas-station", "school": "school", "shipyard": "shipyard", "resort": "resort",
-         "seraphite-camp": "seraphite-camp", "houses": "rescue-jesse-houses"}      # stock Factions II maps: image key -> pool_nav key (level list = the mod's level-sets-test.bin set)
+         "seraphite-camp": "seraphite-camp", "houses": "rescue-jesse-houses"}      # stock maps: image key -> pool_nav key (level list = the mod's level-sets-test.bin set)
 STOCK_SKIP = ("-const", "sky-", "audio", "texture-adjust", "-fx", "part-", "to1-pvp-", "-render", "cubemaps", "-vis", "accessibility", "ibl-shared", "lightning")
 CACHE = os.path.join(OUT, "_geometry-cache")       # one raw copy of every extracted level; the map folders hard-link it (same bytes on disk once)
 SKIP = ("-const", "sky-", "audio", "texture-adjust", "-fx", "part-", "to1-pvp-", "t2r-", "-render", "cubemaps", "-vis", "accessibility", "library-path-wide", "library-path-low")   # The -wide / -low library-path levels are distant-LOD stand-ins that overlap the real buildings in the editor
