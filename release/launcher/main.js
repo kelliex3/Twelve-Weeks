@@ -42,6 +42,7 @@ const send = (channel, data) => {
 const getWindow = () => mainWindow;
 
 const log = createLogger({ logDir: runtime.logDir, send });
+for (const m of runtime.migrationLog || []) log(m);
 const config = createConfigStore({ runtime, log });
 const locale = createLocale({ app, config, rootDir: __dirname });
 const paths = createPaths({ app, runtime, config });
@@ -119,7 +120,17 @@ async function start() {
     `Launcher ${runtime.launcherVersion} started${runtime.installRoot ? ' (fixed root ' + runtime.installRoot + ')' : ''}`,
   );
   if (runtime.installRoot) {
-    install.renameLegacyShortcuts(process.env, log); // a payload that arrives without a fresh bootstrap still renames the old links
+    // links and pins that still start the install from before the product rename (a bootstrap that could not reach them) are retargeted
+    install.migrateShortcuts({
+      root: runtime.installRoot,
+      legacyRoot: install.legacyInstallRoot(),
+      readShortcut,
+      writeShortcut: (file, opts) => {
+        if (!shell.writeShortcutLink(file, 'replace', opts))
+          throw new Error('writeShortcutLink failed: ' + file);
+      },
+      log,
+    });
     install.refreshIcon({
       root: runtime.installRoot,
       iconSrc: path.join(__dirname, 'assets', 'icon.ico'),
@@ -138,7 +149,10 @@ async function start() {
         }
       },
     });
-    setTimeout(() => install.prune(runtime.installRoot), 20000);
+    setTimeout(() => {
+      install.prune(runtime.installRoot);
+      install.removeLegacyRoot({ root: runtime.installRoot, legacyRoot: install.legacyInstallRoot(), log });
+    }, 20000);
   }
   // the main menu's presence (the renderer re-sends it per screen); never awaited, a missing Discord must not hold the start
   if (!runtime.isScreenshot)
@@ -155,6 +169,15 @@ async function start() {
 }
 
 nativeTheme.themeSource = 'dark';
+
+/** Target and AppUserModelID of a .lnk, or null (Windows only). */
+function readShortcut(file) {
+  try {
+    return shell.readShortcutLink(file);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * A portable exe (first run after the old layout, or a freshly downloaded update) installs itself into the fixed root and hands over.
@@ -183,6 +206,8 @@ async function bootstrapIntoRoot() {
     );
     const exe = install.bootstrap({
       root,
+      legacyRoot: install.legacyInstallRoot(),
+      readShortcut,
       version: app.getVersion(),
       execPath: process.execPath,
       resourcesPath: process.resourcesPath,

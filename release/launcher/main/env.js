@@ -29,12 +29,17 @@ function prepareRuntime(app) {
     }
   }
 
+  const migrationLog = [];
   if (process.env.F2_USERDATA) app.setPath('userData', process.env.F2_USERDATA);
   else if (process.env.F2_SHOT || process.env.F2_NO_GAME) {
     app.setPath('userData', path.join(os.tmpdir(), 'twelve-weeks-launcher-test'));
   } else if (app.isPackaged) {
-    // the product was renamed (Twelve Weeks); Electron derives userData from the app name, so pin the old folder: settings and logins stay
-    app.setPath('userData', path.join(app.getPath('appData'), install.ROOT_NAME));
+    // pinned to ROOT_NAME (the shim's app name used to differ); the folder from before the product rename moves here on the first start
+    const ud = install.migrateUserData({
+      appData: app.getPath('appData'),
+      log: (m) => migrationLog.push(m),
+    });
+    app.setPath('userData', ud.dir);
   }
 
   const userData = app.getPath('userData');
@@ -64,6 +69,7 @@ function prepareRuntime(app) {
     // the payload's own package.json: under the fixed-root shim app.getVersion() is the shim's
     launcherVersion: require('../package.json').version,
     installRoot: installed ? install.installRoot() : null,
+    migrationLog, // (written to the log once the logger exists)
     buildDate,
   };
 }

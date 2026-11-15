@@ -14,7 +14,7 @@ const w = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.wri
 
 // fake portable unpack dir (what electron-builder extracts to %TEMP%): exe, dll, resources\app.asar
 const unpack = mk('unpack');
-w(path.join(unpack, 'Factions II Launcher.exe'), 'EXE-RUNTIME');
+w(path.join(unpack, 'Twelve Weeks Launcher.exe'), 'EXE-RUNTIME');
 w(path.join(unpack, 'ffmpeg.dll'), 'dll');
 w(path.join(unpack, 'locales', 'en-US.pak'), 'pak');
 w(path.join(unpack, 'resources', 'app.asar'), 'ASAR-1');
@@ -28,7 +28,7 @@ const lnks = [];
 const run = (ver, asarText, dir = portable) => {
   w(path.join(unpack, 'resources', 'app.asar'), asarText);
   return inst.bootstrap({
-    root, version: ver, execPath: path.join(unpack, 'Factions II Launcher.exe'), resourcesPath: path.join(unpack, 'resources'),
+    root, version: ver, execPath: path.join(unpack, 'Twelve Weeks Launcher.exe'), resourcesPath: path.join(unpack, 'resources'),
     env: { PORTABLE_EXECUTABLE_DIR: dir, APPDATA: mk('appdata'), USERPROFILE: mk('profile') },
     writeShortcut: (f, o) => lnks.push({ f, o }), log: () => {}, tmpDir: mk('faketmp'),
   });
@@ -36,7 +36,9 @@ const run = (ver, asarText, dir = portable) => {
 
 // 1. first run (migration from the portable layout)
 const exe = run('0.1.16', 'ASAR-1');
-assert.strictEqual(exe, path.join(root, 'Factions II Launcher.exe'));
+assert.strictEqual(exe, path.join(root, 'Twelve Weeks Launcher.exe'));
+assert.strictEqual(inst.AUMID, 'org.twelveweeks.launcher');
+assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root, 'resources', 'app', 'package.json'), 'utf8')).name, 'twelve-weeks-launcher');
 assert.strictEqual(fs.readFileSync(exe, 'utf8'), 'EXE-RUNTIME');
 assert(fs.existsSync(path.join(root, 'locales', 'en-US.pak')), 'runtime files copied');
 assert(!fs.existsSync(path.join(root, 'resources', 'app.asar')), 'the payload is not part of the runtime');
@@ -82,19 +84,19 @@ assert.strictEqual(inst.cleanEnv({ PORTABLE_EXECUTABLE_FILE: 'x', PORTABLE_EXECU
 assert.strictEqual(inst.wantsBootstrap({ PORTABLE_EXECUTABLE_FILE: 'x' }, 'linux'), false);
 assert.strictEqual(inst.wantsBootstrap({}, 'win32'), false);
 assert.strictEqual(inst.wantsBootstrap({ PORTABLE_EXECUTABLE_FILE: 'x', F2_INSTALL_ROOT: root }, 'win32', root), true);
-// 4. product renamed: the portable unpacks as 'Twelve Weeks Launcher.exe', the installed runtime keeps its old name
+// 4. a portable whose exe has another name (electron-builder unpacks <productName>.exe): the installed runtime is always ROOT_EXE
 {
   const un2 = mk('unpack2');
-  w(path.join(un2, 'Twelve Weeks Launcher.exe'), 'EXE-NEW');
+  w(path.join(un2, 'electron.exe'), 'EXE-NEW');
   w(path.join(un2, 'resources', 'app.asar'), 'ASAR-9');
   const root2 = mk('root2');
   const exe2 = inst.bootstrap({
-    root: root2, version: '0.1.25', execPath: path.join(un2, 'Twelve Weeks Launcher.exe'), resourcesPath: path.join(un2, 'resources'),
+    root: root2, version: '0.1.25', execPath: path.join(un2, 'electron.exe'), resourcesPath: path.join(un2, 'resources'),
     env: { APPDATA: mk('appdata2'), USERPROFILE: mk('profile2') }, writeShortcut: (f, o) => lnks.push({ f, o }), log: () => {}, tmpDir: mk('faketmp'),
   });
-  assert.strictEqual(exe2, path.join(root2, 'Factions II Launcher.exe'));
+  assert.strictEqual(exe2, path.join(root2, 'Twelve Weeks Launcher.exe'));
   assert.strictEqual(fs.readFileSync(exe2, 'utf8'), 'EXE-NEW');
-  assert(!fs.existsSync(path.join(root2, 'Twelve Weeks Launcher.exe')), 'no second runtime exe');
+  assert(!fs.existsSync(path.join(root2, 'electron.exe')), 'no second runtime exe');
   assert(lnks.slice(-2).every((l) => path.basename(l.f) === 'Twelve Weeks Launcher.lnk' && l.o.target === exe2), 'shortcuts are named after the product');
 }
 

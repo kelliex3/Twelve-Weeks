@@ -26,7 +26,7 @@ need no login. Start line: `admin.py --bind 127.0.0.1 --tunnel-host admin.twelve
 A local, launcher-styled web page for the server owner (Python stdlib only, binds **127.0.0.1** by default, `--bind 0.0.0.0` + a users file for LAN access).
 
 ```
-python tools/admin_site/admin.py --db "%LOCALAPPDATA%\T2R-Factions2\t2r.db" --daemon-log <host folder>\daemon.log ^
+python tools/admin_site/admin.py --db "%LOCALAPPDATA%\T2R-TwelveWeeks\t2r.db" --daemon-log <host folder>\daemon.log ^
        --reports <update data>\reports [--port 7010] [--daemon 127.0.0.1:7001] [--admin-url http://127.0.0.1:7011] [--update-data <update data>]
 ```
 Open http://127.0.0.1:7010/ . Keys: `1-8` tabs, `/` search, `Esc` back, `P` pause the 3 s refresh, `R` refresh now.

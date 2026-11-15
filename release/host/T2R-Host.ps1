@@ -103,7 +103,10 @@ try {
     $env:T2R_MIN_PLAYERS = "$MinPlayers"
     $env:T2R_FILL_WAIT = "$FillWait"
     # One database for every build (clans, stats, boosters survive a new playtest folder).
-    $dbDir = Join-Path $env:LOCALAPPDATA "T2R-Factions2"
+    $dbDir = Join-Path $env:LOCALAPPDATA "T2R-TwelveWeeks"
+    # (data folder name before the product rename: used as it is while the new one does not exist)
+    $legacyDbDir = Join-Path $env:LOCALAPPDATA "T2R-Factions2"
+    if (-not (Test-Path $dbDir) -and (Test-Path $legacyDbDir)) { $dbDir = $legacyDbDir }
     New-Item -ItemType Directory -Force $dbDir | Out-Null
     $db = Join-Path $dbDir "t2r.db"
     if (-not (Test-Path $db)) {

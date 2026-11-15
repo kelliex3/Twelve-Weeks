@@ -25,19 +25,19 @@ import sqfs  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-EXE = 'factions2-launcher'
+EXE = 'twelve-weeks-launcher'
 
 APPRUN = """#!/bin/sh
 # Launcher AppImage entry. --no-sandbox: an AppImage cannot carry the setuid chrome-sandbox helper,
 # and Ubuntu 24.04+ blocks the user-namespace sandbox for unconfined apps.
 HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/factions2-launcher" --no-sandbox "$@"
+exec "$HERE/twelve-weeks-launcher" --no-sandbox "$@"
 """
 
 WRAPPER = """#!/bin/sh
 # Start the launcher from the unpacked tar.gz (same flags as the AppImage).
 HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/factions2-launcher" --no-sandbox "$@"
+exec "$HERE/twelve-weeks-launcher" --no-sandbox "$@"
 """
 
 

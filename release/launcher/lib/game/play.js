@@ -158,7 +158,8 @@ function modFilesSnapshot(gameDir) {
     'tlou-ii-mp.psarc',
     'winmm.dll.t2r-original',
     'version.dll',
-    'Factions2-disabled',
+    'TwelveWeeks-disabled',
+    'Factions2-disabled', // (parking folder name before the product rename)
   ])
     one(n);
   return out.join(', ');

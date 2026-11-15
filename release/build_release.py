@@ -312,7 +312,7 @@ def main():
         out = final + ".building"
         if os.path.exists(out):
             shutil.rmtree(out)
-        stamp_zip = os.path.join(os.path.dirname(final), "factionsii.zip")   # always this name
+        stamp_zip = os.path.join(os.path.dirname(final), "twelveweeks.zip")   # always this name
         client, host = os.path.join(out, "client"), os.path.join(out, "host")
         os.makedirs(os.path.join(client, "tlou-ii-mp"))
         os.makedirs(host)

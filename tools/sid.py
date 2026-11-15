@@ -5,7 +5,7 @@
 import re, struct, sys, os
 _GAMES = r"C:\Games"
 SIDBASE_CANDIDATES = [os.path.join(_GAMES, d, "tlou-ii-mp", "sidbase.bin") for d in ("The Last of Us Part II Remastered", "T2R-A", "T2R-B", "bk")] + [
-    os.path.join(_GAMES, "The Last of Us Part II Remastered", "Factions2-disabled", "tlou-ii-mp", "sidbase.bin")]
+    os.path.join(_GAMES, "The Last of Us Part II Remastered", d, "tlou-ii-mp", "sidbase.bin") for d in ("TwelveWeeks-disabled", "Factions2-disabled")]
 
 
 def find_sidbase(extra=()):

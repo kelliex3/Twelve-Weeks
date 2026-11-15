@@ -2,7 +2,7 @@
  * @file Single-player/multiplayer file switch with a crash-recovery journal.
  */
 'use strict';
-// SWITCH TO SP / SWITCH TO MP: the mod's files are moved out of the game folder into <game>\Factions2-disabled\ (same relative paths) so the
+// SWITCH TO SP / SWITCH TO MP: the mod's files are moved out of the game folder into <game>\TwelveWeeks-disabled\ (same relative paths) so the
 // plain, unmodded game starts from Steam, and moved back later. Nothing is copied or deleted: every step is a rename inside one folder tree
 // (same volume, so atomic and instant), journaled, rolled back on any failure and finished / undone by recover() after a crash.
 //
@@ -15,7 +15,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const DIR_NAME = 'Factions2-disabled';
+const DIR_NAME = 'TwelveWeeks-disabled';
+// Names of the two parking folders before the product rename. An install that sits in SP mode keeps its mod files there until the first
+// journal read after the update moves the folder (migrateLegacy). Until that rename works the old folder is used as it is.
+const LEGACY_DIR_NAME = 'Factions2-disabled';
+const LEGACY_TOOLS_DIR = 'Factions2-sp-tools';
 const JOURNAL = '.f2-sp-journal.json'; // inside the disabled folder
 const STEAM_APP_ID = '2531310';
 const BACKOFF = [0, 200, 500, 1000, 2000];
@@ -26,7 +30,7 @@ const hooks = {
   },
 };
 
-const TOOLS_DIR = 'Factions2-sp-tools'; // our SP sandbox debug tools (tools/sp-sandbox) wait here while the mod (MP) is active
+const TOOLS_DIR = 'TwelveWeeks-sp-tools'; // our SP sandbox debug tools (tools/sp-sandbox) wait here while the mod (MP) is active
 /**
  * Check whether a filename is an SP debug tool.
  * @param {string} name
@@ -79,7 +83,16 @@ function isSandboxDll(file) {
  * @param {string} game
  * @returns {string}
  */
-const toolsDir = (game) => path.join(game, TOOLS_DIR);
+const toolsDir = (game) => parkDir(game, TOOLS_DIR, LEGACY_TOOLS_DIR);
+/**
+ * Check whether a game-folder entry is one of the parking folders (current or legacy name).
+ * @param {string} name
+ * @returns {boolean}
+ */
+const isParkDir = (name) =>
+  [DIR_NAME, TOOLS_DIR, LEGACY_DIR_NAME, LEGACY_TOOLS_DIR].some(
+    (d) => d.toLowerCase() === String(name).toLowerCase(),
+  );
 // SP tool entries present in the game folder root. winmm.dll counts only when it is the sandbox (not a T2R build).
 /**
  * List SP tools currently present in the game folder.
@@ -94,7 +107,7 @@ function spToolsInGame(game, verifyWinmm) {
   } catch {
     return [];
   }
-  const out = names.filter((n) => spToolName(n) && n !== TOOLS_DIR);
+  const out = names.filter((n) => spToolName(n) && !isParkDir(n));
   if (names.includes('version.dll') && isSandboxDll(path.join(game, 'version.dll')))
     out.push('version.dll');
   if (
@@ -123,7 +136,96 @@ const exists = (p) => {
  * @param {string} game
  * @returns {string}
  */
-const disabledDir = (game) => path.join(game, DIR_NAME);
+const disabledDir = (game) => parkDir(game, DIR_NAME, LEGACY_DIR_NAME);
+/**
+ * The parking folder in use: the current name, or the legacy one while only that exists (its rename has not worked yet).
+ * @param {string} game
+ * @param {string} name
+ * @param {string} legacy
+ * @returns {string}
+ */
+function parkDir(game, name, legacy) {
+  const cur = path.join(game, name);
+  if (exists(cur)) return cur;
+  const old = path.join(game, legacy);
+  return exists(old) ? old : cur;
+}
+
+/**
+ * Rewrite absolute journal paths that point into a legacy parking folder so they point into the renamed one.
+ * @param {string} game
+ * @param {object} j journal (changed in place)
+ * @returns {boolean} true when a path changed
+ */
+function rewriteLegacyPaths(game, j) {
+  const pairs = [
+    [LEGACY_DIR_NAME, DIR_NAME],
+    [LEGACY_TOOLS_DIR, TOOLS_DIR],
+  ]
+    .filter(([, cur]) => exists(path.join(game, cur)))
+    .map(([old, cur]) => [path.join(game, old), path.join(game, cur)]);
+  let changed = false;
+  const fix = (p) => {
+    if (typeof p !== 'string') return p;
+    for (const [old, cur] of pairs) {
+      const head = p.slice(0, old.length);
+      const sameHead =
+        process.platform === 'win32' ? head.toLowerCase() === old.toLowerCase() : head === old;
+      if (
+        sameHead &&
+        (p.length === old.length || p[old.length] === path.sep || p[old.length] === '/')
+      ) {
+        changed = true;
+        return cur + p.slice(old.length);
+      }
+    }
+    return p;
+  };
+  for (const key of ['ops', 'prevOps'])
+    if (Array.isArray(j[key]))
+      for (const op of j[key]) if (op) ((op.from = fix(op.from)), (op.to = fix(op.to)));
+  return changed;
+}
+
+/**
+ * Move the legacy parking folders (named before the product rename) to the current names. Idempotent, never throws.
+ * A folder whose rename fails (a file held open) stays where it is and is used under its old name (parkDir); the next call tries again.
+ * When the current name exists too, the legacy folder is left alone (removed only when empty).
+ * @param {string} game
+ * @returns {string[]} the folders renamed now
+ */
+function migrateLegacy(game) {
+  const done = [];
+  if (!game) return done;
+  for (const [old, cur] of [
+    [LEGACY_DIR_NAME, DIR_NAME],
+    [LEGACY_TOOLS_DIR, TOOLS_DIR],
+  ]) {
+    const from = path.join(game, old),
+      to = path.join(game, cur);
+    if (!exists(from)) continue;
+    try {
+      if (exists(to)) {
+        if (!fs.readdirSync(from).length) fs.rmdirSync(from);
+        continue;
+      }
+      hooks.rename(from, to);
+      done.push(to);
+    } catch {
+      /* busy: used under the old name until a later call manages it */
+    }
+  }
+  if (done.length) {
+    try {
+      const f = path.join(game, DIR_NAME, JOURNAL);
+      const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (rewriteLegacyPaths(game, j)) writeJournal(game, j);
+    } catch {
+      /* no journal (only the tools folder was parked) */
+    }
+  }
+  return done;
+}
 
 /**
  * Create an error carrying a stable machine code.
@@ -174,8 +276,11 @@ function move(from, to) {
  * @returns {object|null}
  */
 function readJournal(game) {
+  migrateLegacy(game);
   try {
-    return JSON.parse(fs.readFileSync(path.join(disabledDir(game), JOURNAL), 'utf8'));
+    const j = JSON.parse(fs.readFileSync(path.join(disabledDir(game), JOURNAL), 'utf8'));
+    rewriteLegacyPaths(game, j); // (a crash between the folder rename and the journal rewrite left old paths in it)
+    return j;
   } catch {
     return null;
   }
@@ -291,7 +396,7 @@ function plan(game, { verifyWinmm }) {
   }
   const hasOrig = names.includes('winmm.dll.t2r-original');
   const baseMod = names.some((n) => /^modloader\.asi$/i.test(n));
-  for (const n of names) if ((ownedRoot(n) || baseModRoot(n)) && n !== DIR_NAME) items.push(n);
+  for (const n of names) if ((ownedRoot(n) || baseModRoot(n)) && !isParkDir(n)) items.push(n);
   const mods = names.find((n) => /^mods$/i.test(n));
   if (
     mods &&
@@ -397,7 +502,7 @@ function planDisableMove(game, p) {
     if (rel === 'winmm.dll' && p.dll === 'swap') continue;
     ops.push({ from: path.join(game, rel), to: path.join(d, rel) });
   }
-  // SP debug tools parked in Factions2-sp-tools come back (never overwriting what the game folder already has)
+  // SP debug tools parked in TwelveWeeks-sp-tools come back (never overwriting what the game folder already has)
   const tools = [];
   try {
     for (const n of fs.readdirSync(toolsDir(game)))
@@ -491,7 +596,7 @@ function planEnableMove(game, deps, jd) {
   const ops = [];
   const T = toolsDir(game),
     stamp = Date.now();
-  // SP tools: whatever is in the game folder now, plus t2r-sp* entries an old launcher's journal listed (they sit in the disabled folder), go to Factions2-sp-tools.
+  // SP tools: whatever is in the game folder now, plus t2r-sp* entries an old launcher's journal listed (they sit in the disabled folder), go to TwelveWeeks-sp-tools.
   const inGame = spToolsInGame(game, deps.verifyWinmm);
   const oldListed = jd.entries.filter((rel) => spToolName(rel) && exists(path.join(d, rel)));
   const incoming = {}; // name -> sources, oldest first
@@ -518,7 +623,7 @@ function planEnableMove(game, deps, jd) {
       to: path.join(game, 'winmm.dll.t2r-original'),
     });
   // An entry the parked mod owns that showed up again in the game folder while in SP mode (a tool or an older install wrote it, e.g. tlou-ii-mp/sidbase.bin):
-  // the parked copy wins, the stray one is moved aside to Factions2-sp-tools/replaced-<stamp>/ (journaled, so a rollback puts it back) instead of failing the switch.
+  // the parked copy wins, the stray one is moved aside to TwelveWeeks-sp-tools/replaced-<stamp>/ (journaled, so a rollback puts it back) instead of failing the switch.
   for (const rel of modEntries) {
     const to = path.join(game, rel);
     if (exists(to) && !ops.some((o) => o.from === to))
@@ -619,7 +724,7 @@ async function topUp(game, deps) {
   const items = [];
   const baseMod = names.some((n) => /^modloader\.asi$/i.test(n));
   for (const n of names)
-    if ((ownedRoot(n) || baseModRoot(n)) && n !== DIR_NAME && n !== 'winmm.dll.t2r-original')
+    if ((ownedRoot(n) || baseModRoot(n)) && !isParkDir(n) && n !== 'winmm.dll.t2r-original')
       items.push(n);
   const mods = names.find((n) => /^mods$/i.test(n));
   if (
@@ -750,6 +855,9 @@ module.exports = {
   topUp,
   DIR_NAME,
   TOOLS_DIR,
+  LEGACY_DIR_NAME,
+  LEGACY_TOOLS_DIR,
+  migrateLegacy,
   spToolName,
   isSandboxDll,
   spToolsInGame,

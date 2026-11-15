@@ -127,7 +127,7 @@ async function loadClanSummary() {
   Clan.summary(r.ok ? r.clan : null);
 }
 // Steam gate (Windows): Play is blocked while Steam is not running; re-checked every few seconds (a failed probe never blocks, see lib/game.js)
-// ---- SWITCH TO SP / MP (lib/spmode.js): the mod's files move to <game>\Factions2-disabled and back. In SP the clan / server side is hidden, the
+// ---- SWITCH TO SP / MP (lib/spmode.js): the mod's files move to <game>\TwelveWeeks-disabled and back. In SP the clan / server side is hidden, the
 // backgrounds and the music are the neutral ones (the same as before a clan is known) and PLAY starts the plain tlou-ii.exe (the same exe as MP, without the mod files).
 let sp = false;
 /**

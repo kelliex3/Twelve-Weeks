@@ -15,7 +15,7 @@ helper and starts the game through Steam. You do NOT need the python script, the
   - Needs: Steam with Proton (Proton - Experimental or any Proton 9/10 installed through Steam). Flatpak Steam: the
     helper cannot be started from outside the Flatpak (the game still starts; matches then use the server relay).
   - Something wrong? REPORT A BUG in the launcher, or send t2r-steam.log and t2r-steam-proton.log from
-    ~/.config/Factions II Launcher/ (the launcher's data folder) and t2r-ext.log from the game folder.
+    ~/.config/Twelve Weeks Launcher/ (the launcher's data folder) and t2r-ext.log from the game folder.
 
 THE MANUAL WAY (python script, below) still works, but needs the FULL client download and does not update itself.
 

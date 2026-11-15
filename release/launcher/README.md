@@ -30,16 +30,24 @@ background (optional), faint static grain, game UI sounds and music; WLF / Serap
   (launcher version, build date, hardware, update launcher).
 
 Where the client files live: `client\` next to the exe if it contains `winmm.dll` (the shipped-zip layout, no download
-needed), else `%APPDATA%\Factions II Launcher\client`, or the folder set in Settings > Files.
+needed), else `%APPDATA%\Twelve Weeks Launcher\client`, or the folder set in Settings > Files.
 Server and update host are built in, nothing to set up: `defaults.js` holds `OFFICIAL_SERVER` (the game server, written into winmm.dll by the Play flow) and `OFFICIAL_FILE_HOST` (the update server; **TODO: its public playit tunnel address**, the current value is a placeholder). Stamp them at build time with `node scripts/stamp-defaults.js <host:port> <http://update host:port>` before `npm run dist`. While the update server is unreachable the launcher shows "update server unreachable" and Play still works with the installed client. Dev / test only (not in the UI): env `F2_SERVER`, `F2_FILE_HOST`, `F2_CHANNEL`. Old `server` / `file_host` / `channel` values in `launcher.json` are dropped at start.
 
 ## Install layout and self-update (pin-safe, since 0.1.16)
 
 The portable exe unpacks itself into %TEMP% on every start, and the old self-update overwrote the exe in place, so a taskbar pin captured a temp path (Electron icon, "app doesn't exist" after the next start).
-Now the first run of any portable build installs itself into the fixed root `%LOCALAPPDATA%\Factions II Launcher` (`main/install.js`): the Electron runtime exe (written once, never replaced), a frozen shim `resourcespp\main.js` that loads
-the newest complete `app-<version>pp.asar`, `icon.ico`, Start menu + Desktop shortcuts with AppUserModelID `org.factions2.launcher` (also set by `app.setAppUserModelId` and `setAppDetails` relaunch command = the fixed exe).
+Now the first run of any portable build installs itself into the fixed root `%LOCALAPPDATA%\Twelve Weeks Launcher` (`main/install.js`): the Electron runtime exe (written once, never replaced), a frozen shim `resourcespp\main.js` that loads
+the newest complete `app-<version>pp.asar`, `icon.ico`, Start menu + Desktop shortcuts with AppUserModelID `org.twelveweeks.launcher` (also set by `app.setAppUserModelId` and `setAppDetails` relaunch command = the fixed exe).
 An update downloads the new portable exe (unchanged `launcher.json` contract), starts it, and it ADDS `app-<new>` and restarts the same fixed exe. Old versions are pruned (2 kept). Old installs migrate on the first update (their swap script
 replaces the portable exe; its first run installs). The old portable exe keeps working as a forwarder; `portable-dir.txt` remembers its folder so a shipped `client\` next to it is still used. Test: `node test/install-test.js`.
+
+Product rename: installs from before it use `%LOCALAPPDATA%\Factions II Launcher` (runtime `Factions II Launcher.exe`, AppUserModelID `org.factions2.launcher`), settings in
+`%APPDATA%\Factions II Launcher` (`~/.config/Factions II Launcher` on Linux), and park the mod in `<game>\Factions2-disabled` / `Factions2-sp-tools` while in SP mode.
+The new build migrates silently: the first start moves the settings folder (`migrateUserData`), the first bootstrap moves the install root and renames the runtime exe
+(`migrateRoot`; a root it cannot move is installed fresh and the old one removed later by `removeLegacyRoot`), Start menu / Desktop links and taskbar / Start pins that
+start the old exe are rewritten (`migrateShortcuts`), and the first SP journal read renames the parking folders and rewrites the journal paths (`lib/spmode.js` `migrateLegacy`).
+Each step is idempotent and uses the old place while a file there is held open. An old launcher updates as usual: it starts the new portable exe, which bootstraps into the new root.
+Test: `node test/migration-test.js`.
 
 ## Run / build
 

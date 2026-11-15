@@ -1,5 +1,5 @@
 {
-  "name": "factions2-launcher",
+  "name": "twelve-weeks-launcher",
   "productName": "Twelve Weeks Launcher",
   "version": "0.1.41",
   "description": "Launcher, updater and loadout viewer for TLOU2 Twelve Weeks",
@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node test/selftest.js && node test/linux-test.js && node test/robust-test.js && node test/steam-gate-test.js && node test/sp-switch-test.js && node test/attach-test.js && node test/clientupdate-test.js && node test/sticky-test.js && node test/playerreport-test.js && node test/social-test.js && node test/install-test.js && node test/players-test.js && node test/maps-test.js && node test/maps-convert-test.js && node test/server-target-test.js && node test/steam-shortcut-test.js && node test/steam-helper-test.js && node test/ban-test.js && node test/rpc-ingame-test.js",
+    "test": "node test/selftest.js && node test/linux-test.js && node test/robust-test.js && node test/steam-gate-test.js && node test/sp-switch-test.js && node test/attach-test.js && node test/clientupdate-test.js && node test/sticky-test.js && node test/playerreport-test.js && node test/social-test.js && node test/install-test.js && node test/migration-test.js && node test/players-test.js && node test/maps-test.js && node test/maps-convert-test.js && node test/server-target-test.js && node test/steam-shortcut-test.js && node test/steam-helper-test.js && node test/ban-test.js && node test/rpc-ingame-test.js",
     "dist": "electron-builder --win portable",
     "dist:linux": "electron-builder --linux AppImage tar.gz --x64",
     "dist:linux:deb": "electron-builder --linux deb --x64",
@@ -27,7 +27,7 @@
     "prettier": "3.9.10"
   },
   "build": {
-    "appId": "org.factions2.launcher",
+    "appId": "org.twelveweeks.launcher",
     "productName": "Twelve Weeks Launcher",
     "compression": "maximum",
     "files": [
@@ -55,7 +55,7 @@
       ],
       "icon": "assets/icon.png",
       "category": "Game",
-      "executableName": "factions2-launcher",
+      "executableName": "twelve-weeks-launcher",
       "artifactName": "TwelveWeeks-Launcher-${version}-linux-${arch}.${ext}",
       "synopsis": "Launcher for TLOU2 Twelve Weeks",
       "maintainer": "Twelve Weeks <noreply@twelve-weeks.invalid>"
@@ -65,6 +65,11 @@
     },
     "deb": {
       "artifactName": "TwelveWeeks-Launcher-${version}-linux-${arch}.deb",
+      "fpm": [
+        "--replaces=factions2-launcher",
+        "--conflicts=factions2-launcher",
+        "--provides=factions2-launcher"
+      ],
       "depends": [
         "libgtk-3-0",
         "libnotify4",
