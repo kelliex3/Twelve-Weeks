@@ -134,7 +134,7 @@ EXTRA_ACTORS = ["mp-ellie-helmet-lvl-1", "mp-ellie-torso-armored-lvl-1"]
 
 
 def patch_actor_list(path):
-    """actor97.txt (mod): add the Factions 2 armor actor packs (sp-common.psarc
+    """actor97.txt (mod): add the cut multiplayer's armor actor packs (sp-common.psarc
     actor97/mp-ellie-*-lvl-1.pak) so spawn-object can load them (test). Appended (the list
     isn't sorted)."""
     text = open(path, encoding="latin1").read()
@@ -1414,7 +1414,7 @@ def armour_trimmed(name):
     return name.replace("-rigged", "-armour", 1)
 
 
-# FEMALE armoured twins (the female looks wore the old Factions 2 blue rigid meshes): the same Rattler helmet / plate
+# FEMALE armoured twins (the female looks wore the old cut-multiplayer blue rigid meshes): the same Rattler helmet / plate
 # carrier in their base-female-skel authoring (tools/models/armour_female.py): the King's helmet + slaver-female-01's carrier,
 # renamed copies of their kits with only the armour drawing; pushed clothes copies as for the men ('-female-' -> '-farm01-').
 # Keep in sync with armour_female.SOURCES / PROPS and the ext (ARMOR_RIG_BASES rows 12..15, ARMOR_RIG_BODY).
@@ -1971,9 +1971,9 @@ if os.environ.get("T2R_BLADE_BANKS", "1") != "0":
     FEMALE_KNIFE_ADDS += ["actor switchblade", "sound-bank wpn-melee-switchblade"]
 FEMALE_LEVEL_ADDS = ["actor " + a for a in FEMALE_LOOK_ACTORS] + \
     ["symbol " + l for side in FEMALE_LOOKS.values() for l in side] + FEMALE_VOX_BANKS + FEMALE_KNIFE_ADDS
-# Female armoured twins (they wore the old rigid blue Factions 2 armour; tools/models/armour_female.py): the same
+# Female armoured twins (they wore the old rigid blue cut-multiplayer armour; tools/models/armour_female.py): the same
 # twin machinery as the men - base look + the Rattler helmet / plate carrier of base-female-skel + pushed clothes copies + the pushed
-# coat - so the ext shows / hides skinned parts instead of the old rigid Factions 2 meshes. ARMOUR_LOOK_BASES gets the 4 female looks
+# coat - so the ext shows / hides skinned parts instead of the old rigid cut-multiplayer meshes. ARMOUR_LOOK_BASES gets the 4 female looks
 # (row order = the ext's ARMOR_RIG_BASES 12..15); T2R_NO_FEMALE_ARMOUR=1 builds without (the rigid attach again).
 ARMOUR_FEMALE_BASES = [l for side in FEMALE_LOOKS.values() for l in side]
 ARMOUR_FEMALE_ACTORS = [ARMOUR_RIG_F_HELMET_ACTOR, ARMOUR_RIG_F_VEST_ACTOR]

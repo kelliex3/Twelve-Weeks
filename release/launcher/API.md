@@ -5,7 +5,7 @@ Plain HTTP(S), JSON, UTF-8. All URLs are relative to the **file host base URL**.
 
 - Base URL: the launcher's built-in `OFFICIAL_FILE_HOST` (`release/launcher/defaults.js`, stamped at build time; no setting in the UI, everybody uses the same
   update server). Dev override: env `F2_FILE_HOST`. Channel: `stable` (dev: env `F2_CHANNEL`).
-- The launcher sends `User-Agent: Factions2-Launcher`. No authentication in v1.
+- The launcher sends `User-Agent: TwelveWeeks-Launcher`. No authentication in v1.
 - Every JSON endpoint must answer within a few seconds; the launcher times out after 4-10 s and then shows OFFLINE
   (an already installed client can still be played).
 

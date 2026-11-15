@@ -439,7 +439,7 @@ def patch_widgets(pak_path):
               f"2013 match HUD: top bar cut, timer over the radar, lives under the figures ({matchflow_widgets.remake_score_banner(tmp)} widgets), "
               f"MP menu trimmed ({matchflow_widgets.trim_main_menu(tmp)} entries hidden), "
               f"disclaimer + version label hidden ({matchflow_widgets.hide_notice_and_version(tmp)} widgets), "
-              f"TWELVE WEEKS names ({matchflow_widgets.rename_factions2(tmp)} texts), "
+              f"TWELVE WEEKS names ({matchflow_widgets.rename_brand(tmp)} texts), "
               f"find-match CREDITS hidden ({matchflow_widgets.hide_findmatch_credits(tmp)}), "
               f"2013 LOADING in the engine's loading.widget ({matchflow_widgets.add_loading_screen(tmp)} widgets)")
         import gearup13_widgets

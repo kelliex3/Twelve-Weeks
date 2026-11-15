@@ -963,7 +963,7 @@ def stage_modfs(salt=0):
                 anchor = "actor97/gui2-widgets-pc.pak" if "actor97/gui2-widgets-pc.pak" in lst else "actor97/gui2-widgets.pak"
                 lst.insert(lst.index(anchor) + 1, p)
     _prof.lap('model: dbl_barrel')
-    # visible armour: grey copies of the Factions 2 helmet / torso (tools/models/armour_paks.py)
+    # visible armour: grey copies of the cut multiplayer's helmet / torso (tools/models/armour_paks.py)
     import armour_paks
     adir = os.path.join(STAGE, "actor97")
     arm = {a: os.path.join(adir, a + ".pak") for a in (armour_paks.HELMET_ACTOR, armour_paks.TORSO_ACTOR)}
@@ -1241,7 +1241,7 @@ def stage_modfs(salt=0):
         for k, v in dc_check.check_mod_tree(STAGE).items():
             print(f"dc_check {k}: {v[0]} entries, {v[1]} relocated pointers, {v[2]} exports - OK")
     _prof.lap('dc_check (level set loader check)')
-    # Factions 2 armor: 4 helmet + 4 torso spawners (one per player slot, AutoSpawn off), spawned
+    # Cut multiplayer armor: 4 helmet + 4 torso spawners (one per player slot, AutoSpawn off), spawned
     # on demand with spawn-entity-async (which streams the art in) and attached by t2r-ext
     subprocess.run(["pwsh", "-NoProfile", "-File", os.path.join(TOOLS, "features", "art_spawners.ps1"),
                     "-Pak", os.path.join(STAGE, "pak68", "starlight-mp-test-ingame.pak"),

@@ -1,4 +1,4 @@
-"""Stock Factions II maps in the Scene Editor: Forest, Gas Station, School, Shipyard, Resort, Seraphite Camp, Houses.
+"""Stock maps in the Scene Editor: Forest, Gas Station, School, Shipyard, Resort, Seraphite Camp, Houses.
 
 Unlike the SP-section maps (data/<key>-spawns.json + sp_maps.json -> `sp_maps.py pak`), these maps are PAK-DRIVEN: their spots live in the
 level pak tools/features/levels/to1-pvp-<pak>-ingame.pak (hand placed, committed; build_dll.py copies it over the mod's pak68 copy).

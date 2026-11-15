@@ -1,6 +1,7 @@
 'use strict';
 // node test/i18n-test.js : the Polish table is complete and consistent.
 const fs = require('fs'), path = require('path'), assert = require('assert');
+const OLD_NAME = new RegExp('factions\\s*(i{2}|2)\\b', 'i');   // the old product name
 const I18N = require('../src/i18n-core');
 const dir = path.join(__dirname, '..', 'src');
 const pl = JSON.parse(fs.readFileSync(path.join(dir, 'i18n', 'pl.json'), 'utf8')), gpl = JSON.parse(fs.readFileSync(path.join(dir, 'i18n', 'game-pl.json'), 'utf8')), en = JSON.parse(fs.readFileSync(path.join(dir, 'i18n', 'en.json'), 'utf8'));
@@ -117,7 +118,7 @@ I18N.setLang('en'); assert.strictEqual(I18N.T('PLAY'), 'PLAY'); assert.strictEqu
   const uniq = (s) => vars(s).split(',').filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(',');
   for (const [k, v] of Object.entries(es)) assert.strictEqual(uniq(v), uniq(k), 'es.json placeholders differ: ' + k);
   assert.deepStrictEqual(Object.keys(gpl).filter((k) => !(k in ges)), [], 'game-es.json misses game-pl.json keys');
-  for (const v of Object.values(es).concat(Object.values(ges))) assert.ok(!/factions ii/i.test(v), 'Factions II in Spanish text: ' + v);
+  for (const v of Object.values(es).concat(Object.values(ges))) assert.ok(!OLD_NAME.test(v), 'old product name in Spanish text: ' + v);
   const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
   for (const l of LANGS.SUPPORTED_LANGS) assert.ok(html.includes('data-lang="' + l + '"'), 'no language button for ' + l);
   const C = require('../src/i18n-core');

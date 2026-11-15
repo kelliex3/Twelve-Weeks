@@ -1,4 +1,4 @@
-"""Bans: by Steam id, name and HWID; refused at the BOOT handshake (FACTIONS II pressed on the boat menu: note 0x11 +
+"""Bans: by Steam id, name and HWID; refused at the BOOT handshake (TWELVE WEEKS pressed on the boat menu: note 0x11 +
 0x0d [2] = winmm quits to the title) and at FIND MATCH. Real daemon over TCP, temp DB and bans.txt.
 Run: python tools/tests/test_bans.py"""
 import os, sys, socket, struct, tempfile, threading, time

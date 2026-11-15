@@ -144,7 +144,7 @@ def write_catalog():
     return p
 
 
-# stock Factions II maps (daemon MAPS order = ext MF_MAPS): not in medkits.INDEX (their kits live in the level pak), but their item / satchel spots are map-indexed too
+# stock maps (daemon MAPS order = ext MF_MAPS): not in medkits.INDEX (their kits live in the level pak), but their item / satchel spots are map-indexed too
 STOCK_INDEX = {"forest": 0, "gas-station": 1, "school": 2, "shipyard": 3, "resort": 4, "seraphite-camp": 5, "houses": 6}
 EXTRA_INDEX = {"chase": 22, "jackson-market": 23, "p1-bookstore": 17}     # SP-section maps without health-kit data (not in medkits.INDEX): editor_import.MAP_INDEX
 

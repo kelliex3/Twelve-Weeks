@@ -71,7 +71,7 @@ async function killSteamHelpers(plat = ctx.plat, extra = ctx.extra || {}) {
   ]);
 }
 
-// true while a Factions II Steam helper (t2r-steam.exe) runs (Windows; Linux keeps its own pid file, see linux.stopHelper). tests: testHooks.helper
+// true while our Steam helper (t2r-steam.exe) runs (Windows; Linux keeps its own pid file, see linux.stopHelper). tests: testHooks.helper
 /**
  * Check whether the Steam helper is running.
  * @returns {boolean}
