@@ -655,7 +655,11 @@ static void feature_death_ui(void) {
 #define DU_PAIR_HOLD_MS 1200      // [TUNING ps44] a chosen value, labelled
             // (the shiv rule holds here too: the black is FULL while the body still moves - the fade starts at most left - cut - 350 ms after the kill
             //  frame, never earlier than the old delay; a shiv victim's delay set above is kept as it is)
-            if (!inst && !shiv44 && g_ps.role == 2 && g_ps.ent_vic == SID_PLAYER) {
+            // REVERTED to opt-in: the hold read as a regression in play - the death screen came up to a second after the killing blow / shot of
+            // every special execution and finisher instead of a few frames after it. Default = DU_DELAY_MS after the kill frame again; the
+            // ps44 / ps45 hold only with t2r-death-pair-hold.txt.
+            static int off_ph = -1; static uint64_t chk_ph;
+            if (!inst && !shiv44 && g_ps.role == 2 && g_ps.ent_vic == SID_PLAYER && ov_off("t2r-death-pair-hold.txt", &off_ph, &chk_ph)) {
                 static int off44 = -1; static uint64_t chk44;
                 int left = psync_vic_left_ms();
                 if (left > 0) {
