@@ -1,0 +1,91 @@
+#include <windows.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <wchar.h>
+#include <zlib.h>
+#include <lz4.h>
+#include <lz4hc.h>
+#include <zstd.h>
+#include <lzma.h>
+
+#define DSAR_CHUNK 0x40000
+#define LZ4_LEVEL 12
+
+typedef uint8_t u8;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+static wchar_t g_tmp[1024];
+static FILE *g_fo;
+
+typedef struct {
+    FILE *f;
+    u32 n;
+    u64 *off, *ustart;
+    u32 *usz, *csz;
+    u8 *cdata, *cbuf;
+    size_t ccap, bcap;
+    long cidx;
+    u64 total;
+} Dsar;
+
+
+// ------------------------------------------------------------------ slim.dat (T2SLIM02)
+//   Head, Rec[nrec], Chunk[nchunks], then the zstd patches (kind 0) and, at pack_off, ONE xz stream (kind 1) holding the files that
+//   have no counterpart in the game (or whose patch would not be smaller), back to back in record order.
+#pragma pack(push, 1)
+typedef struct {
+    char arch[64];            // game archive file name (kind 0)
+    u8 md5[16];               // MD5 of the path inside the archive
+    char path[96];
+    u64 base_size, usz;       // original / result sizes
+    u64 delta_off, delta_len; // kind 0: delta_len 0: result == original
+    u64 raw_fnv;              // fnv of the result (payload-style qword FNV)
+    u32 chunk0, nchunks;
+    u32 kind;                 // 0 = patch (or copy) of a game file, 1 = taken from the xz pack stream, 2 = extra file for the game folder (from the stream too)
+    u32 pad;
+    u64 pack_pos;             // kind 1: offset of the file in the decoded pack stream
+} Rec;
+typedef struct { u64 payload_off; u32 usz, csz; } Chunk;
+typedef struct {
+    char magic[8];            // "T2SLIM02"
+    u64 blob_off, blob_size, blob_fnv;      // the T2ME payload in the DLL (after its 0x18 byte header) and the hash it must have
+    u64 dll_size;             // size of the slim and of the full DLL (identical)
+    u32 nrec, nchunks;
+    u64 pack_off, pack_len, pack_usz;       // the xz stream inside the .dat (pack_len 0: none) and its decoded size
+} Head;
+#pragma pack(pop)
+
+// ------------------------------------------------------------------ the xz pack stream (decoded strictly in order)
+static FILE *g_pk;
+static lzma_stream g_xs = LZMA_STREAM_INIT;
+static u64 g_pk_left;                 // bytes of the stream still to read from the .dat
+static u8 g_pk_in[1 << 20];
+static u64 g_pk_pos;                  // decoded bytes handed out so far
+static int g_pk_end;
+
+// ------------------------------------------------------------------ lz4 + keystream + write, chunks compressed on several threads
+#define GROUP 64                      // chunks per parallel batch (16 MiB of raw data)
+typedef struct {
+    const u8 *src;                    // raw bytes of the group's first chunk
+    const Chunk *ck;                  // chunk table entries of the group
+    u32 n;                            // chunks in the group
+    u8 *out;                          // n * stride bytes
+    size_t stride;
+    u32 *outn;
+    volatile LONG next;
+    volatile LONG fail;
+} Job;
+
+static int g_threads = 4;
+static int g_skip_extras;                                        // T2R_SLIM_SKIP_EXTRAS=1: the build's check run must not write into the game folder
+
+// machine-readable progress for the launcher: "t2r-slim: progress <done> <total>" (weighted bytes of the whole job), at most one line per 1 %
+static u64 g_ptotal, g_pdone; static int g_plast = -1;
+
+// Die function
+static void die(int code, const char *fmt, ...)
+    __attribute__((noreturn, format(printf, 2, 3)));

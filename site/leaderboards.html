@@ -1,48 +1,116 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leaderboards - Twelve Weeks</title>
-<meta name="description" content="Global Twelve Weeks leaderboards: wins, win rate, matches and clan weeks survived.">
-<link rel="icon" href="assets/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-</head>
-<body data-page="leaderboards">
-<main class="page">
-<h1 class="title">Leaderboards</h1>
-<p class="sub">Top 50 survivors across every match on the official server.</p>
-<div class="tabs" id="tabs">
-  <button data-by="wins">Wins</button><button data-by="winrate">Win rate</button><button data-by="matches">Matches</button><button data-by="weeks">Weeks survived</button>
-</div>
-<p class="note" id="note"></p>
-<div class="wide"><table class="lb"><thead><tr><th>#</th><th>Player</th><th>Wins</th><th class="opt">Losses</th><th>Win rate</th><th class="opt">Matches</th><th>Weeks</th></tr></thead><tbody id="rows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table></div>
-</main>
-<script src="common.js"></script>
-<script>
-const COL = { wins: 2, winrate: 4, matches: 5, weeks: 6 };
-const fac = (f) => f ? `<span class="fac ${f === 'WLF' ? 'wlf' : 'sera'}">${f === 'WLF' ? 'WLF' : 'SERA'}</span>` : '';
-const td = (v, cls) => `<td${cls ? ` class="${cls}"` : ''}>${v}</td>`;
-async function show(by) {
-  history.replaceState(null, '', '?by=' + by);
-  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.by === by));
-  const rows = document.getElementById('rows');
-  try {
-    const d = await api('/api/leaderboard?by=' + by);
-    document.getElementById('note').textContent = by === 'winrate' ? `Players with at least ${d.minMatches} matches.` : by === 'weeks' ? 'Total clan weeks survived across all twelve-week runs.' : '';
-    const c = (i, v, opt) => td(v, [opt ? 'opt' : '', COL[by] === i ? 'sort' : ''].filter(Boolean).join(' '));
-    rows.innerHTML = d.rows.length ? d.rows.map((p) => '<tr>' + td(p.rank, 'rank') +
-      td(`<a href="/player.html?id=${esc(p.id)}">${esc(p.name)}</a>${fac(p.faction)}`) +
-      c(2, p.wins) + c(3, p.losses, 1) + c(4, p.winRate + '%') + c(5, p.matches, 1) + c(6, p.weeks) + '</tr>').join('')
-      : '<tr><td colspan="7" class="empty">Nobody on this board yet.</td></tr>';
-  } catch (e) { rows.innerHTML = '<tr><td colspan="7" class="empty">Leaderboards could not be loaded right now.</td></tr>'; }
-}
-document.getElementById('tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.by); });
-const by0 = new URLSearchParams(location.search).get('by');
-show(['wins', 'winrate', 'matches', 'weeks'].includes(by0) ? by0 : 'wins');
-</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Leaderboards - Twelve Weeks</title>
+    <meta
+      name="description"
+      content="Global Twelve Weeks leaderboards: wins, win rate, matches and clan weeks survived."
+    />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="leaderboards">
+    <main class="page">
+      <h1 class="title">Leaderboards</h1>
+      <p class="sub">
+        Top 50 survivors across every match on the official server.
+      </p>
+      <div class="tabs" id="tabs">
+        <button data-by="wins">Wins</button
+        ><button data-by="winrate">Win rate</button
+        ><button data-by="matches">Matches</button
+        ><button data-by="weeks">Weeks survived</button>
+      </div>
+      <p class="note" id="note"></p>
+      <div class="wide">
+        <table class="lb">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Player</th>
+              <th>Wins</th>
+              <th class="opt">Losses</th>
+              <th>Win rate</th>
+              <th class="opt">Matches</th>
+              <th>Weeks</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr>
+              <td colspan="7" class="empty">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+    <script src="common.js"></script>
+    <script>
+      const COL = { wins: 2, winrate: 4, matches: 5, weeks: 6 };
+      const fac = (f) =>
+        f
+          ? `<span class="fac ${f === "WLF" ? "wlf" : "sera"}">${f === "WLF" ? "WLF" : "SERA"}</span>`
+          : "";
+      const td = (v, cls) => `<td${cls ? ` class="${cls}"` : ""}>${v}</td>`;
+      async function show(by) {
+        history.replaceState(null, "", "?by=" + by);
+        document
+          .querySelectorAll("#tabs button")
+          .forEach((b) => b.classList.toggle("on", b.dataset.by === by));
+        const rows = document.getElementById("rows");
+        try {
+          const d = await api("/api/leaderboard?by=" + by);
+          document.getElementById("note").textContent =
+            by === "winrate"
+              ? `Players with at least ${d.minMatches} matches.`
+              : by === "weeks"
+                ? "Total clan weeks survived across all twelve-week runs."
+                : "";
+          const c = (i, v, opt) =>
+            td(
+              v,
+              [opt ? "opt" : "", COL[by] === i ? "sort" : ""]
+                .filter(Boolean)
+                .join(" "),
+            );
+          rows.innerHTML = d.rows.length
+            ? d.rows
+                .map(
+                  (p) =>
+                    "<tr>" +
+                    td(p.rank, "rank") +
+                    td(
+                      `<a href="/player.html?id=${esc(p.id)}">${esc(p.name)}</a>${fac(p.faction)}`,
+                    ) +
+                    c(2, p.wins) +
+                    c(3, p.losses, 1) +
+                    c(4, p.winRate + "%") +
+                    c(5, p.matches, 1) +
+                    c(6, p.weeks) +
+                    "</tr>",
+                )
+                .join("")
+            : '<tr><td colspan="7" class="empty">Nobody on this board yet.</td></tr>';
+        } catch (e) {
+          rows.innerHTML =
+            '<tr><td colspan="7" class="empty">Leaderboards could not be loaded right now.</td></tr>';
+        }
+      }
+      document.getElementById("tabs").addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (b) show(b.dataset.by);
+      });
+      const by0 = new URLSearchParams(location.search).get("by");
+      show(
+        ["wins", "winrate", "matches", "weeks"].includes(by0) ? by0 : "wins",
+      );
+    </script>
+  </body>
 </html>

@@ -1,27 +1,42 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>News - Twelve Weeks</title>
-<meta name="description" content="Every Twelve Weeks update, patch notes and fixes.">
-<link rel="icon" href="assets/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-</head>
-<body data-page="news">
-<main class="page">
-<h1 class="title">News</h1>
-<p class="sub">Every update, the same notes the launcher shows.</p>
-<div id="news-list" class="news"><p class="empty">Loading news...</p></div>
-</main>
-<script src="common.js"></script>
-<script>
-api('/api/news').then((items) => {
-  document.getElementById('news-list').innerHTML = items.length ? items.map((n, i) => newsCard(n, i === 0)).join('') : '<p class="empty">No news yet.</p>';
-}).catch(() => { document.getElementById('news-list').innerHTML = '<p class="empty">News could not be loaded right now.</p>'; });
-</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>News - Twelve Weeks</title>
+    <meta
+      name="description"
+      content="Every Twelve Weeks update, patch notes and fixes."
+    />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="news">
+    <main class="page">
+      <h1 class="title">News</h1>
+      <p class="sub">Every update, the same notes the launcher shows.</p>
+      <div id="news-list" class="news">
+        <p class="empty">Loading news...</p>
+      </div>
+    </main>
+    <script src="common.js"></script>
+    <script>
+      api("/api/news")
+        .then((items) => {
+          document.getElementById("news-list").innerHTML = items.length
+            ? items.map((n, i) => newsCard(n, i === 0)).join("")
+            : '<p class="empty">No news yet.</p>';
+        })
+        .catch(() => {
+          document.getElementById("news-list").innerHTML =
+            '<p class="empty">News could not be loaded right now.</p>';
+        });
+    </script>
+  </body>
 </html>

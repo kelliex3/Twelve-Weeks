@@ -1,40 +1,79 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Players - Twelve Weeks</title>
-<meta name="description" content="Look up any Twelve Weeks player: stats, faction and clan.">
-<link rel="icon" href="assets/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-</head>
-<body data-page="players">
-<main class="page">
-<h1 class="title">Player lookup</h1>
-<p class="sub">Search by in-game name to see stats and clan progress.</p>
-<form class="search" id="f" autocomplete="off"><input id="q" type="search" placeholder="Player name" aria-label="Player name" maxlength="32"><button class="btn main" type="submit">Search</button></form>
-<div class="results" id="res"></div>
-</main>
-<script src="common.js"></script>
-<script>
-const res = document.getElementById('res'), q = document.getElementById('q');
-let t = 0;
-async function run() {
-  const s = q.value.trim();
-  history.replaceState(null, '', s ? '?q=' + encodeURIComponent(s) : location.pathname);
-  if (s.length < 2) { res.innerHTML = '<p class="empty">Type at least 2 letters.</p>'; return; }
-  try {
-    const hits = await api('/api/players?q=' + encodeURIComponent(s));
-    res.innerHTML = hits.length ? hits.map((p) => `<a class="prow" href="/player.html?id=${esc(p.id)}"><b>${esc(p.name)}</b><span>${p.wins} wins / ${p.matches} matches / ${p.winRate}% win rate</span><span>${p.faction ? esc(p.faction) : 'No clan yet'}</span><span>Last seen ${esc(p.lastSeen)}</span></a>`).join('') : '<p class="empty">No player with that name.</p>';
-  } catch (e) { res.innerHTML = '<p class="empty">Search is not available right now.</p>'; }
-}
-q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 250); });
-document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); run(); });
-q.value = new URLSearchParams(location.search).get('q') || '';
-if (q.value) run(); else q.focus();
-</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Players - Twelve Weeks</title>
+    <meta
+      name="description"
+      content="Look up any Twelve Weeks player: stats, faction and clan."
+    />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="players">
+    <main class="page">
+      <h1 class="title">Player lookup</h1>
+      <p class="sub">Search by in-game name to see stats and clan progress.</p>
+      <form class="search" id="f" autocomplete="off">
+        <input
+          id="q"
+          type="search"
+          placeholder="Player name"
+          aria-label="Player name"
+          maxlength="32"
+        /><button class="btn main" type="submit">Search</button>
+      </form>
+      <div class="results" id="res"></div>
+    </main>
+    <script src="common.js"></script>
+    <script>
+      const res = document.getElementById("res"),
+        q = document.getElementById("q");
+      let t = 0;
+      async function run() {
+        const s = q.value.trim();
+        history.replaceState(
+          null,
+          "",
+          s ? "?q=" + encodeURIComponent(s) : location.pathname,
+        );
+        if (s.length < 2) {
+          res.innerHTML = '<p class="empty">Type at least 2 letters.</p>';
+          return;
+        }
+        try {
+          const hits = await api("/api/players?q=" + encodeURIComponent(s));
+          res.innerHTML = hits.length
+            ? hits
+                .map(
+                  (p) =>
+                    `<a class="prow" href="/player.html?id=${esc(p.id)}"><b>${esc(p.name)}</b><span>${p.wins} wins / ${p.matches} matches / ${p.winRate}% win rate</span><span>${p.faction ? esc(p.faction) : "No clan yet"}</span><span>Last seen ${esc(p.lastSeen)}</span></a>`,
+                )
+                .join("")
+            : '<p class="empty">No player with that name.</p>';
+        } catch (e) {
+          res.innerHTML =
+            '<p class="empty">Search is not available right now.</p>';
+        }
+      }
+      q.addEventListener("input", () => {
+        clearTimeout(t);
+        t = setTimeout(run, 250);
+      });
+      document.getElementById("f").addEventListener("submit", (e) => {
+        e.preventDefault();
+        run();
+      });
+      q.value = new URLSearchParams(location.search).get("q") || "";
+      if (q.value) run();
+      else q.focus();
+    </script>
+  </body>
 </html>

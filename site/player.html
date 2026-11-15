@@ -1,49 +1,89 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Player - Twelve Weeks</title>
-<meta name="description" content="Twelve Weeks player profile.">
-<link rel="icon" href="assets/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-</head>
-<body data-page="me">
-<main class="page">
-<div id="p"><p class="empty">Loading...</p></div>
-</main>
-<script src="common.js"></script>
-<script>
-const id = new URLSearchParams(location.search).get('id') || '';
-const stat = (v, k) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;
-const kv = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
-function clanHtml(c, fac) {
-  if (!c || !c.hasClan) return '<div class="clan"><h2>No clan yet</h2><p class="cl">This survivor has not started a twelve-week run.</p></div>';
-  const st = { alive: 'Alive', dead: 'Fallen', won: 'Survived all twelve weeks' }[c.status] || c.status;
-  const n = Math.max(1, c.size);
-  const pct = Math.min(100, Math.round(100 * c.daysDone / (c.daysTotal || 83)));
-  let h = `<div class="clan"><h2>${esc(c.factionName || fac || 'Clan')}</h2><p class="cl">${st}${c.status === 'alive' ? ` / week ${c.week} of ${c.weeks}, day ${c.dayOfWeek}` : ''}</p>`;
-  h += `<div class="legend"><span><b>${c.size}</b> survivors</span><span><b>${c.healthy}</b> healthy</span><span><b>${c.hungry}</b> hungry</span><span><b>${c.sick}</b> sick</span></div>`;
-  h += `<div class="bar2"><i class="h" style="width:${100 * c.healthy / n}%"></i><i class="u" style="width:${100 * c.hungry / n}%"></i><i class="s" style="width:${100 * c.sick / n}%"></i></div>`;
-  h += '<div class="cgrid">';
-  h += kv('Run progress', `${c.daysDone} / ${c.daysTotal} days<div class="progress"><i style="width:${pct}%"></i></div>`);
-  h += kv('Largest clan', c.maxSize) + kv('Weeks survived (all runs)', c.weeksTotal) + kv('Runs won / lost', `${c.runsWon} / ${c.runsLost}`);
-  if (c.mission) h += kv('Mission', `${esc(c.mission.name)} (${c.mission.daysLeft} day${c.mission.daysLeft === 1 ? '' : 's'} left)`);
-  if (c.event) h += kv('Event', `${esc(c.event.name)}, day ${c.event.dayOfEvent} of ${c.event.length}`);
-  return h + '</div></div>';
-}
-(id ? api('/api/player?id=' + encodeURIComponent(id)) : Promise.reject(new Error('no id'))).then((p) => {
-  document.title = p.name + ' - Twelve Weeks';
-  let h = `<div class="phead"><div><h1 class="title">${esc(p.name)}</h1><div class="meta2">${p.faction ? esc(p.faction) + ' / ' : ''}Last seen ${esc(p.lastSeen || 'never')}${p.steamProfile ? ` / <a href="${esc(p.steamProfile)}" target="_blank" rel="noopener">Steam profile</a>` : ''}</div></div></div>`;
-  h += '<div class="stats">' + stat(p.matches, 'Matches') + stat(p.wins, 'Wins') + stat(p.losses, 'Losses') + stat(p.draws, 'Draws') + stat(p.winRate + '%', 'Win rate') + stat(p.weeks, 'Weeks survived') + '</div>';
-  h += clanHtml(p.clan, p.faction);
-  document.getElementById('p').innerHTML = h;
-}).catch(() => {
-  document.getElementById('p').innerHTML = '<h1 class="title">Not found</h1><p class="sub">No player with this id. If you just logged in, play a match first and your stats will show up here.</p><a class="btn ghost" href="/players.html">Search players</a>';
-});
-</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Player - Twelve Weeks</title>
+    <meta name="description" content="Twelve Weeks player profile." />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Archivo+Narrow:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-page="me">
+    <main class="page">
+      <div id="p"><p class="empty">Loading...</p></div>
+    </main>
+    <script src="common.js"></script>
+    <script>
+      const id = new URLSearchParams(location.search).get("id") || "";
+      const stat = (v, k) =>
+        `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;
+      const kv = (k, v) =>
+        `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+      function clanHtml(c, fac) {
+        if (!c || !c.hasClan)
+          return '<div class="clan"><h2>No clan yet</h2><p class="cl">This survivor has not started a twelve-week run.</p></div>';
+        const st =
+          { alive: "Alive", dead: "Fallen", won: "Survived all twelve weeks" }[
+            c.status
+          ] || c.status;
+        const n = Math.max(1, c.size);
+        const pct = Math.min(
+          100,
+          Math.round((100 * c.daysDone) / (c.daysTotal || 83)),
+        );
+        let h = `<div class="clan"><h2>${esc(c.factionName || fac || "Clan")}</h2><p class="cl">${st}${c.status === "alive" ? ` / week ${c.week} of ${c.weeks}, day ${c.dayOfWeek}` : ""}</p>`;
+        h += `<div class="legend"><span><b>${c.size}</b> survivors</span><span><b>${c.healthy}</b> healthy</span><span><b>${c.hungry}</b> hungry</span><span><b>${c.sick}</b> sick</span></div>`;
+        h += `<div class="bar2"><i class="h" style="width:${(100 * c.healthy) / n}%"></i><i class="u" style="width:${(100 * c.hungry) / n}%"></i><i class="s" style="width:${(100 * c.sick) / n}%"></i></div>`;
+        h += '<div class="cgrid">';
+        h += kv(
+          "Run progress",
+          `${c.daysDone} / ${c.daysTotal} days<div class="progress"><i style="width:${pct}%"></i></div>`,
+        );
+        h +=
+          kv("Largest clan", c.maxSize) +
+          kv("Weeks survived (all runs)", c.weeksTotal) +
+          kv("Runs won / lost", `${c.runsWon} / ${c.runsLost}`);
+        if (c.mission)
+          h += kv(
+            "Mission",
+            `${esc(c.mission.name)} (${c.mission.daysLeft} day${c.mission.daysLeft === 1 ? "" : "s"} left)`,
+          );
+        if (c.event)
+          h += kv(
+            "Event",
+            `${esc(c.event.name)}, day ${c.event.dayOfEvent} of ${c.event.length}`,
+          );
+        return h + "</div></div>";
+      }
+      (id
+        ? api("/api/player?id=" + encodeURIComponent(id))
+        : Promise.reject(new Error("no id"))
+      )
+        .then((p) => {
+          document.title = p.name + " - Twelve Weeks";
+          let h = `<div class="phead"><div><h1 class="title">${esc(p.name)}</h1><div class="meta2">${p.faction ? esc(p.faction) + " / " : ""}Last seen ${esc(p.lastSeen || "never")}${p.steamProfile ? ` / <a href="${esc(p.steamProfile)}" target="_blank" rel="noopener">Steam profile</a>` : ""}</div></div></div>`;
+          h +=
+            '<div class="stats">' +
+            stat(p.matches, "Matches") +
+            stat(p.wins, "Wins") +
+            stat(p.losses, "Losses") +
+            stat(p.draws, "Draws") +
+            stat(p.winRate + "%", "Win rate") +
+            stat(p.weeks, "Weeks survived") +
+            "</div>";
+          h += clanHtml(p.clan, p.faction);
+          document.getElementById("p").innerHTML = h;
+        })
+        .catch(() => {
+          document.getElementById("p").innerHTML =
+            '<h1 class="title">Not found</h1><p class="sub">No player with this id. If you just logged in, play a match first and your stats will show up here.</p><a class="btn ghost" href="/players.html">Search players</a>';
+        });
+    </script>
+  </body>
 </html>

@@ -9,6 +9,7 @@
 Run it again whenever the host's address (server.txt) or the mod version changes, then start the game from Steam.
 One-time Steam setup: game Properties -> Launch Options:  WINEDLLOVERRIDES="winmm=n,b" %command%
 """
+
 import argparse
 import glob
 import json
@@ -24,13 +25,13 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-XOR_KEY = 0x5A3C9E17                     # the server address in winmm.dll (same offsets as T2R-Play.ps1)
+XOR_KEY = 0x5A3C9E17  # the server address in winmm.dll (same offsets as T2R-Play.ps1)
 IP_OFFSETS = (0x56402, 0x58725)
 PORT_OFFSETS = (0x563F1, 0x58742)
 FLAGS = ("t2r-uc4-downed.txt", "t2r-uc4-own.txt", "t2r-faction-looks.txt", "t2r-faction-guns.txt")
-LINUX_FLAG = "t2r-linux.txt"             # tells t2r-ext: Linux - start the Steam helper itself (server= line), no Steam-helper gate
+LINUX_FLAG = "t2r-linux.txt"  # tells t2r-ext: Linux - start the Steam helper itself (server= line), no Steam-helper gate
 CFG = os.path.join(HERE, "linux-config.json")
-LOG = os.path.join(HERE, "t2r-linux.log")      # everything printed here is also appended to this file (send it when something fails)
+LOG = os.path.join(HERE, "t2r-linux.log")  # everything printed here is also appended to this file (send it when something fails)
 
 
 def say(msg=""):
@@ -50,7 +51,7 @@ def natural_key(name):
 def find_game():
     roots = [os.path.expanduser(p) for p in ("~/.steam/steam", "~/.local/share/Steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam")]
     libs = set(roots)
-    for r in roots:                       # extra Steam library folders
+    for r in roots:  # extra Steam library folders
         vdf = os.path.join(r, "steamapps", "libraryfolders.vdf")
         if os.path.exists(vdf):
             for line in open(vdf, encoding="utf-8", errors="ignore"):
@@ -64,8 +65,7 @@ def find_game():
 
 
 def steam_roots():
-    return [r for r in (os.path.expanduser(p) for p in ("~/.steam/steam", "~/.local/share/Steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam"))
-            if os.path.isdir(r)]
+    return [r for r in (os.path.expanduser(p) for p in ("~/.steam/steam", "~/.local/share/Steam", "~/.var/app/com.valvesoftware.Steam/.local/share/Steam")) if os.path.isdir(r)]
 
 
 def steam_libs():
@@ -120,7 +120,7 @@ def find_proton():
             return tools[want]
     if "Proton - Experimental" in tools:
         return tools["Proton - Experimental"]
-    plain = [n for n in tools if n.startswith("Proton ")] or list(tools)      # an unmapped game: newest official Proton, else any
+    plain = [n for n in tools if n.startswith("Proton ")] or list(tools)  # an unmapped game: newest official Proton, else any
     return tools[sorted(plain, key=natural_key, reverse=True)[0]]
 
 
@@ -154,9 +154,8 @@ def start_helper(game, server, cfg):
     env = dict(os.environ)
     for k in ("SteamOverlayGameId", "SteamClientLaunch", "STEAM_COMPAT_SHADER_PATH", "STEAM_COMPAT_INSTALL_PATH", "STEAM_COMPAT_LIBRARY_PATHS"):
         env.pop(k, None)
-    env.update(STEAM_COMPAT_DATA_PATH=prefix, STEAM_COMPAT_CLIENT_INSTALL_PATH=root,
-               SteamAppId="480", SteamGameId="480", STEAM_COMPAT_APP_ID="480", WINEDEBUG="-all")
-    for k in ("LD_PRELOAD", "LD_LIBRARY_PATH"):       # a Steam-runtime preload of the terminal's parent must not leak into Proton
+    env.update(STEAM_COMPAT_DATA_PATH=prefix, STEAM_COMPAT_CLIENT_INSTALL_PATH=root, SteamAppId="480", SteamGameId="480", STEAM_COMPAT_APP_ID="480", WINEDEBUG="-all")
+    for k in ("LD_PRELOAD", "LD_LIBRARY_PATH"):  # a Steam-runtime preload of the terminal's parent must not leak into Proton
         env.pop(k, None)
     exe = os.path.join(HERE, "steam", "t2r-steam.exe")
     if not os.path.exists(exe):
@@ -164,20 +163,31 @@ def start_helper(game, server, cfg):
         return None
     alive = os.path.join(game, "t2r-alive.txt")
     namefile = os.path.join(HERE, "t2r-steam-name.txt")
-    for stale in (alive, namefile):                   # stale files from the last session must not count as 'game running' / 'helper reached Steam'
+    for stale in (alive, namefile):  # stale files from the last session must not count as 'game running' / 'helper reached Steam'
         try:
             os.remove(stale)
         except OSError:
             pass
     first_time = not os.path.isdir(os.path.join(prefix, "pfx"))
-    args = [exe, winpath(namefile), "tlou-ii.exe",
-            "--server", server, "--token", winpath(os.path.join(game, "tlou-ii-mp.json")), "--port", "7777",
-            "--alive-file", winpath(alive), "--log", winpath(os.path.join(HERE, "t2r-steam.log"))]
-    cmd = [os.path.join(proton, "proton"), "run"] + args      # a list: folders with spaces need no quoting
+    args = [
+        exe,
+        winpath(namefile),
+        "tlou-ii.exe",
+        "--server",
+        server,
+        "--token",
+        winpath(os.path.join(game, "tlou-ii-mp.json")),
+        "--port",
+        "7777",
+        "--alive-file",
+        winpath(alive),
+        "--log",
+        winpath(os.path.join(HERE, "t2r-steam.log")),
+    ]
+    cmd = [os.path.join(proton, "proton"), "run"] + args  # a list: folders with spaces need no quoting
     say("Steam helper: %s" % " ".join(repr(c) if " " in c else c for c in cmd))
     out = open(os.path.join(HERE, "t2r-steam-proton.log"), "w")
-    p = subprocess.Popen(cmd, env=env, cwd=os.path.join(HERE, "steam"),
-                         stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    p = subprocess.Popen(cmd, env=env, cwd=os.path.join(HERE, "steam"), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
     # The first start builds the Proton prefix (up to a minute or more). Success = the helper reached Steam and wrote its name file; failure =
     # the process ended. Still running after the limit = keep it (it may just be slow) and say so.
     limit = 120 if first_time else 25
@@ -212,7 +222,7 @@ def name_token(name, id_hex):
     raw = bytearray(32)
     raw[0:4] = b"T2N:"
     nb = name.encode("utf-8")[:15]
-    raw[4:4 + len(nb)] = nb
+    raw[4 : 4 + len(nb)] = nb
     raw[20:32] = bytes.fromhex(id_hex)
     return raw.hex()
 
@@ -276,7 +286,7 @@ def main():
     cfg = json.load(open(CFG)) if os.path.exists(CFG) else {}
     game = a.game or cfg.get("game_dir") or find_game()
     if not game or not os.path.exists(os.path.join(game, "tlou-ii.exe")):
-        sys.exit("The game folder was not found. Run again with --game \"/path/to/The Last of Us Part II\" (the folder with tlou-ii.exe).")
+        sys.exit('The game folder was not found. Run again with --game "/path/to/The Last of Us Part II" (the folder with tlou-ii.exe).')
     if a.uninstall:
         stop_helper(cfg.get("helper_pgid"))
         for f in ("winmm.dll", "t2r-ext.dll", "tlou-ii-mp.json", "t2r-version.txt", "t2r-alive.txt", LINUX_FLAG) + FLAGS:
@@ -291,11 +301,10 @@ def main():
         return
     server, ip, port = server_address()
     if os.path.exists(os.path.join(HERE, "t2r-slim.dat")):
-        sys.exit("This is the slim (Windows) download: its winmm.dll is rebuilt from the game files by slim/t2r-slim.exe, which needs Windows. "
-                 "Use the full (non-slim) download on Linux.")
+        sys.exit("This is the slim (Windows) download: its winmm.dll is rebuilt from the game files by slim/t2r-slim.exe, which needs Windows. Use the full (non-slim) download on Linux.")
     dst = os.path.join(game, "winmm.dll")
     if os.path.exists(dst) and not os.path.exists(dst + ".t2r-original") and not cfg.get("installed"):
-        shutil.copy(dst, dst + ".t2r-original")          # keep a foreign winmm.dll once
+        shutil.copy(dst, dst + ".t2r-original")  # keep a foreign winmm.dll once
     shutil.copy(os.path.join(HERE, "winmm.dll"), dst)
     patch_dll(dst, ip, port)
     shutil.copy(os.path.join(HERE, "t2r-ext.dll"), os.path.join(game, "t2r-ext.dll"))

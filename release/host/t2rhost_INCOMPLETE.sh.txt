@@ -1,0 +1,24 @@
+#!/usr/bin/bash
+# experimental!
+# parameters
+PLAY=${1:?0}
+MATCHSIZE=${2:?8}
+MINPLAYERS=${3:?2}
+FILLWAIT=${4:?15}
+MAP=${5:?"rotate"}
+MAPPOOL=${6:?""}
+MODE=${7:?"supply-raid"}
+MAPVOTE=${8:?0}
+NOMAPVOTE=${9:?0}
+HOSTMIGRATION=${10:0}
+NOHOSTMIGRATION=${11:0}
+set -e
+
+find_exe() {
+	local candidates="$1"
+	IFS=',' read -ra items <<< candidates
+	for i in "${items[@]}"; do
+		local exe=$(which i)
+		if [[ -z "$exe" ]]; then
+	done
+}

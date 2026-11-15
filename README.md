@@ -1,3 +1,5 @@
+# THIS REPO IS UNDERGOING CLEANUP. WE GET THE AI CODE CAN BE HARD TO UNDERSTAND AND ARE WORKING ON IT RIGHT NOW. THANK YOU!
+
 # Twelve Weeks
 
 Twelve Weeks is a free, fan-made multiplayer mod for **The Last of Us Part II Remastered** on PC.
