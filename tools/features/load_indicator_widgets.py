@@ -9,7 +9,7 @@ same sprite at fixed layout rotations, one visible at a time (t2r-ext li_tick sh
 Group "t2rSpin" (hidden) with children s00..s{N-1}, built into
   * loading.widget (the engine's level-load widget: every LoadingScreen::SetEnabled load - boot menu world, menu <-> match,
     map change), on top of the stock fader (depth 2.0), bottom right where the stock taskProgressBar sits;
-  * to1/connecting (the FACTIONS II entry page, which can stay on screen over the menu world's load).
+  * to1/connecting (the TWELVE WEEKS entry page, which can stay on screen over the menu world's load).
 """
 STEPS = 48
 PERIOD_MS = 667             # collect-loading label "loading": range 0..0.333 s at rate 0.5 (t2r-ext LI_PERIOD_MS)

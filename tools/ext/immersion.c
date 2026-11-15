@@ -61,7 +61,7 @@ extern const int16_t sh_blob[];
 // ---- SP-feel pass, each its own opt-out file next to the exe (feel_flag, polled ~3 s), log prefix "immersion:":
 //   t2r-no-near-miss.txt    an enemy's shot that passes within ~1.5 m of us without hitting: TLOU2's bullet pass-by whizz from the side it passed (waves of
 //                           gbl-bullet.bnk bullet-pass-by-NN through the PCM mixer, tools/rip_t2_bullet_by.py) + a very small camera flinch
-//   t2r-no-health-screen.txt  TLOU2's cut Factions 2 render presets *zgame-mp-player-health-02-low* (red vignette, grain, aberration) by health band,
+//   t2r-no-health-screen.txt  TLOU2's cut multiplayer render presets *zgame-mp-player-health-02-low* (red vignette, grain, aberration) by health band,
 //                           blended in / out, plus *zgame-mp-player-pain-kill* as a short pulse when we are hurt; cleared at once off-live
 //   t2r-no-blast-muffle.txt a close blast (<= 5 m): the world is ducked for 1.5 s by the mix snapshot mix-listen-mode-abbie-ellie-fight (rewritten by
 //                           dc_data_patches.patch_blast_muffle), under the tinnitus (PCM voices are outside the game's mix)
@@ -170,7 +170,7 @@ static void imm_muffle_tick(int live, int stunned) {
     if (nl < 6) { nl++; xlog("immersion: blast muffle snapshot applied, %llu ms into the window (set-per-frame-mixer-override -> %llx)", (unsigned long long)(now - g_imm_mf_from), (unsigned long long)r); }
 }
 
-// ---- low-health screen: the cut Factions 2 render presets of render-settings/zgame.bin, applied with the SP native
+// ---- low-health screen: the cut multiplayer render presets of render-settings/zgame.bin, applied with the SP native
 // override-render-settings(rs, blend-in, blend-out, 0, priority, 0, 1, 0, strength) (9 values; SP's workbench / Jackson-workbench state scripts call it in
 // their update block every frame with (sid, 1.0, -1.0 | 0, 0, 32767, 0, 1, 0, 1.0); winmm's menu lock every frame with priority 1000). The presets are
 // SPARSE (only post:* keys: *-02-low* = red vignette + grain + chromatic aberration; *-00-high* and *-01-mid* hold no keys at all, so "mid" is the

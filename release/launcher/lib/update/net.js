@@ -21,7 +21,7 @@ function request(url, { headers = {}, timeout = 15000, method = 'GET' } = {}) {
       u,
       {
         method,
-        headers: { 'User-Agent': 'Factions2-Launcher', ...headers },
+        headers: { 'User-Agent': 'TwelveWeeks-Launcher', ...headers },
         timeout,
       },
       (res) => {

@@ -192,7 +192,7 @@ function prune(root, keep = 2) {
     /* ignore */
   }
   try {
-    fs.rmSync(path.join(os.tmpdir(), 'factions2-launcher-update'), {
+    fs.rmSync(path.join(os.tmpdir(), 'twelve-weeks-launcher-update'), {
       recursive: true,
       force: true,
     });

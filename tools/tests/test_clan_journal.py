@@ -2,6 +2,7 @@
 with the same sentence; and no more "{n}'s antibiotics kept you on your feet at {map}" rows).  tools/clan_journal.py + clan_journal_text(.py / _pl.py).
 Temp DBs only.  Run: python tools/tests/test_clan_journal.py"""
 import json, os, random, re, sqlite3, sys, tempfile
+OLD_NAME = re.compile(r"factions\s*(i{2}|2)\b", re.I)   # the old product name
 import sys as _t2s, os as _t2o; _t2s.path.append(_t2o.path.normpath(_t2o.path.join(_t2o.path.dirname(_t2o.path.abspath(__file__)), ".."))); import t2rtmp  # noqa: E401,E402,E702,F401  (temp hygiene: tools/t2rtmp.py)
 TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for k in ("T2R_CLAN_CHRONICLE", "T2R_CLAN_SAGA", "T2R_CLAN_STATUS", "T2R_CLAN_ALIFE"):
@@ -101,7 +102,7 @@ for pool, lines in EN.POOLS.items():
         if scope in ("*", "W") and any(w in low for w in D.BANNED_WOLF):
             voice.append((pool, i, "W"))
 check(not voice, "no line a faction can draw uses the other faction's words %s" % (voice[:4],))
-check(all(1 <= len(EN.POOLS[k]) for k in EN.POOLS) and not any("Factions II" in t for v in EN.POOLS.values() for _s, t in v), "no empty pool, no visible 'Factions II'")
+check(all(1 <= len(EN.POOLS[k]) for k in EN.POOLS) and not any(OLD_NAME.search(t) for v in EN.POOLS.values() for _s, t in v), "no empty pool, no visible old product name")
 
 # ---- a whole run: one entry per clan day, tied to the day's real numbers, nothing told twice
 for seed, fac in ((7, clan.WLF), (3, clan.SERAPHITES)):

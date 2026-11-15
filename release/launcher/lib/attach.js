@@ -221,7 +221,7 @@ function uploadClip(host, code, key, file, onProgress, opts = {}) {
         headers: {
           'Content-Type': 'application/octet-stream',
           'Content-Length': st.size,
-          'User-Agent': 'Factions2-Launcher',
+          'User-Agent': 'TwelveWeeks-Launcher',
         },
         timeout: opts.timeout || 180000,
       },

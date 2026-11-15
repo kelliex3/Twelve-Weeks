@@ -28,14 +28,14 @@ ROOT = os.path.dirname(HERE)
 EXE = 'factions2-launcher'
 
 APPRUN = """#!/bin/sh
-# Factions II Launcher AppImage entry. --no-sandbox: an AppImage cannot carry the setuid chrome-sandbox helper,
+# Launcher AppImage entry. --no-sandbox: an AppImage cannot carry the setuid chrome-sandbox helper,
 # and Ubuntu 24.04+ blocks the user-namespace sandbox for unconfined apps.
 HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/factions2-launcher" --no-sandbox "$@"
 """
 
 WRAPPER = """#!/bin/sh
-# Start the Factions II Launcher from the unpacked tar.gz (same flags as the AppImage).
+# Start the launcher from the unpacked tar.gz (same flags as the AppImage).
 HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/factions2-launcher" --no-sandbox "$@"
 """
@@ -44,14 +44,14 @@ exec "$HERE/factions2-launcher" --no-sandbox "$@"
 def desktop(version, exec_line):
     return (
         '[Desktop Entry]\n'
-        'Name=Factions II Launcher\n'
+        'Name=Twelve Weeks Launcher\n'
         f'Exec={exec_line}\n'
         'Terminal=false\n'
         'Type=Application\n'
         f'Icon={EXE}\n'
-        'StartupWMClass=Factions II Launcher\n'
+        'StartupWMClass=Twelve Weeks Launcher\n'
         f'X-AppImage-Version={version}\n'
-        'Comment=Launcher, updater and loadout viewer for TLOU2 Factions II\n'
+        'Comment=Launcher, updater and loadout viewer for Twelve Weeks\n'
         'Categories=Game;\n'
     )
 

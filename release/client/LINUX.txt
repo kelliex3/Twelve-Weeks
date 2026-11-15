@@ -1,13 +1,13 @@
 TLOU2 TWELVE WEEKS - LINUX (Steam Deck / Steam + Proton / Wine)
 ================================================================
 
-EASIEST: THE LINUX LAUNCHER (Factions2-Launcher-<version>.AppImage)
+EASIEST: THE LINUX LAUNCHER (TwelveWeeks-Launcher-<version>.AppImage)
 -------------------------------------------------------------------
 Same launcher as on Windows: it downloads and updates the client, installs the mod into the game, runs the Steam
 helper and starts the game through Steam. You do NOT need the python script, the zip or a Steam launch option.
   1. One time: start The Last of Us Part II from Steam until its menu, then close it. (That creates the game's Proton
      prefix, where the launcher sets the winmm override that loads the mod.)
-  2. chmod +x Factions2-Launcher-*.AppImage   (or right-click -> Properties -> Allow executing)  and start it.
+  2. chmod +x TwelveWeeks-Launcher-*.AppImage   (or right-click -> Properties -> Allow executing)  and start it.
      Steam Deck: Desktop mode, double-click it.
   3. UPDATE (downloads the client), then PLAY. The launcher starts Steam if it is not running and opens the game.
   - First PLAY: it also creates a small Proton prefix for the Steam helper (up to a minute or two) and, for the slim
@@ -25,7 +25,7 @@ The server address is already in server.txt.
 You need: python3 (preinstalled on most distros and on Steam Deck desktop mode) and Steam running.
 
 ONE-TIME SETUP
-1. Unpack the zip anywhere, e.g. ~/Factions2  (you get a "client" folder).
+1. Unpack the zip anywhere, e.g. ~/TwelveWeeks  (you get a "client" folder).
 2. Tell Proton/Wine to load the mod's winmm.dll - ONE launch option:
    - Steam (Proton): right-click The Last of Us Part II -> Properties -> General -> Launch Options:
          WINEDLLOVERRIDES="winmm=n,b" %command%

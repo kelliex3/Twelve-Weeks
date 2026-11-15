@@ -370,7 +370,7 @@ function createJobs({ runtime, config, paths, log, send, getWindow, mode, locale
         done: 0,
         total: 0,
       });
-      const tmp = path.join(os.tmpdir(), 'factions2-launcher-update');
+      const tmp = path.join(os.tmpdir(), 'twelve-weeks-launcher-update');
       fs.mkdirSync(tmp, { recursive: true });
       const downloaded = await upd.downloadLauncher(
         launcher,
