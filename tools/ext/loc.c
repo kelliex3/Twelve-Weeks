@@ -23,149 +23,287 @@
 // Keys are stored trimmed. New language: tools/loc/<code>.json + gen_loc.py + one row in LOC_LANGS below.
 #include "loc_pl.h"
 
-typedef struct { const char *code; const loc_ent_t *e; int n; const loc_probe_t *pr; int npr; } loc_lang_t;
-static const loc_lang_t LOC_LANGS[] = {
-    {"pl", LOC_PL, LOC_PL_N, LOC_PL_PROBES, LOC_PL_NPROBES},
+typedef struct {
+    const char *code;
+    const LocEntT *e;
+    int n;
+    const LocProbeT *pr;
+    int npr;
+} LocLangT;
+static const LocLangT LOC_LANGS[] = {
+    { "pl", LOC_PL, LOC_PL_N, LOC_PL_PROBES, LOC_PL_NPROBES },
 };
+
 #define LOC_NLANG ((int)(sizeof LOC_LANGS / sizeof LOC_LANGS[0]))
 
-static volatile int g_loc_cur = -1;         // index into LOC_LANGS, -1 = English / no table
-volatile unsigned g_loc_gen;                // bumped on every language change
-volatile int g_loc_probed;                  // 1 once loc_detect has decided the language at least once
-static unsigned g_ui_gen;                   // (defined with ui_text: a language change starts the ui_text caches over)
-static int g_loc_built = -2;                // language the lookup tables below were built for
+static volatile int g_locCur = -1;     // index into LOC_LANGS, -1 = English / no table
+volatile unsigned g_locGen;    // bumped on every language change
+volatile int g_locProbed;      // 1 once loc_detect has decided the language at least once
+static unsigned g_uiGen;       // (defined with ui_text: a language change starts the ui_text caches over)
+static int g_locBuilt = -2;    // language the lookup tables below were built for
 
-typedef struct { uint8_t kind; const char *lit; } loc_part_t;      // kind 0 literal, 1 number capture, 2 text capture
-typedef struct { loc_part_t *p; int np, ncap; const char *tr; int litlen; } loc_tpl_t;
-static int *g_loc_hash;                     // exact keys: open addressing, entry index + 1
-static unsigned g_loc_hmask;
-static loc_tpl_t *g_loc_tpl;
-static int g_loc_ntpl;
-static const loc_ent_t *g_loc_ent;
-static struct { uint64_t h; uint16_t n; char t[254]; } g_loc_hit[512];   // direct-mapped positive cache (perf: the same texts are set every frame)
-static uint64_t g_loc_miss[1024];           // direct-mapped negative cache: hash of a string that matches nothing
+typedef struct {
+    uint8_t kind;
+    const char *lit;
+} LocPartT;                   // kind 0 literal, 1 number capture, 2 text capture
+typedef struct {
+    LocPartT *p;
+    int np, ncap;
+    const char *tr;
+    int litlen;
+} LocTplT;
+static int *g_locHash;         // exact keys: open addressing, entry index + 1
+static unsigned g_locHmask;
+static LocTplT *g_locTpl;
+static int g_locNtpl;
+static const LocEntT *g_locEnt;
+static struct {
+    uint64_t h;
+    uint16_t n;
+    char t[254];
+} g_loc_hit[512];               // direct-mapped positive cache (perf: the same texts are set every frame)
+static uint64_t g_locMiss[1024];       // direct-mapped negative cache: hash of a string that matches nothing
 
-static uint64_t loc_fnv(const char *s, size_t n) { uint64_t h = 1469598103934665603ULL; for (size_t i = 0; i < n; i++) h = (h ^ (uint8_t)s[i]) * 1099511628211ULL; return h; }
+static uint64_t LocFnv(const char *s, size_t n)
+{
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ (uint8_t) s[i]) * 1099511628211ULL;
+    return h;
+}
 
 // the spec a '%' at s starts: length of the capture spec (0 = a literal percent sign); *kind = 1 number, 2 text
-static int loc_spec(const char *s, int *kind) {
+static int LocSpec(const char *s, int *kind)
+{
     const char *p = s + 1;
-    if (*p == '.') { p++; while (*p >= '0' && *p <= '9') p++; }
-    else while (*p >= '0' && *p <= '9') p++;
-    while (*p == 'l' || *p == 'z') p++;
-    if (*p == 'd' || *p == 'u' || *p == 'f' || *p == 'x') { *kind = 1; return (int)(p - s) + 1; }
-    if (*p == 's' || *p == 'c') { *kind = 2; return (int)(p - s) + 1; }
-    return 0;
-}
-static int loc_has_capture(const char *k) {
-    for (const char *p = k; *p; p++) if (*p == '%') { int kd; if (p[1] == '%') { p++; continue; } if (loc_spec(p, &kd)) return 1; }
+    if (*p == '.') {
+        p++;
+        while (*p >= '0' && *p <= '9')
+            p++;
+    } else
+        while (*p >= '0' && *p <= '9')
+            p++;
+    while (*p == 'l' || *p == 'z')
+        p++;
+    if (*p == 'd' || *p == 'u' || *p == 'f' || *p == 'x') {
+        *kind = 1;
+        return (int) (p - s) + 1;
+    }
+    if (*p == 's' || *p == 'c') {
+        *kind = 2;
+        return (int) (p - s) + 1;
+    }
     return 0;
 }
 
-static void loc_build(int lang) {
+static int LocHasCapture(const char *k)
+{
+    for (const char *p = k; *p; p++)
+        if (*p == '%') {
+            int kd;
+            if (p[1] == '%') {
+                p++;
+                continue;
+            }
+            if (LocSpec(p, &kd))
+                return 1;
+        }
+    return 0;
+}
+
+static void LocBuild(int lang)
+{
     // (the previous tables are leaked on purpose: another thread may still be inside a lookup; loc_detect sets g_loc_cur = -1 before a rebuild)
-    g_loc_hash = NULL; g_loc_tpl = NULL; g_loc_ntpl = 0;
-    memset(g_loc_miss, 0, sizeof g_loc_miss);
+    g_locHash = NULL;
+    g_locTpl = NULL;
+    g_locNtpl = 0;
+    memset(g_locMiss, 0, sizeof g_locMiss);
     memset(g_loc_hit, 0, sizeof g_loc_hit);
-    g_loc_built = lang;
-    if (lang < 0) return;
-    const loc_lang_t *L = &LOC_LANGS[lang];
-    g_loc_ent = L->e;
-    unsigned cap = 64; while (cap < (unsigned)L->n * 2) cap <<= 1;
-    g_loc_hash = calloc(cap, sizeof(int)); g_loc_hmask = cap - 1;
-    g_loc_tpl = calloc((size_t)L->n, sizeof(loc_tpl_t));
+    g_locBuilt = lang;
+    if (lang < 0)
+        return;
+    const LocLangT *L = &LOC_LANGS[lang];
+    g_locEnt = L->e;
+    unsigned cap = 64;
+    while (cap < (unsigned) L->n * 2)
+        cap <<= 1;
+    g_locHash = calloc(cap, sizeof(int));
+    g_locHmask = cap - 1;
+    g_locTpl = calloc((size_t) L->n, sizeof(LocTplT));
     int ntpl = 0;
     for (int i = 0; i < L->n; i++) {
         const char *k = L->e[i].en;
-        if (!loc_has_capture(k)) {
-            unsigned h = (unsigned)loc_fnv(k, strlen(k)) & g_loc_hmask;
-            while (g_loc_hash[h]) h = (h + 1) & g_loc_hmask;
-            g_loc_hash[h] = i + 1;
+        if (!LocHasCapture(k)) {
+            unsigned h = (unsigned) LocFnv(k, strlen(k)) & g_locHmask;
+            while (g_locHash[h])
+                h = (h + 1) & g_locHmask;
+            g_locHash[h] = i + 1;
             continue;
         }
-        loc_tpl_t *t = &g_loc_tpl[ntpl];
-        t->p = calloc(strlen(k) + 2, sizeof(loc_part_t)); t->tr = L->e[i].tr;
-        char *lit = malloc(strlen(k) + 1); size_t ll = 0;
+        LocTplT *t = &g_locTpl[ntpl];
+        t->p = calloc(strlen(k) + 2, sizeof(LocPartT));
+        t->tr = L->e[i].tr;
+        char *lit = malloc(strlen(k) + 1);
+        size_t ll = 0;
         for (const char *p = k; *p;) {
             int kd = 0, sl = 0;
-            if (*p == '%' && p[1] == '%') { lit[ll++] = '%'; p += 2; continue; }
-            if (*p == '%' && (sl = loc_spec(p, &kd))) {
-                if (ll) { lit[ll] = 0; t->p[t->np].kind = 0; t->p[t->np++].lit = strdup(lit); t->litlen += (int)ll; ll = 0; }
-                t->p[t->np++].kind = (uint8_t)kd; t->ncap++;
-                p += sl; continue;
+            if (*p == '%' && p[1] == '%') {
+                lit[ll++] = '%';
+                p += 2;
+                continue;
+            }
+            if (*p == '%' && (sl = LocSpec(p, &kd))) {
+                if (ll) {
+                    lit[ll] = 0;
+                    t->p[t->np].kind = 0;
+                    t->p[t->np++].lit = strdup(lit);
+                    t->litlen += (int) ll;
+                    ll = 0;
+                }
+                t->p[t->np++].kind = (uint8_t) kd;
+                t->ncap++;
+                p += sl;
+                continue;
             }
             lit[ll++] = *p++;
         }
-        if (ll) { lit[ll] = 0; t->p[t->np].kind = 0; t->p[t->np++].lit = strdup(lit); t->litlen += (int)ll; }
+        if (ll) {
+            lit[ll] = 0;
+            t->p[t->np].kind = 0;
+            t->p[t->np++].lit = strdup(lit);
+            t->litlen += (int) ll;
+        }
         free(lit);
         ntpl++;
     }
     // the most specific templates first (longest literal text)
-    for (int i = 1; i < ntpl; i++) { loc_tpl_t x = g_loc_tpl[i]; int j = i - 1; while (j >= 0 && g_loc_tpl[j].litlen < x.litlen) { g_loc_tpl[j + 1] = g_loc_tpl[j]; j--; } g_loc_tpl[j + 1] = x; }
-    g_loc_ntpl = ntpl;
+    for (int i = 1; i < ntpl; i++) {
+        LocTplT x = g_locTpl[i];
+        int j = i - 1;
+        while (j >= 0 && g_locTpl[j].litlen < x.litlen) {
+            g_locTpl[j + 1] = g_locTpl[j];
+            j--;
+        }
+        g_locTpl[j + 1] = x;
+    }
+    g_locNtpl = ntpl;
 }
 
-static const char *loc_exact(const char *s, size_t n) {
-    if (!g_loc_hash) return NULL;
-    unsigned h = (unsigned)loc_fnv(s, n) & g_loc_hmask;
-    while (g_loc_hash[h]) {
-        const loc_ent_t *e = &g_loc_ent[g_loc_hash[h] - 1];
-        if (strlen(e->en) == n && !memcmp(e->en, s, n)) return e->tr;
-        h = (h + 1) & g_loc_hmask;
+static const char *LocExact(const char *s, size_t n)
+{
+    if (!g_locHash)
+        return NULL;
+    unsigned h = (unsigned) LocFnv(s, n) & g_locHmask;
+    while (g_locHash[h]) {
+        const LocEntT *e = &g_locEnt[g_locHash[h] - 1];
+        if (strlen(e->en) == n && !memcmp(e->en, s, n))
+            return e->tr;
+        h = (h + 1) & g_locHmask;
     }
     return NULL;
 }
 
-typedef struct { const char *s; int n; } loc_cap_t;
-static int loc_match(const loc_tpl_t *t, int pi, const char *s, loc_cap_t *cap, int nc) {
-    if (pi == t->np) return *s == 0;
-    const loc_part_t *p = &t->p[pi];
-    if (p->kind == 0) { size_t l = strlen(p->lit); if (strncmp(s, p->lit, l)) return 0; return loc_match(t, pi + 1, s + l, cap, nc); }
+typedef struct {
+    const char *s;
+    int n;
+} LocCapT;
+static int LocMatch(const LocTplT *t, int pi, const char *s,
+                     LocCapT *cap, int nc)
+{
+    if (pi == t->np)
+        return *s == 0;
+    const LocPartT *p = &t->p[pi];
+    if (p->kind == 0) {
+        size_t l = strlen(p->lit);
+        if (strncmp(s, p->lit, l))
+            return 0;
+        return LocMatch(t, pi + 1, s + l, cap, nc);
+    }
     if (p->kind == 1) {
         const char *e = s;
-        if (*e == '+' || *e == '-') e++;
+        if (*e == '+' || *e == '-')
+            e++;
         const char *d = e;
-        while (*e >= '0' && *e <= '9') e++;
-        if (e == d) return 0;
-        if (*e == '.' && e[1] >= '0' && e[1] <= '9') { e++; while (*e >= '0' && *e <= '9') e++; }
-        cap[nc].s = s; cap[nc].n = (int)(e - s);
-        return loc_match(t, pi + 1, e, cap, nc + 1);
+        while (*e >= '0' && *e <= '9')
+            e++;
+        if (e == d)
+            return 0;
+        if (*e == '.' && e[1] >= '0' && e[1] <= '9') {
+            e++;
+            while (*e >= '0' && *e <= '9')
+                e++;
+        }
+        cap[nc].s = s;
+        cap[nc].n = (int) (e - s);
+        return LocMatch(t, pi + 1, e, cap, nc + 1);
     }
     // text capture: shortest first (may be empty: the "S" of a plural suffix)
     size_t len = strlen(s);
     for (size_t k = 0; k <= len; k++) {
-        cap[nc].s = s; cap[nc].n = (int)k;
-        if (loc_match(t, pi + 1, s + k, cap, nc + 1)) return 1;
+        cap[nc].s = s;
+        cap[nc].n = (int) k;
+        if (LocMatch(t, pi + 1, s + k, cap, nc + 1))
+            return 1;
     }
     return 0;
 }
 
-static int loc_core(const char *s, size_t n, char *out, size_t cap, int depth);
+static int LocCore(const char *s, size_t n, char *out, size_t cap,
+                    int depth);
 
-static size_t loc_expand(const loc_tpl_t *t, const loc_cap_t *c, char *out, size_t cap, int depth) {
+static size_t LocExpand(const LocTplT *t, const LocCapT *c, char *out,
+                         size_t cap, int depth)
+{
     size_t o = 0;
     for (const char *p = t->tr; *p && o + 1 < cap;) {
-        int raw = *p == '{' && p[1] == '=' && p[2] >= '1' && p[2] <= '9';      // {=N}: the capture verbatim (a player name: never translated)
+        int raw = *p == '{' && p[1] == '=' && p[2] >= '1' && p[2] <= '9';       // {=N}: the capture verbatim (a player name: never translated)
         if (*p == '{' && (raw || (p[1] >= '1' && p[1] <= '9'))) {
             int idx = p[1 + raw] - '1';
             const char *q = p + 2 + raw;
-            char forms[3][64]; int nf = 0;
-            while (*q == '|' && nf < 3) { q++; int k = 0; while (*q && *q != '|' && *q != '}') { if (k < 63) forms[nf][k++] = *q; q++; } forms[nf][k] = 0; nf++; }
+            char forms[3][64];
+            int nf = 0;
+            while (*q == '|' && nf < 3) {
+                q++;
+                int k = 0;
+                while (*q && *q != '|' && *q != '}') {
+                    if (k < 63)
+                        forms[nf][k++] = *q;
+                    q++;
+                }
+                forms[nf][k] = 0;
+                nf++;
+            }
             if (*q == '}' && idx < t->ncap) {
                 if (nf) {
-                    int v = atoi(c[idx].s); if (v < 0) v = -v;
-                    int f = v == 1 ? 0 : ((v % 10 >= 2 && v % 10 <= 4) && !(v % 100 >= 12 && v % 100 <= 14)) ? 1 : 2;
-                    if (c[idx].n > 0 && memchr(c[idx].s, '.', (size_t)c[idx].n)) f = 2;
-                    if (f >= nf) f = nf - 1;
-                    for (const char *x = forms[f]; *x && o + 1 < cap; x++) out[o++] = *x;
+                    int v = atoi(c[idx].s);
+                    if (v < 0)
+                        v = -v;
+                    int f = v == 1 ? 0 : ((v % 10 >= 2 && v % 10 <= 4)
+                                          && !(v % 100 >= 12
+                                               && v % 100 <= 14)) ? 1 : 2;
+                    if (c[idx].n > 0
+                        && memchr(c[idx].s, '.', (size_t) c[idx].n))
+                        f = 2;
+                    if (f >= nf)
+                        f = nf - 1;
+                    for (const char *x = forms[f]; *x && o + 1 < cap; x++)
+                        out[o++] = *x;
                 } else {
                     char tmp[512];
-                    size_t cn = (size_t)c[idx].n;
-                    if (cn >= sizeof tmp) cn = sizeof tmp - 1;
-                    if (!raw && loc_core(c[idx].s, cn, tmp, sizeof tmp, depth + 1)) { for (const char *x = tmp; *x && o + 1 < cap; x++) out[o++] = *x; }
-                    else for (size_t k = 0; k < cn && o + 1 < cap; k++) out[o++] = c[idx].s[k];
+                    size_t cn = (size_t) c[idx].n;
+                    if (cn >= sizeof tmp)
+                        cn = sizeof tmp - 1;
+                    if (!raw
+                        && LocCore(c[idx].s, cn, tmp, sizeof tmp,
+                                    depth + 1)) {
+                        for (const char *x = tmp; *x && o + 1 < cap; x++)
+                            out[o++] = *x;
+                    } else
+                        for (size_t k = 0; k < cn && o + 1 < cap; k++)
+                            out[o++] = c[idx].s[k];
                 }
-                p = q + 1; continue;
+                p = q + 1;
+                continue;
             }
         }
         out[o++] = *p++;
@@ -175,34 +313,63 @@ static size_t loc_expand(const loc_tpl_t *t, const loc_cap_t *c, char *out, size
 }
 
 // translate one piece (no tags): exact, then templates. 1 = translated into out
-static int loc_piece(const char *s, size_t n, char *out, size_t cap, int depth) {
-    if (!n) return 0;
-    { size_t i = 0; while (i < n && !((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z'))) i++; if (i == n) return 0; }   // no letters (timers, numbers): nothing to translate
-    const char *tr = loc_exact(s, n);
-    if (tr) { snprintf(out, cap, "%s", tr); return 1; }
-    if (depth > 1) return 0;
+static int LocPiece(const char *s, size_t n, char *out, size_t cap,
+                     int depth)
+{
+    if (!n)
+        return 0;
+    {
+        size_t i = 0;
+        while (i < n
+               && !((s[i] >= 'A' && s[i] <= 'Z')
+                    || (s[i] >= 'a' && s[i] <= 'z')))
+            i++;
+        if (i == n)
+            return 0;
+    }                           // no letters (timers, numbers): nothing to translate
+    const char *tr = LocExact(s, n);
+    if (tr) {
+        snprintf(out, cap, "%s", tr);
+        return 1;
+    }
+    if (depth > 1)
+        return 0;
     char tmp[1024];
-    if (n >= sizeof tmp) return 0;
-    memcpy(tmp, s, n); tmp[n] = 0;
-    loc_cap_t c[12];
-    for (int i = 0; i < g_loc_ntpl; i++) {
-        const loc_tpl_t *t = &g_loc_tpl[i];
-        if (t->ncap > 12) continue;
-        if (t->p[0].kind == 0 && tmp[0] != t->p[0].lit[0]) continue;      // the first literal must start the string
-        if (loc_match(t, 0, tmp, c, 0)) { loc_expand(t, c, out, cap, depth); return 1; }
+    if (n >= sizeof tmp)
+        return 0;
+    memcpy(tmp, s, n);
+    tmp[n] = 0;
+    LocCapT c[12];
+    for (int i = 0; i < g_locNtpl; i++) {
+        const LocTplT *t = &g_locTpl[i];
+        if (t->ncap > 12)
+            continue;
+        if (t->p[0].kind == 0 && tmp[0] != t->p[0].lit[0])
+            continue;           // the first literal must start the string
+        if (LocMatch(t, 0, tmp, c, 0)) {
+            LocExpand(t, c, out, cap, depth);
+            return 1;
+        }
     }
     return 0;
 }
 
 // a string with leading / trailing blanks: the blanks are kept around the translation
-static int loc_trimmed(const char *s, size_t n, char *out, size_t cap, int depth) {
+static int LocTrimmed(const char *s, size_t n, char *out, size_t cap,
+                       int depth)
+{
     size_t a = 0, b = n;
-    while (a < b && (s[a] == ' ' || s[a] == '\t')) a++;
-    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t')) b--;
-    if (a == b) return 0;
+    while (a < b && (s[a] == ' ' || s[a] == '\t'))
+        a++;
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t'))
+        b--;
+    if (a == b)
+        return 0;
     char mid[1536];
-    if (!loc_piece(s + a, b - a, mid, sizeof mid, depth)) return 0;
-    snprintf(out, cap, "%.*s%s%.*s", (int)a, s, mid, (int)(n - b), s + b);
+    if (!LocPiece(s + a, b - a, mid, sizeof mid, depth))
+        return 0;
+    snprintf(out, cap, "%.*s%s%.*s", (int) a, s, mid, (int) (n - b),
+             s + b);
     return 1;
 }
 
@@ -210,48 +377,97 @@ static int loc_trimmed(const char *s, size_t n, char *out, size_t cap, int depth
 // dev diagnostic (non-English language): every distinct English-looking text piece that matches nothing is appended once to
 // t2r-loc-miss.txt next to the exe (max 500 lines), so a play session shows what is still untranslated. Pieces with a non-ASCII byte
 // (already localised game text) or without a 3-letter run (numbers, glyphs) are skipped.
-static void loc_log_miss(const char *s, size_t n) {
-    static uint64_t seen[2048]; static int lines;
-    if (lines >= 500 || n < 3 || n > 300) return;
+static void LocLogMiss(const char *s, size_t n)
+{
+    static uint64_t seen[2048];
+    static int lines;
+    if (lines >= 500 || n < 3 || n > 300)
+        return;
     int run = 0, ok = 0;
     for (size_t i = 0; i < n; i++) {
-        uint8_t c = (uint8_t)s[i];
-        if (c >= 0x80) return;
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) { if (++run >= 3) ok = 1; } else run = 0;
+        uint8_t c = (uint8_t) s[i];
+        if (c >= 0x80)
+            return;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+            if (++run >= 3)
+                ok = 1;
+        } else
+            run = 0;
     }
-    if (!ok) return;
-    uint64_t h = loc_fnv(s, n) | 1;
-    unsigned i = (unsigned)h & 2047;
-    for (int k = 0; k < 2048; k++, i = (i + 1) & 2047) { if (seen[i] == h) return; if (!seen[i]) { seen[i] = h; break; } }
-    FILE *f = exe_side_open("t2r-loc-miss.txt", "a");
-    if (!f) return;
-    for (size_t k = 0; k < n; k++) fputc(s[k] == '\n' ? ' ' : s[k], f);
-    fputc('\n', f); fclose(f); lines++;
+    if (!ok)
+        return;
+    uint64_t h = LocFnv(s, n) | 1;
+    unsigned i = (unsigned) h & 2047;
+    for (int k = 0; k < 2048; k++, i = (i + 1) & 2047) {
+        if (seen[i] == h)
+            return;
+        if (!seen[i]) {
+            seen[i] = h;
+            break;
+        }
+    }
+    FILE *f = ExeSideOpen("t2r-loc-miss.txt", "a");
+    if (!f)
+        return;
+    for (size_t k = 0; k < n; k++)
+        fputc(s[k] == '\n' ? ' ' : s[k], f);
+    fputc('\n', f);
+    fclose(f);
+    lines++;
 }
 #else
-#define loc_log_miss(s, n) ((void)0)
+#define LocLogMiss(s, n) ((void)0)
 #endif
 
-static int loc_core(const char *s, size_t n, char *out, size_t cap, int depth) {
-    if (loc_trimmed(s, n, out, cap, depth)) return 1;
+static int LocCore(const char *s, size_t n, char *out, size_t cap,
+                    int depth)
+{
+    if (LocTrimmed(s, n, out, cap, depth))
+        return 1;
     // split at rich-text tags (<...>, |...|) and newlines; every text piece on its own
-    size_t o = 0; int any = 0;
+    size_t o = 0;
+    int any = 0;
     for (size_t i = 0; i < n && o + 1 < cap;) {
         char c = s[i];
         if (c == '<' || c == '|') {
-            size_t j = i + 1; char close = c == '<' ? '>' : '|';
-            while (j < n && s[j] != close && s[j] != '\n') j++;
-            if (j < n && s[j] == close) { for (size_t k = i; k <= j && o + 1 < cap; k++) out[o++] = s[k]; i = j + 1; continue; }
+            size_t j = i + 1;
+            char close = c == '<' ? '>' : '|';
+            while (j < n && s[j] != close && s[j] != '\n')
+                j++;
+            if (j < n && s[j] == close) {
+                for (size_t k = i; k <= j && o + 1 < cap; k++)
+                    out[o++] = s[k];
+                i = j + 1;
+                continue;
+            }
         }
-        if (c == '\n') { out[o++] = c; i++; continue; }
+        if (c == '\n') {
+            out[o++] = c;
+            i++;
+            continue;
+        }
         size_t j = i;
-        while (j < n && s[j] != '\n' && s[j] != '<' && !(s[j] == '|' && j + 1 < n)) j++;
-        if (j == i) j = i + 1;
+        while (j < n && s[j] != '\n' && s[j] != '<'
+               && !(s[j] == '|' && j + 1 < n))
+            j++;
+        if (j == i)
+            j = i + 1;
         char piece[1536];
-        if (loc_trimmed(s + i, j - i, piece, sizeof piece, depth)) { any = 1; for (const char *x = piece; *x && o + 1 < cap; x++) out[o++] = *x; }
-        else {
-            if (!depth) { size_t a = i, b = j; while (a < b && (s[a] == ' ' || s[a] == '\t')) a++; while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t')) b--; loc_log_miss(s + a, b - a); }
-            for (size_t k = i; k < j && o + 1 < cap; k++) out[o++] = s[k];
+        if (LocTrimmed(s + i, j - i, piece, sizeof piece, depth)) {
+            any = 1;
+            for (const char *x = piece; *x && o + 1 < cap; x++)
+                out[o++] = *x;
+        } else {
+            if (!depth) {
+                size_t a = i, b = j;
+                while (a < b && (s[a] == ' ' || s[a] == '\t'))
+                    a++;
+                while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t'))
+                    b--;
+                LocLogMiss(s + a, b - a);
+            }
+            for (size_t k = i; k < j && o + 1 < cap; k++)
+                out[o++] = s[k];
         }
         i = j;
     }
@@ -261,111 +477,206 @@ static int loc_core(const char *s, size_t n, char *out, size_t cap, int depth) {
 
 #define LOC_RING 16
 #define LOC_BUF 1536
-static char g_loc_ring[LOC_RING][LOC_BUF];
-static volatile LONG g_loc_ri;
+static char g_locRing[LOC_RING][LOC_BUF];
+static volatile LONG g_locRi;
 
 // the translation of an English string in the active language (a ring buffer, valid for the next 16 calls), or the string itself
-static const char *loc_tr(const char *s) {
-    int lang = g_loc_cur;
-    if (lang < 0 || !s || !s[0]) return s;
-    if (g_loc_built != lang) return s;          // tables not (re)built yet
+static const char *LocTr(const char *s)
+{
+    int lang = g_locCur;
+    if (lang < 0 || !s || !s[0])
+        return s;
+    if (g_locBuilt != lang)
+        return s;               // tables not (re)built yet
     size_t n = strlen(s);
-    if (n >= LOC_BUF / 2) return s;
-    uint64_t h = loc_fnv(s, n) | 1;
-    if (g_loc_miss[h & 1023] == h) return s;
-    char *out = g_loc_ring[(unsigned)InterlockedIncrement(&g_loc_ri) % LOC_RING];
-    unsigned hi = (unsigned)(h >> 7) & 511;
-    if (g_loc_hit[hi].h == h) { memcpy(out, g_loc_hit[hi].t, g_loc_hit[hi].n + 1u); return out; }
-    if (loc_core(s, n, out, LOC_BUF, 0)) {
-        size_t on = strlen(out);
-        if (on < sizeof g_loc_hit[0].t) { g_loc_hit[hi].h = 0; memcpy(g_loc_hit[hi].t, out, on + 1); g_loc_hit[hi].n = (uint16_t)on; g_loc_hit[hi].h = h; }
+    if (n >= LOC_BUF / 2)
+        return s;
+    uint64_t h = LocFnv(s, n) | 1;
+    if (g_locMiss[h & 1023] == h)
+        return s;
+    char *out =
+        g_locRing[(unsigned) InterlockedIncrement(&g_locRi) % LOC_RING];
+    unsigned hi = (unsigned) (h >> 7) & 511;
+    if (g_loc_hit[hi].h == h) {
+        memcpy(out, g_loc_hit[hi].t, g_loc_hit[hi].n + 1u);
         return out;
     }
-    g_loc_miss[h & 1023] = h;
+    if (LocCore(s, n, out, LOC_BUF, 0)) {
+        size_t on = strlen(out);
+        if (on < sizeof g_loc_hit[0].t) {
+            g_loc_hit[hi].h = 0;
+            memcpy(g_loc_hit[hi].t, out, on + 1);
+            g_loc_hit[hi].n = (uint16_t) on;
+            g_loc_hit[hi].h = h;
+        }
+        return out;
+    }
+    g_locMiss[h & 1023] = h;
     return s;
 }
 
 // the translation as a pointer that stays valid (interned, never freed): for texts a caller hands to the engine as a char* it keeps
 // (the store's bridge strings, prompt labels). Finite sets only.
-static const char *loc_keep(const char *s) {
-    const char *t = loc_tr(s);
-    if (t == s) return s;
-    static struct { uint64_t h; char *s; } T[1024];
-    uint64_t h = loc_fnv(t, strlen(t)) | 1;
-    unsigned i = (unsigned)h & 1023;
+static const char *LocKeep(const char *s)
+{
+    const char *t = LocTr(s);
+    if (t == s)
+        return s;
+    static struct {
+        uint64_t h;
+        char *s;
+    } T[1024];
+    uint64_t h = LocFnv(t, strlen(t)) | 1;
+    unsigned i = (unsigned) h & 1023;
     for (int n = 0; n < 1024; n++, i = (i + 1) & 1023) {
-        if (T[i].h == h && !strcmp(T[i].s, t)) return T[i].s;
-        if (!T[i].h) { T[i].s = strdup(t); if (!T[i].s) return s; T[i].h = h; return T[i].s; }
+        if (T[i].h == h && !strcmp(T[i].s, t))
+            return T[i].s;
+        if (!T[i].h) {
+            T[i].s = strdup(t);
+            if (!T[i].s)
+                return s;
+            T[i].h = h;
+            return T[i].s;
+        }
     }
     return s;
 }
 
 // UTF-8 Polish letters -> ASCII (the raw text draw FUN_1800039d0 uses a font that may lack them): ą->a ć->c ę->e ł->l ń->n ó->o ś->s ź->z ż->z
-static const char *loc_fold(const char *s) {
-    int hi = 0; for (const char *p = s; *p; p++) if ((uint8_t)*p >= 0x80) { hi = 1; break; }
-    if (!hi) return s;
-    char *out = g_loc_ring[(unsigned)InterlockedIncrement(&g_loc_ri) % LOC_RING];
-    size_t o = 0;
-    for (const uint8_t *p = (const uint8_t *)s; *p && o + 1 < LOC_BUF; ) {
-        if (p[0] == 0xC4 || p[0] == 0xC5) {
-            static const struct { uint8_t a, b; char c; } F[] = {
-                {0xC4, 0x85, 'a'}, {0xC4, 0x84, 'A'}, {0xC4, 0x87, 'c'}, {0xC4, 0x86, 'C'}, {0xC4, 0x99, 'e'}, {0xC4, 0x98, 'E'},
-                {0xC5, 0x82, 'l'}, {0xC5, 0x81, 'L'}, {0xC5, 0x84, 'n'}, {0xC5, 0x83, 'N'}, {0xC5, 0x9B, 's'}, {0xC5, 0x9A, 'S'},
-                {0xC5, 0xBA, 'z'}, {0xC5, 0xB9, 'Z'}, {0xC5, 0xBC, 'z'}, {0xC5, 0xBB, 'Z'}};
-            int hit = 0;
-            for (unsigned i = 0; i < sizeof F / sizeof F[0]; i++) if (p[0] == F[i].a && p[1] == F[i].b) { out[o++] = F[i].c; p += 2; hit = 1; break; }
-            if (hit) continue;
+static const char *LocFold(const char *s)
+{
+    int hi = 0;
+    for (const char *p = s; *p; p++)
+        if ((uint8_t) * p >= 0x80) {
+            hi = 1;
+            break;
         }
-        if (p[0] == 0xC3 && (p[1] == 0xB3 || p[1] == 0x93)) { out[o++] = p[1] == 0xB3 ? 'o' : 'O'; p += 2; continue; }
-        out[o++] = (char)*p++;
+    if (!hi)
+        return s;
+    char *out =
+        g_locRing[(unsigned) InterlockedIncrement(&g_locRi) % LOC_RING];
+    size_t o = 0;
+    for (const uint8_t * p = (const uint8_t *)s; *p && o + 1 < LOC_BUF;) {
+        if (p[0] == 0xC4 || p[0] == 0xC5) {
+            static const struct {
+                uint8_t a, b;
+                char c;
+            } F[] = {
+                { 0xC4, 0x85, 'a' }, { 0xC4, 0x84, 'A' }, { 0xC4, 0x87,
+                                                           'c' }, { 0xC4,
+                                                                   0x86,
+                                                                   'C' },
+                    { 0xC4, 0x99, 'e' }, { 0xC4, 0x98, 'E' },
+                { 0xC5, 0x82, 'l' }, { 0xC5, 0x81, 'L' }, { 0xC5, 0x84,
+                                                           'n' }, { 0xC5,
+                                                                   0x83,
+                                                                   'N' },
+                    { 0xC5, 0x9B, 's' }, { 0xC5, 0x9A, 'S' },
+                { 0xC5, 0xBA, 'z' }, { 0xC5, 0xB9, 'Z' }, { 0xC5, 0xBC,
+                                                           'z' }, { 0xC5,
+                                                                   0xBB,
+                                                                   'Z' }
+            };
+            int hit = 0;
+            for (unsigned i = 0; i < sizeof F / sizeof F[0]; i++)
+                if (p[0] == F[i].a && p[1] == F[i].b) {
+                    out[o++] = F[i].c;
+                    p += 2;
+                    hit = 1;
+                    break;
+                }
+            if (hit)
+                continue;
+        }
+        if (p[0] == 0xC3 && (p[1] == 0xB3 || p[1] == 0x93)) {
+            out[o++] = p[1] == 0xB3 ? 'o' : 'O';
+            p += 2;
+            continue;
+        }
+        out[o++] = (char) *p++;
     }
     out[o] = 0;
     return out;
 }
+
 // for the raw text draws: translated, diacritics folded
-static const char *loc_tr_draw(const char *s) {
-    const char *t = loc_tr(s);
-    return t == s ? s : loc_fold(t);
+static const char *LocTrDraw(const char *s)
+{
+    const char *t = LocTr(s);
+    return t == s ? s : LocFold(t);
 }
 
-static int loc_probe_lang(int lang) {       // how many probe ids read back as this language's wording
-    const loc_lang_t *L = &LOC_LANGS[lang];
+static int LocProbeLang(int lang)
+{                               // how many probe ids read back as this language's wording
+    const LocLangT *L = &LOC_LANGS[lang];
     int hit = 0;
     for (int i = 0; i < L->npr; i++) {
         uint64_t id = L->pr[i].sid;
-        uint64_t r = dc_call(0xa2af69348e8d26adULL /* the text lookup native behind FUN_1800123d0: (&id) -> char* */, 1, &id);
-        const char *b = (const char *)r;
-        if (!b || b == (const char *)~0ULL || IsBadReadPtr(b, strlen(L->pr[i].tr) + 1)) continue;
-        if (!strncmp(b, L->pr[i].tr, strlen(L->pr[i].tr))) hit++;
+        uint64_t r =
+            DcCall(0xa2af69348e8d26adULL
+                    /* the text lookup native behind FUN_1800123d0: (&id) -> char* */
+                    , 1, &id);
+        const char *b = (const char *) r;
+        if (!b || b == (const char *) ~0ULL
+            || IsBadReadPtr(b, strlen(L->pr[i].tr) + 1))
+            continue;
+        if (!strncmp(b, L->pr[i].tr, strlen(L->pr[i].tr)))
+            hit++;
     }
     return hit;
 }
 
 // every 2 s from the tick: the text language of the loaded table (or the override)
-static void loc_detect(void) {
-    static uint64_t at; static int first = 1;
+static void LocDetect(void)
+{
+    static uint64_t at;
+    static int first = 1;
     uint64_t now = GetTickCount64();
-    if (g_frame < 300) return;                 // the engine's text system is up by then
-    if (!first && now - at < 2000) return;
-    first = 0; at = now;
+    if (g_frame < 300)
+        return;                 // the engine's text system is up by then
+    if (!first && now - at < 2000)
+        return;
+    first = 0;
+    at = now;
     int want = -1;
     const char *ov = getenv("T2R_LANG");
     char fb[16] = "";
-    FILE *f = exe_side_open("t2r-lang.txt", "r");
-    if (f) { if (fgets(fb, sizeof fb, f)) { char *e = fb + strlen(fb); while (e > fb && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ')) *--e = 0; } fclose(f); if (fb[0]) ov = fb; }
+    FILE *f = ExeSideOpen("t2r-lang.txt", "r");
+    if (f) {
+        if (fgets(fb, sizeof fb, f)) {
+            char *e = fb + strlen(fb);
+            while (e > fb
+                   && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' '))
+                *--e = 0;
+        }
+        fclose(f);
+        if (fb[0])
+            ov = fb;
+    }
     if (ov && ov[0] && strcmp(ov, "auto")) {
-        for (int i = 0; i < LOC_NLANG; i++) if (!strcmp(ov, LOC_LANGS[i].code)) want = i;
+        for (int i = 0; i < LOC_NLANG; i++)
+            if (!strcmp(ov, LOC_LANGS[i].code))
+                want = i;
     } else {
         for (int i = 0; i < LOC_NLANG; i++) {
-            int n = loc_probe_lang(i);
-            if (n * 2 > LOC_LANGS[i].npr) { want = i; break; }
+            int n = LocProbeLang(i);
+            if (n * 2 > LOC_LANGS[i].npr) {
+                want = i;
+                break;
+            }
         }
     }
-    if (want != g_loc_cur) {
-        xlog("loc: text language %s -> %s%s", g_loc_cur < 0 ? "en" : LOC_LANGS[g_loc_cur].code, want < 0 ? "en" : LOC_LANGS[want].code, ov && ov[0] ? " (override)" : "");
-        g_loc_cur = -1;                         // lookups pass through while the tables are rebuilt
-        if (want >= 0) loc_build(want);
-        g_loc_cur = want; g_loc_gen++; g_ui_gen++;
+    if (want != g_locCur) {
+        Xlog("loc: text language %s -> %s%s",
+             g_locCur < 0 ? "en" : LOC_LANGS[g_locCur].code,
+             want < 0 ? "en" : LOC_LANGS[want].code, ov
+             && ov[0] ? " (override)" : "");
+        g_locCur = -1;         // lookups pass through while the tables are rebuilt
+        if (want >= 0)
+            LocBuild(want);
+        g_locCur = want;
+        g_locGen++;
+        g_uiGen++;
     }
-    g_loc_probed = 1;                          // the text language is known now (the clan feed waits for it: no English flash in a Polish game)
+    g_locProbed = 1;           // the text language is known now (the clan feed waits for it: no English flash in a Polish game)
 }

@@ -1,0 +1,3 @@
+set(TO1_GAME_INSTALLS
+    "C:/path/to/a/test/copy/of/the/game"
+    "C:/path/to/The Last of Us Part II")

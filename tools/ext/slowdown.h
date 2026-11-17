@@ -7,18 +7,29 @@
 #ifndef T2R_SLOWDOWN_H
 #define T2R_SLOWDOWN_H
 #define SD_MOVE 0.90f
-#define SD_SYSTEMS 5      // calmed systems besides locomotion: death-reaction blend, downed-melee blends, whiff-recovery rate, down-entry time, downed crawl
-static int sd_off(void) {
-    static int v = -1; static uint64_t at;
+#define SD_SYSTEMS 5            // calmed systems besides locomotion: death-reaction blend, downed-melee blends, whiff-recovery rate, down-entry time, downed crawl
+static int SdOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
     uint64_t n = GetTickCount64();
     if (v < 0 || n - at > 2000) {
         at = n;
-        FILE *f = exe_side_open("t2r-no-slowdown.txt", "r");
+        FILE *f = ExeSideOpen("t2r-no-slowdown.txt", "r");
         v = f != NULL;
-        if (f) fclose(f);
+        if (f)
+            fclose(f);
     }
     return v;
 }
-static float sd_mul(void) { return sd_off() ? 1.0f : SD_MOVE; }
-static float sd_f(float calm, float orig) { return sd_off() ? orig : calm; }
+
+static float SdMul(void)
+{
+    return SdOff()? 1.0f : SD_MOVE;
+}
+
+static float SdF(float calm, float orig)
+{
+    return SdOff()? orig : calm;
+}
 #endif

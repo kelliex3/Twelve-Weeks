@@ -1,0 +1,92 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "vs-base",
+      "hidden": true,
+      "description": "Needs the 'C++ Clang tools for Windows' component from the Visual Studio Installer, plus gui2.exe / ndarc.exe / python3 on PATH.",
+      "toolset": "ClangCL",
+      "architecture": "x64"
+    },
+    {
+      "name": "vs2022",
+      "inherits": "vs-base",
+      "displayName": "Visual Studio 2022 (ClangCL, x64) -- TO1Debug + TO1Release",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "vs2026",
+      "inherits": "vs-base",
+      "displayName": "Visual Studio 2026 (ClangCL, x64) -- TO1Debug + TO1Release",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build-vs2026"
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Ninja + clang-cl (TO1Debug)",
+      "description": "clang-cl/lld-link/llvm-ml/llvm-rc from PATH; no vcvars needed.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "TO1Debug",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja + clang-cl (TO1Release)",
+      "description": "clang-cl/lld-link/llvm-ml/llvm-rc from PATH; no vcvars needed.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "TO1Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "to1-debug",
+      "displayName": "TO1 (Debug)",
+      "configurePreset": "vs2022",
+      "configuration": "TO1Debug"
+    },
+    {
+      "name": "to1-release",
+      "displayName": "TO1 (Release)",
+      "configurePreset": "vs2022",
+      "configuration": "TO1Release"
+    },
+    {
+      "name": "to1-debug-vs2026",
+      "displayName": "TO1 (Debug, VS2026)",
+      "configurePreset": "vs2026",
+      "configuration": "TO1Debug"
+    },
+    {
+      "name": "to1-release-vs2026",
+      "displayName": "TO1 (Release, VS2026)",
+      "configurePreset": "vs2026",
+      "configuration": "TO1Release"
+    },
+    {
+      "name": "ninja-debug",
+      "displayName": "Ninja TO1 (Debug)",
+      "configurePreset": "ninja-debug",
+      "environment": {
+        "TERM": "dumb"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja TO1 (Release)",
+      "configurePreset": "ninja-release",
+      "environment": {
+        "TERM": "dumb"
+      }
+    }
+  ]
+}

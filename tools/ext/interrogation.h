@@ -16,4 +16,8 @@
 //
 // Unlocking: hold E (pad: the interact button) within LB_RANGE of the enemy lockbox; 3 stages, each its own hold, a finished stage stays done (2 checkpoints
 // between the 3 stages: letting go inside a stage loses only that stage's progress).
-typedef struct { int ok, on, map, team, need, kpi, p[2], rev[2], box[2], st[2], h[2], win, ended, sp; float hold; } int_t;   // sp: unlock speed steps so far (server 'sp')
+typedef struct {
+    int ok, on, map, team, need, kpi, p[2], rev[2], box[2], st[2], h[2],
+        win, ended, sp;
+    float hold;
+} IntT;                        // sp: unlock speed steps so far (server 'sp')

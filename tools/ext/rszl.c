@@ -7,45 +7,78 @@
 // A garage-door walk must show these keys going out -> in over ~1 s together with sun rgbi-i 2.8 -> 0 (RSZ line). A key that stays at its outdoor value
 // indoors (or vice versa) while the RSZ tonemap / sun keys move is a zone row the engine did not take. Opt-out: t2r-no-rszl.txt.
 #include "rszl_keys.h"
-static void imm_rszl_tick(int in_match) {
-    static uint64_t at, full_at, nf_a; static float prev[RSZL_N]; static int have, nf_v;
-    if (!in_match) { have = 0; return; }
+static void ImmRszlTick(int in_match)
+{
+    static uint64_t at, full_at, nf_a;
+    static float prev[RSZL_N];
+    static int have, nf_v;
+    if (!in_match) {
+        have = 0;
+        return;
+    }
     uint64_t t = GetTickCount64();
-    if (t - at < 250 || imm_noflag("t2r-no-rszl.txt", &nf_a, &nf_v)) return;
+    if (t - at < 250 || ImmNoflag("t2r-no-rszl.txt", &nf_a, &nf_v))
+        return;
     at = t;
     float cp[3], cd[3];
-    if (!cam_pos_dir(cp, cd)) return;
+    if (!CamPosDir(cp, cd))
+        return;
     float v[RSZL_N];
-    uint64_t fn = fnv64("get-render-setting-value-float");
+    uint64_t fn = FNV64("get-render-setting-value-float");
     for (int i = 0; i < RSZL_N; i++) {
-        uint64_t a = g_rszl_keys[i].id, r = dc_call(fn, 1, &a);
-        uint32_t u = (uint32_t)r; float f; memcpy(&f, &u, 4); v[i] = r == ~0ULL ? NAN : f;
+        uint64_t a = g_rszlKeys[i].id, r = DcCall(fn, 1, &a);
+        uint32_t u = (uint32_t) r;
+        float f;
+        memcpy(&f, &u, 4);
+        v[i] = r == ~0ULL ? NAN : f;
     }
-    char head[96]; snprintf(head, sizeof head, "cam=%.2f,%.2f,%.2f", (double)cp[0], (double)cp[1], (double)cp[2]);
+    char head[96];
+    snprintf(head, sizeof head, "cam=%.2f,%.2f,%.2f", (double) cp[0],
+             (double) cp[1], (double) cp[2]);
     if (!have || t - full_at >= 20000) {
         full_at = t;
         const int per = 45, parts = (RSZL_N + per - 1) / per;
         for (int p = 0; p < parts; p++) {
-            char line[4000]; int q = 0;
-            for (int i = p * per; i < RSZL_N && i < (p + 1) * per && q < (int)sizeof line - 160; i++) {
-                const rszl_key *k = &g_rszl_keys[i];
-                q += snprintf(line + q, sizeof line - q, " %s=%g[", k->name, (double)v[i]);
-                q += __builtin_isnan(k->out) ? snprintf(line + q, sizeof line - q, "-|") : snprintf(line + q, sizeof line - q, "%g|", (double)k->out);
-                q += __builtin_isnan(k->in) ? snprintf(line + q, sizeof line - q, "-]") : snprintf(line + q, sizeof line - q, "%g]", (double)k->in);
+            char line[4000];
+            int q = 0;
+            for (int i = p * per;
+                 i < RSZL_N && i < (p + 1) * per
+                 && q < (int) sizeof line - 160; i++) {
+                const RszlKey *k = &g_rszlKeys[i];
+                q += snprintf(line + q, sizeof line - q, " %s=%g[",
+                              k->name, (double) v[i]);
+                q += __builtin_isnan(k->out) ? snprintf(line + q,
+                                                        sizeof line - q,
+                                                        "-|") :
+                    snprintf(line + q, sizeof line - q, "%g|",
+                             (double) k->out);
+                q += __builtin_isnan(k->in) ? snprintf(line + q,
+                                                       sizeof line - q,
+                                                       "-]") :
+                    snprintf(line + q, sizeof line - q, "%g]",
+                             (double) k->in);
             }
-            xlog("RSZLFULL %s part %d/%d%s", head, p + 1, parts, line);
+            Xlog("RSZLFULL %s part %d/%d%s", head, p + 1, parts, line);
         }
     }
     if (have) {
-        char line[3500]; int q = 0, nch = 0;
-        for (int i = 0; i < RSZL_N && q < (int)sizeof line - 120; i++) {
+        char line[3500];
+        int q = 0, nch = 0;
+        for (int i = 0; i < RSZL_N && q < (int) sizeof line - 120; i++) {
             float a = prev[i], b = v[i];
-            if (__builtin_isnan(a) && __builtin_isnan(b)) continue;
+            if (__builtin_isnan(a) && __builtin_isnan(b))
+                continue;
             float tol = 0.002f * fabsf(a) + 1e-4f;
-            if (!__builtin_isnan(a) && !__builtin_isnan(b) && fabsf(a - b) <= tol) continue;
-            nch++; q += snprintf(line + q, sizeof line - q, " %s %g->%g", g_rszl_keys[i].name, (double)a, (double)b);
+            if (!__builtin_isnan(a) && !__builtin_isnan(b)
+                && fabsf(a - b) <= tol)
+                continue;
+            nch++;
+            q += snprintf(line + q, sizeof line - q, " %s %g->%g",
+                          g_rszlKeys[i].name, (double) a, (double) b);
         }
-        if (nch) xlog("RSZL %s n=%d%s", head, nch, line);
+        if (nch)
+            Xlog("RSZL %s n=%d%s", head, nch, line);
     }
-    memcpy(prev, v, sizeof v); have = 1;
+    memcpy(prev, v, sizeof v);
+    have = 1;
 }

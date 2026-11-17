@@ -3,49 +3,88 @@
 // and interpolates linearly (hf_draw). Reaction / gap values already contain the real network delay of those matches (logged on the receiving client).
 // A table with n < 12 is marked TUNING: no measurement behind it.
 // Sources: 3 local match logs (10.9 melee min) and 24 live match logs (87.6 melee min).
-typedef struct { const char *name; int n; float q[9]; } hf_dist;
+typedef struct {
+    const char *name;
+    int n;
+    float q[9];
+} HfDist;
 #define HF_MIN_N 12
 // after_hit_dist_change_m: pair distance 1.5-4.5 s after a hit taken minus the distance before it (+ = retreat), 2 s sampling [m1108 n=27, live n=249]
-static const hf_dist HF_AFTER_HIT_DIST_CHANGE_M = {"after_hit_dist_change_m", 276, {-5.2427f, -3.6447f, -2.818f, -1.213f, -1.4433e-14f, 1.1164f, 4.258f, 6.3624f, 9.4327f}};
+static const HfDist HF_AFTER_HIT_DIST_CHANGE_M =
+    { "after_hit_dist_change_m", 276, { -5.2427f, -3.6447f, -2.818f,
+                                       -1.213f, -1.4433e-14f, 1.1164f,
+                                       4.258f, 6.3624f, 9.4327f } };
 // dodge_react_ms: evade press N ms after the incoming swing was announced on this client ("dodge: PRESS N ms into slot s swing") [m1108 n=58, live n=146]
-static const hf_dist HF_DODGE_REACT_MS = {"dodge_react_ms", 204, {0.0f, 47.0f, 109.0f, 230.25f, 359.0f, 515.25f, 705.9f, 794.75f, 969.0f}};
+static const HfDist HF_DODGE_REACT_MS =
+    { "dodge_react_ms", 204, { 0.0f, 47.0f, 109.0f, 230.25f, 359.0f,
+                              515.25f, 705.9f, 794.75f, 969.0f } };
 // evade_burst_size: presses in a burst of >= 3 evade presses within 2 s [m1108 n=11, live n=37]
-static const hf_dist HF_EVADE_BURST_SIZE = {"evade_burst_size", 48, {3.0f, 3.0f, 3.0f, 3.0f, 4.0f, 5.0f, 6.0f, 6.0f, 10.0f}};
+static const HfDist HF_EVADE_BURST_SIZE =
+    { "evade_burst_size", 48, { 3.0f, 3.0f, 3.0f, 3.0f, 4.0f, 5.0f, 6.0f,
+                               6.0f, 10.0f } };
 // evade_gap_ms: gap between consecutive evade presses of any kind (window, free whiff, no swing), < 6 s [m1108 n=100, live n=313]
-static const hf_dist HF_EVADE_GAP_MS = {"evade_gap_ms", 413, {100.0f, 154.93f, 172.14f, 245.9f, 1464.6f, 3060.0f, 4577.6f, 5231.4f, 5972.0f}};
+static const HfDist HF_EVADE_GAP_MS =
+    { "evade_gap_ms", 413, { 100.0f, 154.93f, 172.14f, 245.9f, 1464.6f,
+                            3060.0f, 4577.6f, 5231.4f, 5972.0f } };
 // fight_pair_dist_m: distance of the two players at matchdiag pos samples in melee (own client) [m1108 n=196, live n=874]
-static const hf_dist HF_FIGHT_PAIR_DIST_M = {"fight_pair_dist_m", 1070, {0.1f, 0.5099f, 0.67082f, 0.94868f, 1.3342f, 2.6655f, 4.0626f, 4.5373f, 5.0f}};
+static const HfDist HF_FIGHT_PAIR_DIST_M =
+    { "fight_pair_dist_m", 1070, { 0.1f, 0.5099f, 0.67082f, 0.94868f,
+                                  1.3342f, 2.6655f, 4.0626f, 4.5373f,
+                                  5.0f } };
 // fight_swings: swings (own + incoming) per fight cluster (gap > 8 s splits) [m1108 n=18, live n=65]
-static const hf_dist HF_FIGHT_SWINGS = {"fight_swings", 83, {1.0f, 1.0f, 1.0f, 3.0f, 8.0f, 10.5f, 13.8f, 15.0f, 18.0f}};
+static const HfDist HF_FIGHT_SWINGS =
+    { "fight_swings", 83, { 1.0f, 1.0f, 1.0f, 3.0f, 8.0f, 10.5f, 13.8f,
+                           15.0f, 18.0f } };
 // fight_swings_per_s: swings per second inside clusters of >= 4 swings [m1108 n=16, live n=44]
-static const hf_dist HF_FIGHT_SWINGS_PER_S = {"fight_swings_per_s", 60, {0.43844f, 0.59483f, 0.64281f, 0.79066f, 0.91086f, 1.1105f, 1.2787f, 1.3786f, 1.7771f}};
+static const HfDist HF_FIGHT_SWINGS_PER_S =
+    { "fight_swings_per_s", 60, { 0.43844f, 0.59483f, 0.64281f, 0.79066f,
+                                 0.91086f, 1.1105f, 1.2787f, 1.3786f,
+                                 1.7771f } };
 // fighter_speed_lb_mps: LOWER BOUND of a fighter speed: displacement between two matchdiag pos samples ~2 s apart, in melee [m1108 n=196, live n=874]
-static const hf_dist HF_FIGHTER_SPEED_LB_MPS = {"fighter_speed_lb_mps", 1070, {0.0f, 0.03797f, 0.10671f, 0.30544f, 0.64825f, 1.1777f, 1.9782f, 2.6038f, 6.2128f}};
+static const HfDist HF_FIGHTER_SPEED_LB_MPS =
+    { "fighter_speed_lb_mps", 1070, { 0.0f, 0.03797f, 0.10671f, 0.30544f,
+                                     0.64825f, 1.1777f, 1.9782f, 2.6038f,
+                                     6.2128f } };
 // mash_into_lock_ms: ms into the pace lock when a melee press was buffered (mpace "melee press N ms into the lock buffered") = mashing [m1108 n=4, live n=41]
-static const hf_dist HF_MASH_INTO_LOCK_MS = {"mash_into_lock_ms", 45, {62.0f, 78.0f, 93.4f, 141.0f, 188.0f, 485.0f, 843.6f, 946.8f, 985.0f}};
+static const HfDist HF_MASH_INTO_LOCK_MS =
+    { "mash_into_lock_ms", 45, { 62.0f, 78.0f, 93.4f, 141.0f, 188.0f,
+                                485.0f, 843.6f, 946.8f, 985.0f } };
 // own_swing_gap_ms: own consecutive swing starts, every combo step, from the DUEL SWING lines, repeats < 150 ms merged, < 6 s [m1108 n=100, live n=273]
-static const hf_dist HF_OWN_SWING_GAP_MS = {"own_swing_gap_ms", 373, {252.25f, 529.68f, 598.99f, 706.42f, 991.6f, 1671.1f, 2607.8f, 3514.6f, 5463.0f}};
+static const HfDist HF_OWN_SWING_GAP_MS =
+    { "own_swing_gap_ms", 373, { 252.25f, 529.68f, 598.99f, 706.42f,
+                                991.6f, 1671.1f, 2607.8f, 3514.6f,
+                                5463.0f } };
 // own_swing_start_dist_m: flat distance to the target when a fresh own swing starts ("DUEL: SWING ... step 1 ... start X m") [m1108 n=77, live n=203]
-static const hf_dist HF_OWN_SWING_START_DIST_M = {"own_swing_start_dist_m", 280, {0.36f, 0.7895f, 0.86f, 1.095f, 1.435f, 1.8125f, 2.543f, 2.82f, 4.08f}};
+static const HfDist HF_OWN_SWING_START_DIST_M =
+    { "own_swing_start_dist_m", 280, { 0.36f, 0.7895f, 0.86f, 1.095f,
+                                      1.435f, 1.8125f, 2.543f, 2.82f,
+                                      4.08f } };
 // pin_blow_gap_ms: attacker pin: consecutive blow QTE opens (next press = next blow), < 4 s [m1108 n=7, live n=0]  ** TUNING (n < 12) **
-static const hf_dist HF_PIN_BLOW_GAP_MS = {"pin_blow_gap_ms", 7, {828.28f, 831.31f, 834.34f, 838.38f, 838.38f, 948.6f, 983.18f, 991.59f, 1000.0f}};
+static const HfDist HF_PIN_BLOW_GAP_MS =
+    { "pin_blow_gap_ms", 7, { 828.28f, 831.31f, 834.34f, 838.38f, 838.38f,
+                             948.6f, 983.18f, 991.59f, 1000.0f } };
 // their_swing_gap_ms: opponent consecutive swing announces per slot (DUEL "slot s swings" lines), < 6 s [m1108 n=86, live n=243]
-static const hf_dist HF_THEIR_SWING_GAP_MS = {"their_swing_gap_ms", 329, {222.22f, 533.56f, 616.31f, 724.64f, 1004.8f, 1647.1f, 2623.1f, 3494.7f, 5600.0f}};
+static const HfDist HF_THEIR_SWING_GAP_MS =
+    { "their_swing_gap_ms", 329, { 222.22f, 533.56f, 616.31f, 724.64f,
+                                  1004.8f, 1647.1f, 2623.1f, 3494.7f,
+                                  5600.0f } };
 // their_swing_start_dist_m: distance of an incoming swing when its dodge window opens ("dodge: window OPEN ... at X m") [m1108 n=67, live n=164]
-static const hf_dist HF_THEIR_SWING_START_DIST_M = {"their_swing_start_dist_m", 231, {0.36f, 0.71f, 0.87f, 1.1f, 1.41f, 2.075f, 2.7f, 3.15f, 3.6f}};
+static const HfDist HF_THEIR_SWING_START_DIST_M =
+    { "their_swing_start_dist_m", 231, { 0.36f, 0.71f, 0.87f, 1.1f, 1.41f,
+                                        2.075f, 2.7f, 3.15f, 3.6f } };
 // scalar rates (pooled): value, n, meaning
 // evade_burst_share: share of dud evade presses that sit inside a burst of >= 3 within 2 s | per group: m1108 0.407 (n=11), live 0.376 (n=37)
 #define HF_EVADE_BURST_SHARE 0.38281f   /* pooled, n=48 */
 // dodge_follow_rate: evade presses <= 480 ms after the incoming swing was announced / incoming-swing windows opened | per group: m1108 0.507 (n=67), live 0.659 (n=164)
 #define HF_DODGE_FOLLOW_RATE 0.61472f   /* pooled, n=231 */
 // dodge_press_any_rate: evade presses <= 1000 ms after the announce (incl. too-late ones) / incoming-swing windows opened | per group: m1108 0.866 (n=67), live 0.890 (n=164)
-#define HF_DODGE_PRESS_ANY_RATE 0.88312f   /* pooled, n=231 */
+#define HF_DODGE_PRESS_ANY_RATE 0.88312f        /* pooled, n=231 */
 // dud_evade_per_min: evade presses with no swing to dodge, per melee minute | per group: m1108 9.875 (n=108), live 4.613 (n=404)
-#define HF_DUD_EVADE_PER_MIN 5.1975f   /* pooled, n=512 */
+#define HF_DUD_EVADE_PER_MIN 5.1975f    /* pooled, n=512 */
 // mash_share: buffered melee presses during the pace lock / own swing starts | per group: m1108 0.174 (n=4), live 0.387 (n=41)
-#define HF_MASH_SHARE 0.34884f   /* pooled, n=45 */
+#define HF_MASH_SHARE 0.34884f  /* pooled, n=45 */
 // qte_miss_rate: pin QTE windows closed without a valid press / windows opened on us | per group: m1108 0.600 (n=5), live 1.000 (n=1)
-#define HF_QTE_MISS_RATE 0.66667f   /* pooled, n=6, TUNING (n < 12) */
+#define HF_QTE_MISS_RATE 0.66667f       /* pooled, n=6, TUNING (n < 12) */
 // play_kind6_per_min: psync PLAY events of kind 6 (melee sequence pair (swing / hit)) per melee minute (both roles, our client) | per group: m1108 20.390 (n=223), live 8.861 (n=776)
 #define HF_PLAY_KIND6_PER_MIN 10.141f   /* pooled, n=999 */
 // play_kind2_per_min: psync PLAY events of kind 2 (execution) per melee minute (both roles, our client) | per group: m1108 1.097 (n=12), live 2.455 (n=215)
@@ -57,20 +96,34 @@ static const hf_dist HF_THEIR_SWING_START_DIST_M = {"their_swing_start_dist_m", 
 #define HF_MELEE_MIN 98.509f
 // UNMEASURABLE from the logs (tunings in bot.c, personality table): approach speed at swing start (positions are sampled every ~2 s), strafe / circling
 // direction-change interval, tap length of a press, dud-press probability per second inside a fight.
-static float hf_draw(const hf_dist *d, uint32_t *rng) {
-    *rng ^= *rng << 13; *rng ^= *rng >> 17; *rng ^= *rng << 5;
-    static const float P[9] = {0.0f, 0.05f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 0.95f, 1.0f};
-    float u = (float)(*rng >> 8) / 16777216.0f; int i = 0;
-    while (i < 7 && u > P[i + 1]) i++;
+static float HfDraw(const HfDist *d, uint32_t *rng)
+{
+    *rng ^= *rng << 13;
+    *rng ^= *rng >> 17;
+    *rng ^= *rng << 5;
+    static const float P[9] =
+        { 0.0f, 0.05f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 0.95f, 1.0f };
+    float u = (float) (*rng >> 8) / 16777216.0f;
+    int i = 0;
+    while (i < 7 && u > P[i + 1])
+        i++;
     float span = P[i + 1] - P[i], k = span > 0 ? (u - P[i]) / span : 0;
     return d->q[i] + (d->q[i + 1] - d->q[i]) * k;
 }
+
 // the same with the draw squeezed into the quantile band [lo, hi] of the distribution (personalities: an aggressor draws its swing gap from the fast half)
-static float hf_draw_band(const hf_dist *d, uint32_t *rng, float lo, float hi) {
-    *rng ^= *rng << 13; *rng ^= *rng >> 17; *rng ^= *rng << 5;
-    static const float P[9] = {0.0f, 0.05f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 0.95f, 1.0f};
-    float u = lo + ((float)(*rng >> 8) / 16777216.0f) * (hi - lo); int i = 0;
-    while (i < 7 && u > P[i + 1]) i++;
+static float HfDrawBand(const HfDist *d, uint32_t *rng, float lo,
+                          float hi)
+{
+    *rng ^= *rng << 13;
+    *rng ^= *rng >> 17;
+    *rng ^= *rng << 5;
+    static const float P[9] =
+        { 0.0f, 0.05f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 0.95f, 1.0f };
+    float u = lo + ((float) (*rng >> 8) / 16777216.0f) * (hi - lo);
+    int i = 0;
+    while (i < 7 && u > P[i + 1])
+        i++;
     float span = P[i + 1] - P[i], k = span > 0 ? (u - P[i]) / span : 0;
     return d->q[i] + (d->q[i + 1] - d->q[i]) * k;
 }

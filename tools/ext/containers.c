@@ -23,121 +23,201 @@
 // Switch: t2r-no-container-loot.txt next to the exe = off (default ON). Maps without containers (CL_MAP[map].n == 0) are untouched.
 // Logs: 'container loot:' (start, seed, roll, spawn, picked up, remote taken, respawn).
 #include "containers.h"
-static int isp_is_ammo(const char *it);                                              // itemspots.c (included after this file)
-static const char *isp_ammo_for_me(const char *cls, uint64_t salt, uint64_t *count);
+static int IspIsAmmo(const char *it); // itemspots.c (included after this file)
+static const char *IspAmmoForMe(const char *cls, uint64_t salt,
+                                   uint64_t * count);
 
-#define MSG_CLOOT 0x66              // ours: [u8 op] op 0 = ask for the seed; 1 [u32 seed]; 2 [u8 container][u8 roll no.] = taken
-#define CL_MAX 16                   // containers per map (13 is the most: Downtown)
-#define CL_START_MS 8000            // after the match goes live (the world, the player, the first frames)
-#define CL_MIN_S 120                // respawn / re-roll delay 120..150 s (was 60..90; 2013 had no container loot at all)
+#define MSG_CLOOT 0x66          // ours: [u8 op] op 0 = ask for the seed; 1 [u32 seed]; 2 [u8 container][u8 roll no.] = taken
+#define CL_MAX 16               // containers per map (13 is the most: Downtown)
+#define CL_START_MS 8000        // after the match goes live (the world, the player, the first frames)
+#define CL_MIN_S 120            // respawn / re-roll delay 120..150 s (was 60..90; 2013 had no container loot at all)
 #define CL_SPAN_S 31
-typedef struct { const char *item; uint8_t count; uint8_t w; } cl_loot_t;
+typedef struct {
+    const char *item;
+    uint8_t count;
+    uint8_t w;
+} ClLootT;
 // Weights sum to 100. Counts: 2013 box sizes (an ingredient = one whole recipe's worth = 4 units, supplybox.c B13_ING_UNITS;
 // ammo = the 2013 small pickup of the gun, B13_AMMO[].small). Value order (2013 Factions): pipe bomb (nail bomb) > health kit >
 // molotov > stun (smoke) bomb > shiv > ammo / materials.
-static const cl_loot_t CL_LOOT[] = {
-    {NULL, 0, 28},                                           // empty
-    {"alcohol", 4, 4}, {"rag", 4, 4}, {"canister", 4, 3}, {"explosive", 4, 3}, {"binding", 4, 3}, {"blade", 4, 3},       // 20 materials
-    {"ammo-pistol", 3, 5}, {"ammo-revolver", 2, 2}, {"ammo-rifle-vepr", 3, 3}, {"ammo-shotgun", 2, 3},
-    {"ammo-rifle", 2, 3}, {"ammo-shotgun-baserri", 2, 2},                                                               // 18 small ammo
-    {"shiv", 1, 9}, {"smoke-bomb", 1, 8}, {"molotov", 1, 7}, {"health-kit", 1, 6}, {"pipe-bomb", 1, 4},                  // 34 gear
+static const ClLootT CL_LOOT[] = {
+    { NULL, 0, 28 },            // empty
+    { "alcohol", 4, 4 }, { "rag", 4, 4 }, { "canister", 4, 3 }, { "explosive", 4, 3 }, { "binding", 4, 3 }, { "blade", 4, 3 },  // 20 materials
+    { "ammo-pistol", 3, 5 }, { "ammo-revolver", 2, 2 },
+        { "ammo-rifle-vepr", 3, 3 }, { "ammo-shotgun", 2, 3 },
+    { "ammo-rifle", 2, 3 }, { "ammo-shotgun-baserri", 2, 2 },   // 18 small ammo
+    { "shiv", 1, 9 }, { "smoke-bomb", 1, 8 }, { "molotov", 1, 7 }, { "health-kit", 1, 6 }, { "pipe-bomb", 1, 4 },       // 34 gear
 };
 enum { CL_ST_WAIT, CL_ST_HOLD, CL_ST_COOL };
 #define CL_NREF 4
-static const char *const CL_JOINTS[] = {"drawer", "cab-r", "cab-l", "cab-r-short", "cab-l-short", "door", "door-l", "door-r", "handle"};
+static const char *const CL_JOINTS[] =
+    { "drawer", "cab-r", "cab-l", "cab-r-short", "cab-l-short", "door",
+"door-l", "door-r", "handle" };
 static struct {
-    uint32_t seed;                 // 0 = not known yet
+    uint32_t seed;              // 0 = not known yet
     int active, map, n;
     uint64_t live_ms, seed_tx_ms, seed_rq_ms, seed_tx_until;
     struct {
-        int st, rolls, taken;       // rolls = rolls done; taken = highest roll number reported taken (-1)
-        int kill, item;             // kill: remove our pickup in the tick (remote taken); item = CL_LOOT index of the held pickup
+        int st, rolls, taken;   // rolls = rolls done; taken = highest roll number reported taken (-1)
+        int kill, item;         // kill: remove our pickup in the tick (remote taken); item = CL_LOOT index of the held pickup
         uint64_t h, due, spawned_ms;
         uint8_t fails;
         // height probe (async static-world ray down) and the follow-the-container state
         int hy_state, hy_tries, have_hy, ref_state, nref, moved;
         uint64_t hy_job, hy_ms;
-        float hy_start, hy;              // ray start y; the surface y the pickup sits on
-        float jn0[CL_NREF][8];           // closed pose of each candidate moving part (joint words: pos xyzw, quat xyzw)
-        int jn_idx[CL_NREF];             // index into CL_JOINTS (-1 = the object's own locator)
+        float hy_start, hy;     // ray start y; the surface y the pickup sits on
+        float jn0[CL_NREF][8];  // closed pose of each candidate moving part (joint words: pos xyzw, quat xyzw)
+        int jn_idx[CL_NREF];    // index into CL_JOINTS (-1 = the object's own locator)
     } c[CL_MAX];
-    struct { uint8_t ci, n, left; uint64_t at; } tx[8];     // taken messages still to be (re)sent
+    struct {
+        uint8_t ci, n, left;
+        uint64_t at;
+    } tx[8];                    // taken messages still to be (re)sent
 } g_cl;
-static int g_cl_off = -1;
+static int g_clOff = -1;
 
-static uint64_t cl_mix(uint64_t x) {      // splitmix64 finaliser
+static uint64_t ClMix(uint64_t x)
+{                               // splitmix64 finaliser
     x += 0x9E3779B97F4A7C15ULL;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
     x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
     return x ^ (x >> 31);
 }
-static uint64_t cl_rnd(int ci, int n, int salt) { return cl_mix(((uint64_t)g_cl.seed << 32) ^ ((uint64_t)(ci + 1) << 16) ^ ((uint64_t)(n + 1) << 4) ^ (uint64_t)salt); }
-static int cl_roll(int ci, int n) {       // CL_LOOT index
+
+static uint64_t ClRnd(int ci, int n, int salt)
+{
+    return ClMix(((uint64_t) g_cl.seed << 32) ^
+                  ((uint64_t) (ci + 1) << 16) ^ ((uint64_t) (n + 1) << 4) ^
+                  (uint64_t) salt);
+}
+
+static int ClRoll(int ci, int n)
+{                               // CL_LOOT index
     int tot = 0;
-    for (size_t i = 0; i < sizeof CL_LOOT / sizeof *CL_LOOT; i++) tot += CL_LOOT[i].w;
-    int r = (int)(cl_rnd(ci, n, 1) % (uint64_t)tot);
-    for (size_t i = 0; i < sizeof CL_LOOT / sizeof *CL_LOOT; i++) { if (r < CL_LOOT[i].w) return (int)i; r -= CL_LOOT[i].w; }
+    for (size_t i = 0; i < sizeof CL_LOOT / sizeof *CL_LOOT; i++)
+        tot += CL_LOOT[i].w;
+    int r = (int) (ClRnd(ci, n, 1) % (uint64_t) tot);
+    for (size_t i = 0; i < sizeof CL_LOOT / sizeof *CL_LOOT; i++) {
+        if (r < CL_LOOT[i].w)
+            return (int) i;
+        r -= CL_LOOT[i].w;
+    }
     return 0;
 }
-static uint64_t cl_delay_ms(int ci, int n) { return 1000ULL * (CL_MIN_S + cl_rnd(ci, n, 2) % CL_SPAN_S); }
-static void cl_send(const uint8_t *b, uint64_t len) { if (g_send_tramp) g_send_tramp(MSG_CLOOT, (uint8_t *)b, len, 0xff); }
-static void cl_send_seed(void) {
-    uint8_t m[5] = {1};
-    memcpy(m + 1, &g_cl.seed, 4);
-    cl_send(m, 5);
+
+static uint64_t ClDelayMs(int ci, int n)
+{
+    return 1000ULL * (CL_MIN_S + ClRnd(ci, n, 2) % CL_SPAN_S);
 }
-static void cl_reset(void) {
-    if (g_cl.active) xlog("container loot: match over - state cleared");
+
+static void ClSend(const uint8_t *b, uint64_t len)
+{
+    if (g_sendTramp)
+        g_sendTramp(MSG_CLOOT, (uint8_t *) b, len, 0xff);
+}
+
+static void ClSendSeed(void)
+{
+    uint8_t m[5] = { 1 };
+    memcpy(m + 1, &g_cl.seed, 4);
+    ClSend(m, 5);
+}
+
+static void ClReset(void)
+{
+    if (g_cl.active)
+        Xlog("container loot: match over - state cleared");
     memset(&g_cl, 0, sizeof g_cl);
 }
+
 // The pickup left the world: taken (or removed by the engine). Tell the others, start the delay.
-static void cl_taken_local(int ci, uint64_t now) {
+static void ClTakenLocal(int ci, uint64_t now)
+{
     int n = g_cl.c[ci].rolls - 1;
     g_cl.c[ci].taken = n;
     g_cl.c[ci].h = 0;
     g_cl.c[ci].st = CL_ST_COOL;
-    g_cl.c[ci].due = now + cl_delay_ms(ci, n);
-    for (int k = 0; k < 8; k++) if (!g_cl.tx[k].left) {
-        g_cl.tx[k].ci = (uint8_t)ci; g_cl.tx[k].n = (uint8_t)n; g_cl.tx[k].left = 3; g_cl.tx[k].at = now;
-        break;
-    }
-    xlog("container loot: %s roll %d picked up (%s) - respawn in %.0f s", CL_MAP[g_cl.map].c[ci].name, n,
-         CL_LOOT[g_cl.c[ci].item].item, (double)cl_delay_ms(ci, n) / 1000.0);
+    g_cl.c[ci].due = now + ClDelayMs(ci, n);
+    for (int k = 0; k < 8; k++)
+        if (!g_cl.tx[k].left) {
+            g_cl.tx[k].ci = (uint8_t) ci;
+            g_cl.tx[k].n = (uint8_t) n;
+            g_cl.tx[k].left = 3;
+            g_cl.tx[k].at = now;
+            break;
+        }
+    Xlog("container loot: %s roll %d picked up (%s) - respawn in %.0f s",
+         CL_MAP[g_cl.map].c[ci].name, n, CL_LOOT[g_cl.c[ci].item].item,
+         (double) ClDelayMs(ci, n) / 1000.0);
 }
-static void cl_recv(uint32_t slot, const uint8_t *buf, uint64_t len) {
-    if (!buf || len < 1 || match_substate() != 6) return;
-    uint32_t me = *(uint32_t *)VMA(0x180138090);
-    if (slot == me || slot >= T2R_MAX_PEERS) return;
-    if (buf[0] == 1 && !pt_host_slot_ok(slot) && pt_deny(PTK_host_only, slot)) {         // peer msg trust: the seed is the host's word (the first seed seen wins, a forged one would stay)
-        static uint64_t nh_ms; uint64_t tn = GetTickCount64();
-        if (pt_log_due(&nh_ms, tn)) xlog("container loot: seed from slot %u dropped - it is not the host", slot);
+
+static void ClRecv(uint32_t slot, const uint8_t *buf, uint64_t len)
+{
+    if (!buf || len < 1 || MatchSubstate() != 6)
+        return;
+    uint32_t me = *(uint32_t *) T2R_SYM(kMySlot);
+    if (slot == me || slot >= T2R_MAX_PEERS)
+        return;
+    if (buf[0] == 1 && !PtHostSlotOk(slot) && PtDeny(PTK_host_only, slot)) {        // peer msg trust: the seed is the host's word (the first seed seen wins, a forged one would stay)
+        static uint64_t nh_ms;
+        uint64_t tn = GetTickCount64();
+        if (PtLogDue(&nh_ms, tn))
+            Xlog("container loot: seed from slot %u dropped - it is not the host", slot);
         return;
     }
-    if (buf[0] == 0) {                                   // a client asks for the seed
-        if (g_cl.seed && *(volatile uint8_t *)VMA(HM_ROLE) != 2) { cl_send_seed(); xlog("container loot: seed %08x sent to slot %u (asked)", g_cl.seed, slot); }
+    if (buf[0] == 0) {          // a client asks for the seed
+        if (g_cl.seed && *(volatile uint8_t *) T2R_SYM(kRoleByte) != 2) {
+            ClSendSeed();
+            Xlog("container loot: seed %08x sent to slot %u (asked)",
+                 g_cl.seed, slot);
+        }
     } else if (buf[0] == 1 && len >= 5) {
-        uint32_t s; memcpy(&s, buf + 1, 4);
-        if (s && !g_cl.seed) { g_cl.seed = s; xlog("container loot: seed %08x from slot %u", s, slot); }
-        else if (s && s != g_cl.seed) { static int nd; if (LOGCAP(nd, 4)) xlog("container loot: seed %08x from slot %u differs from ours %08x - ignored", s, slot, g_cl.seed); }
+        uint32_t s;
+        memcpy(&s, buf + 1, 4);
+        if (s && !g_cl.seed) {
+            g_cl.seed = s;
+            Xlog("container loot: seed %08x from slot %u", s, slot);
+        } else if (s && s != g_cl.seed) {
+            static int nd;
+            if (LOGCAP(nd, 4))
+                Xlog("container loot: seed %08x from slot %u differs from ours %08x - ignored", s, slot, g_cl.seed);
+        }
     } else if (buf[0] == 2 && len >= 3 && g_cl.active) {
         int ci = buf[1], n = buf[2];
-        if (ci >= g_cl.n) return;
+        if (ci >= g_cl.n)
+            return;
         // peer msg trust: the roll we hold (or one ahead), from a player standing at the container
-        if ((!pt_roll_ok(n, g_cl.c[ci].rolls) && pt_deny(PTK_claim_roll, slot)) || (pt_on() && !pt_near_sender(slot, CL_MAP[g_cl.map].c[ci].p, 16.0f, 8.0f) && pt_deny(PTK_claim_near, slot))) {
-            static uint64_t bc_ms; uint64_t tn = GetTickCount64();
-            if (pt_log_due(&bc_ms, tn)) xlog("container loot: taken %s roll %d from slot %u dropped (bad roll / too far)", CL_MAP[g_cl.map].c[ci].name, n, slot);
+        if ((!PtRollOk(n, g_cl.c[ci].rolls)
+             && PtDeny(PTK_claim_roll, slot)) || (PtOn()
+                                                   && !PtNearSender(slot,
+                                                                      CL_MAP
+                                                                      [g_cl.
+                                                                       map].
+                                                                      c
+                                                                      [ci].
+                                                                      p,
+                                                                      16.0f,
+                                                                      8.0f)
+                                                   &&
+                                                   PtDeny(PTK_claim_near,
+                                                           slot))) {
+            static uint64_t bc_ms;
+            uint64_t tn = GetTickCount64();
+            if (PtLogDue(&bc_ms, tn))
+                Xlog("container loot: taken %s roll %d from slot %u dropped (bad roll / too far)", CL_MAP[g_cl.map].c[ci].name, n, slot);
             return;
         }
-        if (n > g_cl.c[ci].taken) g_cl.c[ci].taken = n;
+        if (n > g_cl.c[ci].taken)
+            g_cl.c[ci].taken = n;
         if (g_cl.c[ci].st == CL_ST_HOLD && g_cl.c[ci].rolls - 1 == n) {
             g_cl.c[ci].kill = 1;
             g_cl.c[ci].st = CL_ST_COOL;
-            g_cl.c[ci].due = GetTickCount64() + cl_delay_ms(ci, n);
-            xlog("container loot: %s roll %d taken by slot %u - our copy removed, respawn in %.0f s", CL_MAP[g_cl.map].c[ci].name, n, slot,
-                 (double)cl_delay_ms(ci, n) / 1000.0);
+            g_cl.c[ci].due = GetTickCount64() + ClDelayMs(ci, n);
+            Xlog("container loot: %s roll %d taken by slot %u - our copy removed, respawn in %.0f s", CL_MAP[g_cl.map].c[ci].name, n, slot, (double) ClDelayMs(ci, n) / 1000.0);
         }
     }
 }
+
 // ---- surface height + follow the opening drawer / door (loot was at the right x / z but the wrong height; loot in a drawer / cupboard
 // stayed at the closed spot while the drawer opened).
 // Causes: (1) the stored y was the spawner origin + a per-name guessed 'lift' (container_loot.py LIFT): the origin of a drawer / cabinet is
@@ -149,217 +229,348 @@ static void cl_recv(uint32_t slot, const uint8_t *buf, uint64_t len) {
 // object's own locator) is sampled at the closed pose and every frame after; the pickup is moved by the part's rigid delta
 // (pos' = J + R * R0^-1 * (p0 - J0)), so it rides a drawer out / a door round and goes back when it closes.
 // Switches: t2r-no-container-height.txt / t2r-no-container-follow.txt next to the exe. Logs 'container loot:' lines.
-static int cl_flag(const char *file, int *cache) {
-    if (*cache < 0) { FILE *f = exe_side_open(file, "r"); *cache = f != NULL; if (f) fclose(f); if (*cache) xlog("container loot: OFF (%s)", file); }
+static int ClFlag(const char *file, int *cache)
+{
+    if (*cache < 0) {
+        FILE *f = ExeSideOpen(file, "r");
+        *cache = f != NULL;
+        if (f)
+            fclose(f);
+        if (*cache)
+            Xlog("container loot: OFF (%s)", file);
+    }
     return *cache;
 }
-static int cl_joint_raw(const char *obj, const char *joint, float *out8) {      // joint (or, joint == NULL, object) locator words
-    uint64_t h = fnv64(obj);
+
+static int ClJointRaw(const char *obj, const char *joint, float *out8)
+{                               // joint (or, joint == NULL, object) locator words
+    uint64_t h = FNV64(obj);
     if (!joint) {
         float lb[16];
-        const float *l = puppet_locator(h, lb);
-        if (!l || IsBadReadPtr(l, 32)) return 0;
+        const float *l = PuppetLocator(h, lb);
+        if (!l || IsBadReadPtr(l, 32))
+            return 0;
         memcpy(out8, l, 32);
     } else {
-        uint64_t a[2] = {h, fnv64(joint)};
-        uint64_t r = dc_call(0x6b8812bd30c5cd5dULL /* get-joint-locator */, 2, a);
-        if (!r || r == ~0ULL || IsBadReadPtr((void *)r, 32)) return 0;
-        memcpy(out8, (void *)r, 32);
+        uint64_t a[2] = { h, FNV64(joint) };
+        uint64_t r =
+            DcCall(0x6b8812bd30c5cd5dULL /* get-joint-locator */ , 2, a);
+        if (!r || r == ~0ULL || IsBadReadPtr((void *) r, 32))
+            return 0;
+        memcpy(out8, (void *) r, 32);
     }
-    for (int i = 0; i < 8; i++) if (!__builtin_isfinite(out8[i]) || __builtin_fabsf(out8[i]) > 1e5f) return 0;
-    float qn = out8[4] * out8[4] + out8[5] * out8[5] + out8[6] * out8[6] + out8[7] * out8[7];
+    for (int i = 0; i < 8; i++)
+        if (!__builtin_isfinite(out8[i])
+            || __builtin_fabsf(out8[i]) > 1e5f)
+            return 0;
+    float qn =
+        out8[4] * out8[4] + out8[5] * out8[5] + out8[6] * out8[6] +
+        out8[7] * out8[7];
     return qn > 0.25f && qn < 4.0f;
 }
-static void cl_qrot(const float *q, const float *v, float *o) {            // o = q * v
-    float tx = 2 * (q[1] * v[2] - q[2] * v[1]), ty = 2 * (q[2] * v[0] - q[0] * v[2]), tz = 2 * (q[0] * v[1] - q[1] * v[0]);
+
+static void ClQrot(const float *q, const float *v, float *o)
+{                               // o = q * v
+    float tx = 2 * (q[1] * v[2] - q[2] * v[1]), ty =
+        2 * (q[2] * v[0] - q[0] * v[2]), tz =
+        2 * (q[0] * v[1] - q[1] * v[0]);
     o[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
     o[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
     o[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
 }
+
 // where the pickup belongs now, from the closed pose j0 -> current pose j of one moving part; returns how far that moves the pickup (m)
-static float cl_follow_target(const float *j0, const float *j, const float *p0, float *out) {
-    float cj[4] = {-j0[4], -j0[5], -j0[6], j0[7]};
-    float rel[3] = {p0[0] - j0[0], p0[1] - j0[1], p0[2] - j0[2]}, loc[3], w[3];
-    cl_qrot(cj, rel, loc);
-    cl_qrot(j + 4, loc, w);
-    out[0] = j[0] + w[0]; out[1] = j[1] + w[1]; out[2] = j[2] + w[2];
+static float ClFollowTarget(const float *j0, const float *j,
+                              const float *p0, float *out)
+{
+    float cj[4] = { -j0[4], -j0[5], -j0[6], j0[7] };
+    float rel[3] =
+        { p0[0] - j0[0], p0[1] - j0[1], p0[2] - j0[2] }, loc[3], w[3];
+    ClQrot(cj, rel, loc);
+    ClQrot(j + 4, loc, w);
+    out[0] = j[0] + w[0];
+    out[1] = j[1] + w[1];
+    out[2] = j[2] + w[2];
     float dx = out[0] - p0[0], dy = out[1] - p0[1], dz = out[2] - p0[2];
     return __builtin_sqrtf(dx * dx + dy * dy + dz * dz);
 }
+
 // the closed pose of every part that resolves (before the first spawn of the container)
-static void cl_ref_capture(int ci) {
-    typeof(g_cl.c[0]) *c = &g_cl.c[ci];
+static void ClRefCapture(int ci)
+{
+    typeof(g_cl.c[0]) * c = &g_cl.c[ci];
     const char *nm = CL_MAP[g_cl.map].c[ci].name;
     char list[160] = "";
     c->nref = 0;
-    for (int k = -1; k < (int)(sizeof CL_JOINTS / sizeof *CL_JOINTS) && c->nref < CL_NREF; k++) {
+    for (int k = -1;
+         k < (int) (sizeof CL_JOINTS / sizeof *CL_JOINTS)
+         && c->nref < CL_NREF; k++) {
         float w[8];
-        if (!cl_joint_raw(nm, k < 0 ? NULL : CL_JOINTS[k], w)) continue;
-        memcpy(c->jn0[c->nref], w, 32); c->jn_idx[c->nref] = k; c->nref++;
+        if (!ClJointRaw(nm, k < 0 ? NULL : CL_JOINTS[k], w))
+            continue;
+        memcpy(c->jn0[c->nref], w, 32);
+        c->jn_idx[c->nref] = k;
+        c->nref++;
         size_t n = strlen(list);
-        snprintf(list + n, SNLEFT(list, n), " %s", k < 0 ? "<object>" : CL_JOINTS[k]);
+        snprintf(list + n, SNLEFT(list, n), " %s",
+                 k < 0 ? "<object>" : CL_JOINTS[k]);
     }
-    xlog("container loot: %s follows %d moving part(s):%s", nm, c->nref, c->nref ? list : " none (the loot stays put)");
+    Xlog("container loot: %s follows %d moving part(s):%s", nm, c->nref,
+         c->nref ? list : " none (the loot stays put)");
 }
-static void cl_follow(int ci) {
+
+static void ClFollow(int ci)
+{
     static int off = -1;
-    typeof(g_cl.c[0]) *c = &g_cl.c[ci];
-    const cl_cont_t *ct = &CL_MAP[g_cl.map].c[ci];
-    if (cl_flag("t2r-no-container-follow.txt", &off) || !c->nref || !c->h) return;
+    typeof(g_cl.c[0]) * c = &g_cl.c[ci];
+    const ClContT *ct = &CL_MAP[g_cl.map].c[ci];
+    if (ClFlag("t2r-no-container-follow.txt", &off) || !c->nref || !c->h)
+        return;
     float lb[16];
-    const float *l = puppet_locator(c->h, lb);
-    if (!l || IsBadReadPtr(l, 32) || !__builtin_isfinite(l[0]) || !__builtin_isfinite(l[1]) || !__builtin_isfinite(l[2])) return;
-    float p0[3] = {ct->p[0], c->have_hy ? c->hy + 0.06f : ct->p[1] + ct->lift, ct->p[2]};
-    float best[3] = {p0[0], p0[1], p0[2]}, bm = 0.0f;
+    const float *l = PuppetLocator(c->h, lb);
+    if (!l || IsBadReadPtr(l, 32) || !__builtin_isfinite(l[0])
+        || !__builtin_isfinite(l[1]) || !__builtin_isfinite(l[2]))
+        return;
+    float p0[3] =
+        { ct->p[0], c->have_hy ? c->hy + 0.06f : ct->p[1] + ct->lift,
+  ct->p[2] };
+    float best[3] = { p0[0], p0[1], p0[2] }, bm = 0.0f;
     int bk = -1;
     for (int k = 0; k < c->nref; k++) {
         float w[8], t[3];
-        if (!cl_joint_raw(ct->name, c->jn_idx[k] < 0 ? NULL : CL_JOINTS[c->jn_idx[k]], w)) continue;
-        float m = cl_follow_target(c->jn0[k], w, p0, t);
-        if (m > 0.004f && m < 3.0f && m > bm) { bm = m; bk = k; memcpy(best, t, 12); }
+        if (!ClJointRaw
+            (ct->name, c->jn_idx[k] < 0 ? NULL : CL_JOINTS[c->jn_idx[k]],
+             w))
+            continue;
+        float m = ClFollowTarget(c->jn0[k], w, p0, t);
+        if (m > 0.004f && m < 3.0f && m > bm) {
+            bm = m;
+            bk = k;
+            memcpy(best, t, 12);
+        }
     }
-    if (bk < 0 && !c->moved) return;                     // closed and not moved: leave the pickup to its physics
+    if (bk < 0 && !c->moved)
+        return;                 // closed and not moved: leave the pickup to its physics
     float dx = best[0] - l[0], dy = best[1] - l[1], dz = best[2] - l[2];
-    if (dx * dx + dy * dy + dz * dz < 0.0004f) { if (bk < 0) c->moved = 0; return; }
+    if (dx * dx + dy * dy + dz * dz < 0.0004f) {
+        if (bk < 0)
+            c->moved = 0;
+        return;
+    }
     static int nlog;
     if (!c->moved && bk >= 0 && nlog++ < 24)
-        xlog("container loot: %s opens (%s moved the pickup spot %.2f m) - the pickup follows it (%.2f %.2f %.2f -> %.2f %.2f %.2f)", ct->name,
-             c->jn_idx[bk] < 0 ? "<object>" : CL_JOINTS[c->jn_idx[bk]], bm, l[0], l[1], l[2], best[0], best[1], best[2]);
+        Xlog("container loot: %s opens (%s moved the pickup spot %.2f m) - the pickup follows it (%.2f %.2f %.2f -> %.2f %.2f %.2f)", ct->name, c->jn_idx[bk] < 0 ? "<object>" : CL_JOINTS[c->jn_idx[bk]], bm, l[0], l[1], l[2], best[0], best[1], best[2]);
     c->moved = bk >= 0;
-    float q[4]; memcpy(q, l + 4, 16);
+    float q[4];
+    memcpy(q, l + 4, 16);
     float qn = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
-    if (!(qn > 0.25f && qn < 4.0f)) { q[0] = q[1] = q[2] = 0.0f; q[3] = 1.0f; }
-    float ap7[7] = {best[0], best[1], best[2], q[0], q[1], q[2], q[3]};
-    static psync_bf bf;
-    psync_bf_make(&bf, ap7);
-    set_obj_loc(c->h, &bf);
+    if (!(qn > 0.25f && qn < 4.0f)) {
+        q[0] = q[1] = q[2] = 0.0f;
+        q[3] = 1.0f;
+    }
+    float ap7[7] = { best[0], best[1], best[2], q[0], q[1], q[2], q[3] };
+    static PsyncBf bf;
+    PsyncBfMake(&bf, ap7);
+    SetObjLoc(c->h, &bf);
 }
+
 // the surface under the container's pickup point: 0 = pending, 1 = settled (c->have_hy set when a surface was found)
-static int cl_height(int ci, uint64_t now) {
+static int ClHeight(int ci, uint64_t now)
+{
     static int off = -1;
-    typeof(g_cl.c[0]) *c = &g_cl.c[ci];
-    const cl_cont_t *ct = &CL_MAP[g_cl.map].c[ci];
-    if (cl_flag("t2r-no-container-height.txt", &off) || c->hy_tries >= 2 || c->have_hy) return 1;
+    typeof(g_cl.c[0]) * c = &g_cl.c[ci];
+    const ClContT *ct = &CL_MAP[g_cl.map].c[ci];
+    if (ClFlag("t2r-no-container-height.txt", &off) || c->hy_tries >= 2
+        || c->have_hy)
+        return 1;
     if (!c->hy_state) {
         float top = ct->p[1] + ct->lift + 0.3f;
-        float a[3] = {ct->p[0], top, ct->p[2]}, b[3] = {ct->p[0], top - 1.6f, ct->p[2]};
-        c->hy_job = world_ray_kick(a, b);
-        c->hy_start = top; c->hy_ms = now; c->hy_state = c->hy_job ? 1 : 0;
-        if (!c->hy_job) c->hy_tries++;
+        float a[3] = { ct->p[0], top, ct->p[2] }, b[3] =
+            { ct->p[0], top - 1.6f, ct->p[2] };
+        c->hy_job = WorldRayKick(a, b);
+        c->hy_start = top;
+        c->hy_ms = now;
+        c->hy_state = c->hy_job ? 1 : 0;
+        if (!c->hy_job)
+            c->hy_tries++;
         return c->hy_tries >= 2;
     }
-    if (now - c->hy_ms < 60) return 0;
-    float t = ray_t(c->hy_job);
-    c->hy_job = 0; c->hy_state = 0; c->hy_tries++;
+    if (now - c->hy_ms < 60)
+        return 0;
+    float t = RayT(c->hy_job);
+    c->hy_job = 0;
+    c->hy_state = 0;
+    c->hy_tries++;
     if (t > 0.005f && t < 0.999f) {
-        c->hy = c->hy_start - 1.6f * t; c->have_hy = 1;
-        xlog("container loot: %s surface at y %.2f (stored %.2f + lift %.2f = %.2f, moved %+.2f)", ct->name, c->hy, ct->p[1], ct->lift, ct->p[1] + ct->lift,
-             c->hy + 0.06f - (ct->p[1] + ct->lift));
+        c->hy = c->hy_start - 1.6f * t;
+        c->have_hy = 1;
+        Xlog("container loot: %s surface at y %.2f (stored %.2f + lift %.2f = %.2f, moved %+.2f)", ct->name, c->hy, ct->p[1], ct->lift, ct->p[1] + ct->lift, c->hy + 0.06f - (ct->p[1] + ct->lift));
         return 1;
     }
-    xlog("container loot: %s no surface under the pickup point (t %.3f) - stored lift %.2f%s", ct->name, t, ct->lift, c->hy_tries >= 2 ? "" : ", once more");
+    Xlog("container loot: %s no surface under the pickup point (t %.3f) - stored lift %.2f%s", ct->name, t, ct->lift, c->hy_tries >= 2 ? "" : ", once more");
     return c->hy_tries >= 2;
 }
-static void cl_tick(void) {
+
+static void ClTick(void)
+{
     // procedural container loot DISABLED on every map - opt-in t2r-container-loot.txt
-    if (g_cl_off < 0) { FILE *f = exe_side_open("t2r-container-loot.txt", "r"); g_cl_off = f == NULL; if (f) fclose(f); xlog("container loot: %s", g_cl_off ? "OFF (default since 10-15; t2r-container-loot.txt = on)" : "ON (t2r-container-loot.txt)"); }
-    if (g_cl_off) return;
-    if (match_substate() != 6) { if (g_cl.active || g_cl.live_ms) cl_reset(); return; }
+    if (g_clOff < 0) {
+        FILE *f = ExeSideOpen("t2r-container-loot.txt", "r");
+        g_clOff = f == NULL;
+        if (f)
+            fclose(f);
+        Xlog("container loot: %s",
+             g_clOff ?
+             "OFF (default since 10-15; t2r-container-loot.txt = on)" :
+             "ON (t2r-container-loot.txt)");
+    }
+    if (g_clOff)
+        return;
+    if (MatchSubstate() != 6) {
+        if (g_cl.active || g_cl.live_ms)
+            ClReset();
+        return;
+    }
     uint64_t now = GetTickCount64();
     if (!g_cl.live_ms) {
         g_cl.live_ms = now;
-        uint8_t *lo = lobby_obj();
+        uint8_t *lo = LobbyObj();
         int map = lo && !IsBadReadPtr(lo + 0x18, 1) ? lo[0x18] : 255;
         g_cl.map = map;
         g_cl.n = map < CL_NMAPS ? CL_MAP[map].n : 0;
-        if (g_cl.n > CL_MAX) g_cl.n = CL_MAX;
+        if (g_cl.n > CL_MAX)
+            g_cl.n = CL_MAX;
         int found = 0;
         for (int i = 0; i < g_cl.n; i++) {
             g_cl.c[i].taken = -1;
-            g_cl.c[i].due = now + CL_START_MS + 250ULL * (uint64_t)i;
-            found += ld_spawner(CL_MAP[map].c[i].name);
+            g_cl.c[i].due = now + CL_START_MS + 250ULL * (uint64_t) i;
+            found += LdSpawner(CL_MAP[map].c[i].name);
         }
         g_cl.active = g_cl.n > 0;
-        xlog("container loot: match live, map %d: %d container(s) (%d resolve as spawners in the loaded level)%s", map, g_cl.n, found,
-             g_cl.n ? "" : " - none, untouched");
+        Xlog("container loot: match live, map %d: %d container(s) (%d resolve as spawners in the loaded level)%s", map, g_cl.n, found, g_cl.n ? "" : " - none, untouched");
     }
-    if (!g_cl.active) return;
-    if (!g_spawn_pickup_orig) return;
+    if (!g_cl.active)
+        return;
+    if (!g_spawnPickupOrig)
+        return;
     // ---- seed: the host picks it, the clients take it
-    uint8_t role = *(volatile uint8_t *)VMA(HM_ROLE);
-    if (!g_cl.seed && role != 2) {            // host (1) or no session role (solo test): we decide
-        uint32_t s = (uint32_t)cl_mix(now * 0x9E3779B97F4A7C15ULL ^ (uint64_t)GetCurrentProcessId());
+    uint8_t role = *(volatile uint8_t *) T2R_SYM(kRoleByte);
+    if (!g_cl.seed && role != 2) {      // host (1) or no session role (solo test): we decide
+        uint32_t s =
+            (uint32_t) ClMix(now *
+                              0x9E3779B97F4A7C15ULL ^ (uint64_t)
+                              GetCurrentProcessId());
         g_cl.seed = s ? s : 1;
-        g_cl.seed_tx_ms = 0; g_cl.seed_tx_until = now + 60000;
-        xlog("container loot: seed %08x (we host)", g_cl.seed);
+        g_cl.seed_tx_ms = 0;
+        g_cl.seed_tx_until = now + 60000;
+        Xlog("container loot: seed %08x (we host)", g_cl.seed);
     }
-    if (g_cl.seed && role != 2 && now < g_cl.seed_tx_until && now >= g_cl.seed_tx_ms) { cl_send_seed(); g_cl.seed_tx_ms = now + 5000; }
-    if (!g_cl.seed && role == 2 && now - g_cl.live_ms > 3000 && now >= g_cl.seed_rq_ms) {
-        uint8_t m[1] = {0};
-        cl_send(m, 1);
+    if (g_cl.seed && role != 2 && now < g_cl.seed_tx_until
+        && now >= g_cl.seed_tx_ms) {
+        ClSendSeed();
+        g_cl.seed_tx_ms = now + 5000;
+    }
+    if (!g_cl.seed && role == 2 && now - g_cl.live_ms > 3000
+        && now >= g_cl.seed_rq_ms) {
+        uint8_t m[1] = { 0 };
+        ClSend(m, 1);
         g_cl.seed_rq_ms = now + 3000;
     }
     // ---- 'taken' messages: sent now, again after 250 ms and 750 ms
     for (int k = 0; k < 8; k++) {
-        if (!g_cl.tx[k].left || now < g_cl.tx[k].at) continue;
-        uint8_t m[3] = {2, g_cl.tx[k].ci, g_cl.tx[k].n};
-        cl_send(m, 3);
+        if (!g_cl.tx[k].left || now < g_cl.tx[k].at)
+            continue;
+        uint8_t m[3] = { 2, g_cl.tx[k].ci, g_cl.tx[k].n };
+        ClSend(m, 3);
         g_cl.tx[k].at = now + (g_cl.tx[k].left == 3 ? 250 : 500);
         g_cl.tx[k].left--;
     }
-    if (!g_cl.seed || now - g_cl.live_ms < CL_START_MS || !ms_player_exists()) return;
+    if (!g_cl.seed || now - g_cl.live_ms < CL_START_MS
+        || !MsPlayerExists())
+        return;
     // ---- the containers
     for (int i = 0; i < g_cl.n; i++) {
-        typeof(g_cl.c[0]) *c = &g_cl.c[i];
-        const cl_cont_t *ct = &CL_MAP[g_cl.map].c[i];
+        typeof(g_cl.c[0]) * c = &g_cl.c[i];
+        const ClContT *ct = &CL_MAP[g_cl.map].c[i];
         if (c->kill) {
             c->kill = 0;
-            uint64_t h = c->h; c->h = 0;
-            if (h && drops_alive(h)) dc_call(fnv64("kill-entity"), 1, &h);
+            uint64_t h = c->h;
+            c->h = 0;
+            if (h && DropsAlive(h))
+                DcCall(FNV64("kill-entity"), 1, &h);
         }
-        if (c->st == CL_ST_COOL) { if (now >= c->due) c->st = CL_ST_WAIT; else continue; }
+        if (c->st == CL_ST_COOL) {
+            if (now >= c->due)
+                c->st = CL_ST_WAIT;
+            else
+                continue;
+        }
         if (c->st == CL_ST_HOLD) {
-            if (now - c->spawned_ms > 300) cl_follow(i);
-            if (now - c->spawned_ms > 800 && !drops_alive(c->h)) cl_taken_local(i, now);
+            if (now - c->spawned_ms > 300)
+                ClFollow(i);
+            if (now - c->spawned_ms > 800 && !DropsAlive(c->h))
+                ClTakenLocal(i, now);
             continue;
         }
-        if (now < c->due || c->fails >= 3) continue;
-        if (c->ref_state == 0) { cl_ref_capture(i); c->ref_state = 1; }
-        if (!cl_height(i, now)) continue;                // the surface probe is async (kick, read a few frames later)
+        if (now < c->due || c->fails >= 3)
+            continue;
+        if (c->ref_state == 0) {
+            ClRefCapture(i);
+            c->ref_state = 1;
+        }
+        if (!ClHeight(i, now))
+            continue;           // the surface probe is async (kick, read a few frames later)
         // ---- roll
-        int n = c->rolls++, li = cl_roll(i, n);
-        const cl_loot_t *L = &CL_LOOT[li];
+        int n = c->rolls++, li = ClRoll(i, n);
+        const ClLootT *L = &CL_LOOT[li];
         c->item = li;
         if (!L->item) {
-            c->st = CL_ST_COOL; c->due = now + cl_delay_ms(i, n);
-            xlog("container loot: %s roll %d -> empty (re-roll in %.0f s)", ct->name, n, (double)cl_delay_ms(i, n) / 1000.0);
+            c->st = CL_ST_COOL;
+            c->due = now + ClDelayMs(i, n);
+            Xlog("container loot: %s roll %d -> empty (re-roll in %.0f s)",
+                 ct->name, n, (double) ClDelayMs(i, n) / 1000.0);
             continue;
         }
-        if (c->taken >= n) {                             // somebody already took this one before we spawned it
-            c->st = CL_ST_COOL; c->due = now + cl_delay_ms(i, n);
-            xlog("container loot: %s roll %d -> %s was already taken by another player - respawn in %.0f s", ct->name, n, L->item,
-                 (double)cl_delay_ms(i, n) / 1000.0);
+        if (c->taken >= n) {    // somebody already took this one before we spawned it
+            c->st = CL_ST_COOL;
+            c->due = now + ClDelayMs(i, n);
+            Xlog("container loot: %s roll %d -> %s was already taken by another player - respawn in %.0f s", ct->name, n, L->item, (double) ClDelayMs(i, n) / 1000.0);
             continue;
         }
-        const char *litem = L->item; uint64_t lcount = L->count;
-        if (isp_is_ammo(litem)) {                        // ammo = a pickup for a gun THIS player carries (itemspots.c), never a placeholder box
-            uint64_t ac = 0; const char *ra = isp_ammo_for_me(litem, (uint64_t)n * 31u + (uint64_t)i, &ac);
-            if (!ra) { c->st = CL_ST_COOL; c->due = now + cl_delay_ms(i, n); xlog("container loot: %s roll %d -> %s: no gun with box ammo in our loadout - empty here", ct->name, n, litem); continue; }
-            litem = ra; lcount = ac;
+        const char *litem = L->item;
+        uint64_t lcount = L->count;
+        if (IspIsAmmo(litem)) {       // ammo = a pickup for a gun THIS player carries (itemspots.c), never a placeholder box
+            uint64_t ac = 0;
+            const char *ra =
+                IspAmmoForMe(litem, (uint64_t) n * 31u + (uint64_t) i,
+                                &ac);
+            if (!ra) {
+                c->st = CL_ST_COOL;
+                c->due = now + ClDelayMs(i, n);
+                Xlog("container loot: %s roll %d -> %s: no gun with box ammo in our loadout - empty here", ct->name, n, litem);
+                continue;
+            }
+            litem = ra;
+            lcount = ac;
         }
-        float pos[3] = {ct->p[0], c->have_hy ? c->hy + 0.06f : ct->p[1] + ct->lift, ct->p[2]};
-        uint64_t ret[4] = {0};
-        box_spawn_like(ret, fnv64(litem), pos, lcount);     // the supply box's own spawn (BoundFrame, never a Locator)
+        float pos[3] =
+            { ct->p[0], c->have_hy ? c->hy + 0.06f : ct->p[1] + ct->lift,
+     ct->p[2] };
+        uint64_t ret[4] = { 0 };
+        BoxSpawnLike(ret, FNV64(litem), pos, lcount); // the supply box's own spawn (BoundFrame, never a Locator)
         uint64_t h = ret[0];
         if (!h || h == ~0ULL) {
             c->fails++;
-            c->st = CL_ST_COOL; c->due = now + 10000;
-            xlog("container loot: %s roll %d -> %s x%u: the spawn failed (%llx), try %d/3", ct->name, n, L->item, L->count, (unsigned long long)h, c->fails);
-            c->rolls--;                                  // not a roll: the same one again
+            c->st = CL_ST_COOL;
+            c->due = now + 10000;
+            Xlog("container loot: %s roll %d -> %s x%u: the spawn failed (%llx), try %d/3", ct->name, n, L->item, L->count, (unsigned long long) h, c->fails);
+            c->rolls--;         // not a roll: the same one again
             continue;
         }
-        c->h = h; c->st = CL_ST_HOLD; c->spawned_ms = now; c->moved = 0;
-        xlog("container loot: %s roll %d -> %s x%u at %.1f %.1f %.1f (handle %llx)", ct->name, n, L->item, L->count, pos[0], pos[1], pos[2],
-             (unsigned long long)h);
+        c->h = h;
+        c->st = CL_ST_HOLD;
+        c->spawned_ms = now;
+        c->moved = 0;
+        Xlog("container loot: %s roll %d -> %s x%u at %.1f %.1f %.1f (handle %llx)", ct->name, n, L->item, L->count, pos[0], pos[1], pos[2], (unsigned long long) h);
     }
 }

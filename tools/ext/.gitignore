@@ -1,2 +1,4 @@
 .build_cache/
 ltomake.exe
+*.c~
+*.h~

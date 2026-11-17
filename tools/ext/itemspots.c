@@ -29,17 +29,17 @@
 // Roll table for a newcomer: chunks of ISP_TAB_CHUNK spots (op 4 = spots 0.., op 8 [start][n] = the later chunks; every message < 256 bytes).
 #include "itemspots.h"
 
-#define MSG_ISPOT 0x68                  // ours: [u8 op] op 0 = ask for the seed; 1 [u32 seed]; 2 [u8 spot][u8 roll no.] = taken
-#define ISP_MAX 128                     // was 32 (Supermarket loot scatter); spot / roll ids on the wire are u8
+#define MSG_ISPOT 0x68          // ours: [u8 op] op 0 = ask for the seed; 1 [u32 seed]; 2 [u8 spot][u8 roll no.] = taken
+#define ISP_MAX 128             // was 32 (Supermarket loot scatter); spot / roll ids on the wire are u8
 #define ISP_TAB_CHUNK 56
-#define ISP_FILL_PCT 70                 // chance a roll fills the spot
-#define ISP_RESPAWN_S 60                // a taken (or empty) spot rolls again after this
-#define ISP_START_MS 8000               // after the match goes live (the world, the player, the first frames)
-#define ISP_STAGGER_MS 60               // first roll of spot i at ISP_START_MS + i * this (was 250 ms: 128 spots would have taken 32 s)
+#define ISP_FILL_PCT 70         // chance a roll fills the spot
+#define ISP_RESPAWN_S 60        // a taken (or empty) spot rolls again after this
+#define ISP_START_MS 8000       // after the match goes live (the world, the player, the first frames)
+#define ISP_STAGGER_MS 60       // first roll of spot i at ISP_START_MS + i * this (was 250 ms: 128 spots would have taken 32 s)
 // melee weapons are more prominent: a filled roll of ANY spot is a melee weapon with ISP_MELEE_PCT % (the style first, a
 // third each, then a weapon of the style's pool - the box drops' pools, MELEE_DROP_POOL), else the spot's own candidate. Same 60 s respawn: a lost
 // weapon can be found at the spots again. Item index >= ISP_MELEE_BASE = MELEE_DROP_POOL style * 8 + weapon. t2r-no-itemspot-melee.txt = off.
-#define ISP_MELEE_PCT 0    // off - melee gets its own hand-placed spots later (was 35)
+#define ISP_MELEE_PCT 0         // off - melee gets its own hand-placed spots later (was 35)
 #define ISP_MELEE_BASE 100
 // supply satchel (a physical supplies item using the existing ui of a pickupable item): a roll can be a SATCHEL - the
 // engine's own crafting-parts pickup ("parts", SP's pickup-parts-* entity: native prompt, pick-up animation and sound) standing for the clan's supplies.
@@ -47,7 +47,7 @@
 // stock) and a toast with the 2013 supplies icon (NTF_SUPPLY). It is NOT added to the spendable parts balance (supplies are the clan's, not the gear up's).
 // Roll 0 of two spots picked from the seed is always a satchel ("a couple per map"); every later filled roll is one with ISP_SAT_PCT %. One player takes at most
 // ISP_SAT_MAX per match. t2r-no-satchel.txt next to the exe = off (default ON).
-#define ISP_SATCHEL 90                  // roll result (candidates are < ISP_MAXC)
+#define ISP_SATCHEL 90          // roll result (candidates are < ISP_MAXC)
 #define ISP_SAT_PCT 12
 #define ISP_SAT_PARTS 100
 #define ISP_SAT_MAX 6
@@ -55,7 +55,7 @@
 // beside the parts pickup with spawn-object + set-object-locator (the armour / trap-mine stand-in route), the pickup's own model hidden every frame
 // (hide-object-for-one-frame, best effort); the bag goes when the pickup does. t2r-no-satchel-bag.txt = no bag (the plain parts pickup).
 #define ISP_SAT_ACTOR "mp-t2r-satchel-bag-00001"
-#define ISP_SAT_LIFT 0.004f             // small satchel (pak origin = the middle of its underside, box y min 0, 17 x 12 x 25 cm, straps deleted): the underside sits this far above the surface
+#define ISP_SAT_LIFT 0.004f     // small satchel (pak origin = the middle of its underside, box y min 0, 17 x 12 x 25 cm, straps deleted): the underside sits this far above the surface
 // the health-kit pickup's origin is the bottom of its 5.6 cm mesh (a +6 cm lift made it float, same fix as medkits.c MK_UP); every other item keeps the 6 cm
 // (their pickup meshes are not measured). The editor draws each marker's art with the same lift (resources/marker-art.json 'lift').
 // (tools/maps/loot_place.py meshes: all-standard-pickups / all-ammo-pickups bounds): every scavenge pickup mesh has its origin at the bottom
@@ -65,329 +65,643 @@
 // molotov y min -0.087 (origin at the neck grip), smoke -0.002, pipe bomb -0.043, stun -0.043, trap mine 0.000, shivs -0.029 .. -0.035 (lying flat):
 // lift = -y min + 3 mm. Melee weapons keep 6 cm: md_track (melee_drop) re-probes the floor and re-seats every melee pickup itself.
 // U: assumes the pickup shows the held art in its own axes (not checked in game).
-static float isp_up(const char *item) {
-    static const struct { const char *id; float up; } MEAS[] = {{"molotov", 0.090f}, {"smoke-bomb", 0.005f}, {"pipe-bomb", 0.046f}, {"stun-bomb", 0.046f},
-        {"trap-mine", 0.003f}, {"shiv", 0.038f}};
-    static const char *const FLUSH[] = {"health-kit", "health-small", "alcohol", "rag", "canister", "explosive", "binding", "blade", "ammo-pistol", "ammo-revolver",
-        "ammo-revolver-joel", "ammo-rifle", "ammo-rifle-vepr", "ammo-rifle-mpx5", "ammo-shotgun", "ammo-shotgun-baserri"};
-    if (!item) return 0.06f;
-    for (size_t i = 0; i < sizeof FLUSH / sizeof *FLUSH; i++) if (!strcmp(item, FLUSH[i])) return 0.003f;
-    if (!strcmp(item, "ammo-arrow") || !strcmp(item, "ammo-crossbow")) return 0.017f;
-    for (size_t i = 0; i < sizeof MEAS / sizeof *MEAS; i++) if (!strcmp(item, MEAS[i].id)) return MEAS[i].up;
+static float IspUp(const char *item)
+{
+    static const struct {
+        const char *id;
+        float up;
+    } MEAS[] =
+        { { "molotov", 0.090f }, { "smoke-bomb", 0.005f }, { "pipe-bomb",
+                                                            0.046f },
+        { "stun-bomb", 0.046f },
+    { "trap-mine", 0.003f }, { "shiv", 0.038f }
+    };
+    static const char *const FLUSH[] =
+        { "health-kit", "health-small", "alcohol", "rag", "canister",
+"explosive", "binding", "blade", "ammo-pistol", "ammo-revolver",
+        "ammo-revolver-joel", "ammo-rifle", "ammo-rifle-vepr",
+            "ammo-rifle-mpx5", "ammo-shotgun", "ammo-shotgun-baserri"
+    };
+    if (!item)
+        return 0.06f;
+    for (size_t i = 0; i < sizeof FLUSH / sizeof *FLUSH; i++)
+        if (!strcmp(item, FLUSH[i]))
+            return 0.003f;
+    if (!strcmp(item, "ammo-arrow") || !strcmp(item, "ammo-crossbow"))
+        return 0.017f;
+    for (size_t i = 0; i < sizeof MEAS / sizeof *MEAS; i++)
+        if (!strcmp(item, MEAS[i].id))
+            return MEAS[i].up;
     return 0.06f;
 }
-static int isp_fill(int si);
-static uint64_t isp_resp_ms(int si);
-#define ISP_PICKUP_UP 0.06f             // callers pass the pickup's spawn y = surface + this; the bag takes the surface itself
-static int ntf_push(int kind, const char *text, float secs);
-static int g_sat_off = -1;
+
+static int IspFill(int si);
+static uint64_t IspRespMs(int si);
+#define ISP_PICKUP_UP 0.06f     // callers pass the pickup's spawn y = surface + this; the bag takes the surface itself
+static int NtfPush(int kind, const char *text, float secs);
+static int g_satOff = -1;
 enum { ISP_WAIT, ISP_HOLD, ISP_COOL, ISP_CLAIM };
 #define ISP_CLAIM_TIMEOUT_MS 4000
 static struct {
-    uint32_t seed;                      // 0 = not known yet
+    uint32_t seed;              // 0 = not known yet
     int active, map, n, sat_got;
-    uint64_t bag[ISP_MAX];              // the visible bag object of a satchel spot (0 = none)
-    const isp_spot_t *sp;
+    uint64_t bag[ISP_MAX];      // the visible bag object of a satchel spot (0 = none)
+    const IspSpotT *sp;
     uint64_t live_ms, seed_tx_ms, seed_rq_ms, seed_tx_until;
     struct {
-        int st, rolls, taken, kill, item;   // rolls = rolls done; taken = highest roll number reported taken (-1); item = index into the spot's items
+        int st, rolls, taken, kill, item;       // rolls = rolls done; taken = highest roll number reported taken (-1); item = index into the spot's items
         uint64_t h, due, spawned_ms;
         uint8_t fails;
         int hy_state, hy_tries, have_hy;
         uint64_t hy_job, hy_ms;
         float hy_start, hy;
         uint64_t claim_ms;
-        int win_roll, win_slot;         // host: the roll that was claimed last and who won it (win_roll -1 = none)
+        int win_roll, win_slot; // host: the roll that was claimed last and who won it (win_roll -1 = none)
     } c[ISP_MAX];
-    struct { uint8_t op, si, n, slot, left; uint64_t at; } tx[16];
+    struct {
+        uint8_t op, si, n, slot, left;
+        uint64_t at;
+    } tx[16];
 } g_isp;
-static int g_isp_off = -1;
+static int g_ispOff = -1;
 
-static uint64_t isp_mix(uint64_t x) {
+static uint64_t IspMix(uint64_t x)
+{
     x += 0x9E3779B97F4A7C15ULL;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
     x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
     return x ^ (x >> 31);
 }
-static uint64_t isp_rnd(int si, int n, int salt) { return isp_mix(((uint64_t)g_isp.seed << 32) ^ ((uint64_t)(si + 1) << 16) ^ ((uint64_t)(n + 1) << 4) ^ (uint64_t)salt); }
-// the roll: -1 = the spot stays empty, else the index of the candidate
-static int g_isp_melee_off = -1;
-static int isp_sat_off(void) {   // 2013 had no supply spawn spots (supplies only from executed bodies) -> map satchels OFF by default; t2r-map-satchels.txt = on
-    if (g_sat_off < 0) { FILE *f = exe_side_open("t2r-map-satchels.txt", "r"); g_sat_off = f == NULL; if (f) fclose(f); xlog("item spots: map supply satchels %s", g_sat_off ? "OFF (2013: supplies only from executions; t2r-map-satchels.txt = on)" : "ON (t2r-map-satchels.txt)"); }
-    return g_sat_off;
+
+static uint64_t IspRnd(int si, int n, int salt)
+{
+    return IspMix(((uint64_t) g_isp.seed << 32) ^
+                   ((uint64_t) (si + 1) << 16) ^ ((uint64_t) (n + 1) << 4)
+                   ^ (uint64_t) salt);
 }
+
+// the roll: -1 = the spot stays empty, else the index of the candidate
+static int g_ispMeleeOff = -1;
+static int IspSatOff(void)
+{                               // 2013 had no supply spawn spots (supplies only from executed bodies) -> map satchels OFF by default; t2r-map-satchels.txt = on
+    if (g_satOff < 0) {
+        FILE *f = ExeSideOpen("t2r-map-satchels.txt", "r");
+        g_satOff = f == NULL;
+        if (f)
+            fclose(f);
+        Xlog("item spots: map supply satchels %s",
+             g_satOff ?
+             "OFF (2013: supplies only from executions; t2r-map-satchels.txt = on)"
+             : "ON (t2r-map-satchels.txt)");
+    }
+    return g_satOff;
+}
+
 // a dedicated satchel spot (tools/maps/satchels.py): its one candidate is the parts pickup; always filled (60 s respawn)
-static int isp_sat_spot(int si) { return g_isp.sp[si].n == 1 && !strcmp(g_isp.sp[si].c[0].item, "parts"); }
-static int isp_has_sat_spots(void) { for (int i = 0; i < g_isp.n; i++) if (isp_sat_spot(i)) return 1; return 0; }
-// spawn-item-pickup refuses health-small (no snack actor in the MP level, handle 0): it is out of the roll table, the other kinds renormalise
-static int isp_kind_ok(const char *it) {
-    if (strcmp(it, "health-small")) return 1;
-    static int said; if (!said) { said = 1; xlog("item spots: health-small is unavailable in MP (the level has no snack actor) - out of the roll table, other kinds renormalise"); }
+static int IspSatSpot(int si)
+{
+    return g_isp.sp[si].n == 1 && !strcmp(g_isp.sp[si].c[0].item, "parts");
+}
+
+static int IspHasSatSpots(void)
+{
+    for (int i = 0; i < g_isp.n; i++)
+        if (IspSatSpot(i))
+            return 1;
     return 0;
 }
-static int isp_roll(int si, int n) {
-    if (isp_sat_spot(si)) return isp_sat_off() ? -1 : ISP_SATCHEL;
-    if (!isp_sat_off() && g_isp.n > 1 && !isp_has_sat_spots()) {
-        int a = (int)(g_isp.seed % (uint32_t)g_isp.n), b = (a + g_isp.n / 2) % g_isp.n;      // the two guaranteed satchel spots (first roll)
-        if (n == 0 && (si == a || si == b)) return ISP_SATCHEL;
+
+// spawn-item-pickup refuses health-small (no snack actor in the MP level, handle 0): it is out of the roll table, the other kinds renormalise
+static int IspKindOk(const char *it)
+{
+    if (strcmp(it, "health-small"))
+        return 1;
+    static int said;
+    if (!said) {
+        said = 1;
+        Xlog("item spots: health-small is unavailable in MP (the level has no snack actor) - out of the roll table, other kinds renormalise");
     }
-    if (isp_rnd(si, n, 1) % 100 >= (uint64_t)isp_fill(si)) return -1;
-    if (!isp_sat_off() && isp_rnd(si, n, 11) % 100 < ISP_SAT_PCT) return ISP_SATCHEL;
-    if (g_isp_melee_off < 0) { FILE *f = exe_side_open("t2r-no-itemspot-melee.txt", "r"); g_isp_melee_off = f != NULL; if (f) fclose(f); }
-    if (!g_isp_melee_off && isp_rnd(si, n, 5) % 100 < ISP_MELEE_PCT) {
-        int style = (int)(isp_rnd(si, n, 7) % 3), k = 0;
-        while (MELEE_DROP_POOL[style][k]) k++;
-        return ISP_MELEE_BASE + style * 8 + (int)(isp_rnd(si, n, 9) % (uint64_t)(k ? k : 1));
+    return 0;
+}
+
+static int IspRoll(int si, int n)
+{
+    if (IspSatSpot(si))
+        return IspSatOff()? -1 : ISP_SATCHEL;
+    if (!IspSatOff() && g_isp.n > 1 && !IspHasSatSpots()) {
+        int a = (int) (g_isp.seed % (uint32_t) g_isp.n), b = (a + g_isp.n / 2) % g_isp.n;       // the two guaranteed satchel spots (first roll)
+        if (n == 0 && (si == a || si == b))
+            return ISP_SATCHEL;
     }
-    { // weighted pick of one candidate (weight 1 = uniform; a pure function of seed, spot and roll like everything here)
-        const isp_spot_t *s = &g_isp.sp[si]; uint64_t tot = 0;
-        for (int k = 0; k < s->n; k++) if (isp_kind_ok(s->c[k].item)) tot += (uint64_t)(s->c[k].w > 0 ? s->c[k].w : 1);
-        if (!tot) return -1;                                 // only unavailable kinds: the spot stays empty
-        uint64_t x = isp_rnd(si, n, 3) % tot;
-        for (int k = 0; k < s->n; k++) { if (!isp_kind_ok(s->c[k].item)) continue; uint64_t w = (uint64_t)(s->c[k].w > 0 ? s->c[k].w : 1); if (x < w) return k; x -= w; }
+    if (IspRnd(si, n, 1) % 100 >= (uint64_t) IspFill(si))
+        return -1;
+    if (!IspSatOff() && IspRnd(si, n, 11) % 100 < ISP_SAT_PCT)
+        return ISP_SATCHEL;
+    if (g_ispMeleeOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-itemspot-melee.txt", "r");
+        g_ispMeleeOff = f != NULL;
+        if (f)
+            fclose(f);
+    }
+    if (!g_ispMeleeOff && IspRnd(si, n, 5) % 100 < ISP_MELEE_PCT) {
+        int style = (int) (IspRnd(si, n, 7) % 3), k = 0;
+        while (MELEE_DROP_POOL[style][k])
+            k++;
+        return ISP_MELEE_BASE + style * 8 +
+            (int) (IspRnd(si, n, 9) % (uint64_t) (k ? k : 1));
+    }
+    {                           // weighted pick of one candidate (weight 1 = uniform; a pure function of seed, spot and roll like everything here)
+        const IspSpotT *s = &g_isp.sp[si];
+        uint64_t tot = 0;
+        for (int k = 0; k < s->n; k++)
+            if (IspKindOk(s->c[k].item))
+                tot += (uint64_t) (s->c[k].w > 0 ? s->c[k].w : 1);
+        if (!tot)
+            return -1;          // only unavailable kinds: the spot stays empty
+        uint64_t x = IspRnd(si, n, 3) % tot;
+        for (int k = 0; k < s->n; k++) {
+            if (!IspKindOk(s->c[k].item))
+                continue;
+            uint64_t w = (uint64_t) (s->c[k].w > 0 ? s->c[k].w : 1);
+            if (x < w)
+                return k;
+            x -= w;
+        }
         return 0;
     }
 }
+
 // item spawner: a pickup count for an item (ammo = the box pickup size, ingredients 2, melee = durability by the caller, everything else 1)
-static uint64_t isp_count(const char *it) {
-    static const struct { const char *n; int c; } T[] = {{"ammo-pistol", 6}, {"ammo-revolver", 5}, {"ammo-revolver-joel", 5}, {"ammo-rifle", 4}, {"ammo-rifle-vepr", 5}, {"ammo-rifle-mpx5", 8},
-        {"ammo-shotgun", 4}, {"ammo-shotgun-baserri", 4}, {"ammo-arrow", 3}, {"ammo-crossbow", 3}, {"alcohol", 2}, {"rag", 2}, {"canister", 2}, {"explosive", 2}, {"binding", 2}, {"blade", 2},
-        {"parts", 2}};   // the map satchel pays 100 clan parts = +2 supplies, so its native prompt / pickup count reads 2 (the execution drop spawns its own count 1 = 1 supply)
-    for (size_t i = 0; i < sizeof T / sizeof *T; i++) if (!strcmp(T[i].n, it)) return (uint64_t)T[i].c;
+static uint64_t IspCount(const char *it)
+{
+    static const struct {
+        const char *n;
+        int c;
+    } T[] =
+        { { "ammo-pistol", 6 }, { "ammo-revolver", 5 },
+        { "ammo-revolver-joel", 5 }, { "ammo-rifle", 4 },
+        { "ammo-rifle-vepr", 5 }, { "ammo-rifle-mpx5", 8 },
+    { "ammo-shotgun", 4 }, { "ammo-shotgun-baserri", 4 }, { "ammo-arrow",
+                                                           3 },
+        { "ammo-crossbow", 3 }, { "alcohol", 2 }, { "rag", 2 },
+        { "canister", 2 }, { "explosive", 2 }, { "binding", 2 }, { "blade",
+                                                                  2 },
+    { "parts", 2 }
+    };                          // the map satchel pays 100 clan parts = +2 supplies, so its native prompt / pickup count reads 2 (the execution drop spawns its own count 1 = 1 supply)
+    for (size_t i = 0; i < sizeof T / sizeof *T; i++)
+        if (!strcmp(T[i].n, it))
+            return (uint64_t) T[i].c;
     return 1;
 }
+
 // Spots used to spawn ammo with no assigned gun, or ammo for guns the player does not use. A map spot rolls an ammo CLASS, not a fixed box:
 // ammo-pistol / ammo-revolver* = ammo for the pistol this player carries, every other ammo-* = ammo for a long gun this player carries (loadout slots
 // 1, 0, 2 like the kill drop b13_drop_pick; the roll is the same on every screen, the pickup is a local entity, so each screen shows ITS player's
 // ammo, with the 2013 small pack of that gun). A class the player has no gun for falls back to the other class; no gun with box ammo at all = the spot is
 // empty on this screen. -> the ammo item id (or NULL), *count = the pickup size.
-static int isp_is_ammo(const char *it) { return it && !strncmp(it, "ammo-", 5); }
-static const char *isp_ammo_for_me(const char *cls, uint64_t salt, uint64_t *count) {
-    static const int ORDER[3] = {1, 0, 2};
-    loadout_t l;
+static int IspIsAmmo(const char *it)
+{
+    return it && !strncmp(it, "ammo-", 5);
+}
+
+static const char *IspAmmoForMe(const char *cls, uint64_t salt,
+                                   uint64_t *count)
+{
+    static const int ORDER[3] = { 1, 0, 2 };
+    LoadoutT l;
     memset(&l, 0xff, sizeof l.w);
-    lo_read_obj(&l);
-    const char *pa = NULL, *la[2] = {NULL, NULL}; uint64_t pc = 0, lc[2] = {0, 0}; int nl = 0;
+    LoReadObj(&l);
+    const char *pa = NULL, *la[2] = { NULL, NULL };
+    uint64_t pc = 0, lc[2] = { 0, 0 };
+    int nl = 0;
     for (int k = 0; k < 3; k++) {
-        const char *gun = b13_loadout_gun(&l, ORDER[k]);
-        const char *ammo = gun && *gun ? ammo_of_gun(gun) : NULL;
-        if (!gun || !ammo) continue;
-        uint64_t g = fnv64(gun), gb = base_weapon(g);
+        const char *gun = B13LoadoutGun(&l, ORDER[k]);
+        const char *ammo = gun && *gun ? AmmoOfGun(gun) : NULL;
+        if (!gun || !ammo)
+            continue;
+        uint64_t g = FNV64(gun), gb = BaseWeapon(g);
         int r = -1;
-        for (size_t i = 0; i < sizeof B13_AMMO / sizeof *B13_AMMO && r < 0; i++)
-            if (fnv64(B13_AMMO[i].gun) == g || fnv64(B13_AMMO[i].gun) == gb) r = (int)i;
-        if (r < 0) continue;                                           // power weapons / unknown: no box ammo (as the supply box)
-        if (B13_AMMO[r].pistol) { if (!pa) { pa = ammo; pc = B13_AMMO[r].small; } }
-        else {
+        for (size_t i = 0; i < sizeof B13_AMMO / sizeof *B13_AMMO && r < 0;
+             i++)
+            if (FNV64(B13_AMMO[i].gun) == g
+                || FNV64(B13_AMMO[i].gun) == gb)
+                r = (int) i;
+        if (r < 0)
+            continue;           // power weapons / unknown: no box ammo (as the supply box)
+        if (B13_AMMO[r].pistol) {
+            if (!pa) {
+                pa = ammo;
+                pc = B13_AMMO[r].small;
+            }
+        } else {
             int dup = 0;
-            for (int j = 0; j < nl; j++) if (!strcmp(la[j], ammo)) dup = 1;
-            if (!dup && nl < 2) { la[nl] = ammo; lc[nl] = B13_AMMO[r].small; nl++; }
+            for (int j = 0; j < nl; j++)
+                if (!strcmp(la[j], ammo))
+                    dup = 1;
+            if (!dup && nl < 2) {
+                la[nl] = ammo;
+                lc[nl] = B13_AMMO[r].small;
+                nl++;
+            }
         }
     }
-    int want_pistol = !strcmp(cls, "ammo-pistol") || !strncmp(cls, "ammo-revolver", 13);
-    if (want_pistol && pa) { *count = pc; return pa; }
-    if (nl) { int j = nl > 1 ? (int)(salt % (uint64_t)nl) : 0; *count = lc[j]; return la[j]; }
-    if (pa) { *count = pc; return pa; }
+    int want_pistol = !strcmp(cls, "ammo-pistol")
+        || !strncmp(cls, "ammo-revolver", 13);
+    if (want_pistol && pa) {
+        *count = pc;
+        return pa;
+    }
+    if (nl) {
+        int j = nl > 1 ? (int) (salt % (uint64_t) nl) : 0;
+        *count = lc[j];
+        return la[j];
+    }
+    if (pa) {
+        *count = pc;
+        return pa;
+    }
     return NULL;
 }
-static int isp_is_melee(const char *it) { return melee_dur_w(fnv64(it)) > 0; }        // MELEE_TAB weapons (every melee of the editor's list)
-static void isp_rotv(const float *q, const float *v, float *o) {   // v' = v + 2w(u x v) + 2 u x (u x v)
-    float cx = q[1] * v[2] - q[2] * v[1], cy = q[2] * v[0] - q[0] * v[2], cz = q[0] * v[1] - q[1] * v[0];
-    o[0] = v[0] + 2 * (q[3] * cx + q[1] * cz - q[2] * cy); o[1] = v[1] + 2 * (q[3] * cy + q[2] * cx - q[0] * cz); o[2] = v[2] + 2 * (q[3] * cz + q[0] * cy - q[1] * cx);
+
+static int IspIsMelee(const char *it)
+{
+    return MeleeDurW(FNV64(it)) > 0;
+}                               // MELEE_TAB weapons (every melee of the editor's list)
+
+static void IspRotv(const float *q, const float *v, float *o)
+{                               // v' = v + 2w(u x v) + 2 u x (u x v)
+    float cx = q[1] * v[2] - q[2] * v[1], cy =
+        q[2] * v[0] - q[0] * v[2], cz = q[0] * v[1] - q[1] * v[0];
+    o[0] = v[0] + 2 * (q[3] * cx + q[1] * cz - q[2] * cy);
+    o[1] = v[1] + 2 * (q[3] * cy + q[2] * cx - q[0] * cz);
+    o[2] = v[2] + 2 * (q[3] * cz + q[0] * cy - q[1] * cx);
 }
+
 // the item id of a roll result (a spot candidate or a melee weapon)
-static const char *isp_item(int si, int r) {
-    if (r == ISP_SATCHEL) return "parts";
-    if (r >= ISP_MELEE_BASE) { int st = (r - ISP_MELEE_BASE) / 8, w = (r - ISP_MELEE_BASE) % 8; return st < 3 && MELEE_DROP_POOL[st][w] ? MELEE_DROP_POOL[st][w] : "crowbar"; }
+static const char *IspItem(int si, int r)
+{
+    if (r == ISP_SATCHEL)
+        return "parts";
+    if (r >= ISP_MELEE_BASE) {
+        int st = (r - ISP_MELEE_BASE) / 8, w = (r - ISP_MELEE_BASE) % 8;
+        return st < 3
+            && MELEE_DROP_POOL[st][w] ? MELEE_DROP_POOL[st][w] : "crowbar";
+    }
     return r >= 0 && r < g_isp.sp[si].n ? g_isp.sp[si].c[r].item : "?";
 }
-static void isp_send(const uint8_t *b, uint64_t len) { if (g_send_tramp) g_send_tramp(MSG_ISPOT, (uint8_t *)b, len, 0xff); }
-static void isp_send_seed(void) {
-    uint8_t m[5] = {1};
-    memcpy(m + 1, &g_isp.seed, 4);
-    isp_send(m, 5);
+
+static void IspSend(const uint8_t *b, uint64_t len)
+{
+    if (g_sendTramp)
+        g_sendTramp(MSG_ISPOT, (uint8_t *) b, len, 0xff);
 }
+
+static void IspSendSeed(void)
+{
+    uint8_t m[5] = { 1 };
+    memcpy(m + 1, &g_isp.seed, 4);
+    IspSend(m, 5);
+}
+
 // peer resync (re/jip-state-resync-1019.md): a player who joins a running match starts every spot at roll 0 with the same seed, while the match is at
 // roll N: it saw other items than everybody else (and its claims named rolls the host had long closed). The HOST sends its roll table to the newcomer
 // (op 4: [n][per spot: rolls done, taken (i8), state, seconds until it rolls again]); a spot that is BEHIND the host's jumps to the host's roll (the
 // item is a pure function of seed, spot and roll no.): held item -> re-roll the same roll number, cooling / empty -> wait the same remaining time.
-static int isp_host(void);
-static void sd_resync(uint32_t to);
-static int isp_shared(int si) { return g_isp.sp && si >= 0 && si < g_isp.n && g_isp.sp[si].sh; }
-static int isp_fill(int si) { int f = g_isp.sp[si].fill; return f > 0 && f <= 100 ? f : ISP_FILL_PCT; }
-static uint64_t isp_resp_ms(int si) { int r = g_isp.sp[si].resp; return 1000ULL * (uint64_t)(r > 0 ? r : ISP_RESPAWN_S); }
-static void isp_resync(uint32_t to) {
-    sd_resync(to);
-    if (!g_isp.active || !g_isp.seed || !isp_host() || !g_send_tramp || to >= T2R_MAX_PEERS) return;
-    int n = g_isp.n > ISP_MAX ? ISP_MAX : g_isp.n; uint64_t now = GetTickCount64();
-    for (int start = 0; start < n; start += ISP_TAB_CHUNK) {          // op 4 = the first chunk (the old message), op 8 [start][k] = the later ones
-        uint8_t m[3 + 4 * ISP_TAB_CHUNK]; int k = n - start > ISP_TAB_CHUNK ? ISP_TAB_CHUNK : n - start, h = start ? 3 : 2;
-        m[0] = (uint8_t)(start ? 8 : 4);
-        if (start) { m[1] = (uint8_t)start; m[2] = (uint8_t)k; } else m[1] = (uint8_t)k;
+static int IspHost(void);
+static void SdResync(uint32_t to);
+static int IspShared(int si)
+{
+    return g_isp.sp && si >= 0 && si < g_isp.n && g_isp.sp[si].sh;
+}
+
+static int IspFill(int si)
+{
+    int f = g_isp.sp[si].fill;
+    return f > 0 && f <= 100 ? f : ISP_FILL_PCT;
+}
+
+static uint64_t IspRespMs(int si)
+{
+    int r = g_isp.sp[si].resp;
+    return 1000ULL * (uint64_t) (r > 0 ? r : ISP_RESPAWN_S);
+}
+
+static void IspResync(uint32_t to)
+{
+    SdResync(to);
+    if (!g_isp.active || !g_isp.seed || !IspHost() || !g_sendTramp
+        || to >= T2R_MAX_PEERS)
+        return;
+    int n = g_isp.n > ISP_MAX ? ISP_MAX : g_isp.n;
+    uint64_t now = GetTickCount64();
+    for (int start = 0; start < n; start += ISP_TAB_CHUNK) {    // op 4 = the first chunk (the old message), op 8 [start][k] = the later ones
+        uint8_t m[3 + 4 * ISP_TAB_CHUNK];
+        int k = n - start > ISP_TAB_CHUNK ? ISP_TAB_CHUNK : n - start, h =
+            start ? 3 : 2;
+        m[0] = (uint8_t) (start ? 8 : 4);
+        if (start) {
+            m[1] = (uint8_t) start;
+            m[2] = (uint8_t) k;
+        } else
+            m[1] = (uint8_t) k;
         for (int j = 0; j < k; j++) {
             int i = start + j;
-            typeof(g_isp.c[0]) *c = &g_isp.c[i];
-            int st = c->st == ISP_HOLD ? 1 : (c->st == ISP_COOL || c->st == ISP_CLAIM) ? 2 : 0;
-            uint64_t left = c->st == ISP_CLAIM ? isp_resp_ms(i) : (c->due > now ? c->due - now : 0);
-            int rolls = isp_shared(i) ? 0 : c->rolls > 255 ? 255 : c->rolls;        // a shared spot is per player: the newcomer rolls it on its own
-            m[h + 4 * j] = (uint8_t)rolls; m[h + 1 + 4 * j] = (uint8_t)(int8_t)(c->taken > 127 ? 127 : c->taken);
-            m[h + 2 + 4 * j] = (uint8_t)st; m[h + 3 + 4 * j] = (uint8_t)(left / 1000 > 255 ? 255 : left / 1000);
+            typeof(g_isp.c[0]) * c = &g_isp.c[i];
+            int st = c->st == ISP_HOLD ? 1 : (c->st == ISP_COOL
+                                              || c->st ==
+                                              ISP_CLAIM) ? 2 : 0;
+            uint64_t left =
+                c->st == ISP_CLAIM ? IspRespMs(i) : (c->due >
+                                                       now ? c->due -
+                                                       now : 0);
+            int rolls = IspShared(i) ? 0 : c->rolls > 255 ? 255 : c->rolls;    // a shared spot is per player: the newcomer rolls it on its own
+            m[h + 4 * j] = (uint8_t) rolls;
+            m[h + 1 + 4 * j] =
+                (uint8_t) (int8_t) (c->taken > 127 ? 127 : c->taken);
+            m[h + 2 + 4 * j] = (uint8_t) st;
+            m[h + 3 + 4 * j] =
+                (uint8_t) (left / 1000 > 255 ? 255 : left / 1000);
         }
-        g_send_tramp(MSG_ISPOT, m, (uint64_t)(h + 4 * k), (uint8_t)to);
+        g_sendTramp(MSG_ISPOT, m, (uint64_t) (h + 4 * k), (uint8_t) to);
     }
-    xlog("item spots: roll table (%d spots) sent to slot %u", n, to);
+    Xlog("item spots: roll table (%d spots) sent to slot %u", n, to);
 }
-static void isp_apply_snapshot(const uint8_t *b, uint64_t len) {
-    int start = b[0] == 8 ? b[1] : 0, h = b[0] == 8 ? 3 : 2;            // op 4 [n] = spots 0..; op 8 [start][n] = a later chunk
-    if (start >= g_isp.n) return;
-    int n = (int)pt_count(b[h - 1], (uint32_t)(g_isp.n - start), len, (uint32_t)h, 4);      // (peertrust.h: what the table holds AND what the message carries)
-    uint64_t now = GetTickCount64(); int moved = 0;
+
+static void IspApplySnapshot(const uint8_t *b, uint64_t len)
+{
+    int start = b[0] == 8 ? b[1] : 0, h = b[0] == 8 ? 3 : 2;    // op 4 [n] = spots 0..; op 8 [start][n] = a later chunk
+    if (start >= g_isp.n)
+        return;
+    int n = (int) PtCount(b[h - 1], (uint32_t) (g_isp.n - start), len, (uint32_t) h, 4);       // (peertrust.h: what the table holds AND what the message carries)
+    uint64_t now = GetTickCount64();
+    int moved = 0;
     for (int j = 0; j < n; j++) {
         int i = start + j;
-        typeof(g_isp.c[0]) *c = &g_isp.c[i];
-        int rolls = b[h + 4 * j], taken = (int8_t)b[h + 1 + 4 * j], st = b[h + 2 + 4 * j], left = b[h + 3 + 4 * j];
-        if (isp_shared(i)) continue;                                         // per player
-        if (taken > c->taken) c->taken = taken;
-        if (!rolls || c->rolls >= rolls || c->st == ISP_CLAIM) continue;     // in step already / ahead / a pickup of ours is being claimed
-        if (c->st == ISP_HOLD) c->kill = 1;                                    // our copy of an older roll goes (the tick kills c->h)
-        if (st == 1) { c->rolls = rolls - 1; c->st = ISP_WAIT; c->due = now; } // the host holds roll rolls-1: spawn that one
-        else { c->rolls = rolls; c->st = ISP_COOL; c->due = now + 1000ULL * (uint64_t)left; }
+        typeof(g_isp.c[0]) * c = &g_isp.c[i];
+        int rolls = b[h + 4 * j], taken = (int8_t) b[h + 1 + 4 * j], st =
+            b[h + 2 + 4 * j], left = b[h + 3 + 4 * j];
+        if (IspShared(i))
+            continue;           // per player
+        if (taken > c->taken)
+            c->taken = taken;
+        if (!rolls || c->rolls >= rolls || c->st == ISP_CLAIM)
+            continue;           // in step already / ahead / a pickup of ours is being claimed
+        if (c->st == ISP_HOLD)
+            c->kill = 1;        // our copy of an older roll goes (the tick kills c->h)
+        if (st == 1) {
+            c->rolls = rolls - 1;
+            c->st = ISP_WAIT;
+            c->due = now;
+        }                       // the host holds roll rolls-1: spawn that one
+        else {
+            c->rolls = rolls;
+            c->st = ISP_COOL;
+            c->due = now + 1000ULL * (uint64_t) left;
+        }
         moved++;
     }
-    if (moved) xlog("item spots: host's roll table taken over - %d of %d spot(s) (from spot %d) were behind", moved, n, start + 1);
+    if (moved)
+        Xlog("item spots: host's roll table taken over - %d of %d spot(s) (from spot %d) were behind", moved, n, start + 1);
 }
-static void isp_reset(void) {
-    if (g_isp.active) xlog("item spots: match over - state cleared");
+
+static void IspReset(void)
+{
+    if (g_isp.active)
+        Xlog("item spots: match over - state cleared");
     memset(&g_isp, 0, sizeof g_isp);
 }
-static void isp_queue(int op, int si, int n, int slot, uint64_t now) {
-    for (int k = 0; k < 16; k++) if (!g_isp.tx[k].left) {
-        g_isp.tx[k].op = (uint8_t)op; g_isp.tx[k].si = (uint8_t)si; g_isp.tx[k].n = (uint8_t)n; g_isp.tx[k].slot = (uint8_t)slot;
-        g_isp.tx[k].left = 3; g_isp.tx[k].at = now;
-        return;
-    }
+
+static void IspQueue(int op, int si, int n, int slot, uint64_t now)
+{
+    for (int k = 0; k < 16; k++)
+        if (!g_isp.tx[k].left) {
+            g_isp.tx[k].op = (uint8_t) op;
+            g_isp.tx[k].si = (uint8_t) si;
+            g_isp.tx[k].n = (uint8_t) n;
+            g_isp.tx[k].slot = (uint8_t) slot;
+            g_isp.tx[k].left = 3;
+            g_isp.tx[k].at = now;
+            return;
+        }
 }
-static uint32_t isp_me(void) { return *(uint32_t *)VMA(0x180138090); }
-static int isp_host(void) { return *(volatile uint8_t *)VMA(HM_ROLE) != 2; }     // host (1) or no session (solo test)
-static int g_sat_bag_off = -1;
-static void sd_bags_replace(void);
+
+static uint32_t IspMe(void)
+{
+    return *(uint32_t *) T2R_SYM(kMySlot);
+}
+
+static int IspHost(void)
+{
+    return *(volatile uint8_t *) T2R_SYM(kRoleByte) != 2;
+}                               // host (1) or no session (solo test)
+
+static int g_satBagOff = -1;
+static void SdBagsReplace(void);
 // the NPC backpack mesh spawns in its worn pose (upright, straps hanging) and reads as floating. Pose = yaw, then tilt about the
 // bag's local X / Z by g_sat_pose[0] / [1] degrees, lift [2] m. Dev tuning: t2r-satchel-pose.txt "tilt_x tilt_z lift" (re-read every 2 s,
 // live bags are re-placed).
-static float g_sat_pose[3] = {0.0f, 0.0f, 0.0f};      // lies on its back panel, front pocket up (straps deleted, no loops to hold it off the ground)
-static float g_sat_bagpos[ISP_MAX][4];
-static void isp_qmul(const float *a, const float *b, float *o) {
+static float g_satPose[3] = { 0.0f, 0.0f, 0.0f };      // lies on its back panel, front pocket up (straps deleted, no loops to hold it off the ground)
+
+static float g_satBagpos[ISP_MAX][4];
+static void IspQmul(const float *a, const float *b, float *o)
+{
     o[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
     o[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
     o[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
     o[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
 }
-static uint64_t isp_bag_place(uint64_t o, const float *p4) {
+
+static uint64_t IspBagPlace(uint64_t o, const float *p4)
+{
     static __attribute__((aligned(16))) float tp[4], tq[4];
-    float yaw = p4[3], tx = g_sat_pose[0] * 0.01745329f, tz = g_sat_pose[1] * 0.01745329f;
-    float qy[4] = {0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f)}, qx[4] = {sinf(tx * 0.5f), 0, 0, cosf(tx * 0.5f)}, qz[4] = {0, 0, sinf(tz * 0.5f), cosf(tz * 0.5f)}, t1[4];
-    isp_qmul(qy, qx, t1); isp_qmul(t1, qz, tq);
-    tp[0] = p4[0]; tp[1] = p4[1] - ISP_PICKUP_UP + ISP_SAT_LIFT + g_sat_pose[2]; tp[2] = p4[2]; tp[3] = 1.0f;
-    uint64_t bfa[5] = {(uint64_t)tp, (uint64_t)tq, 0, 0, 0};
-    uint64_t bf = dc_call(0x871ec52cc86b7427ULL /* alloc-bound-frame */, 5, bfa);
-    uint64_t la[2] = {o, bf};
-    return bf && bf != ~0ULL ? dc_call(fnv64("set-object-locator"), 2, la) : 0;
+    float yaw = p4[3], tx = g_satPose[0] * 0.01745329f, tz =
+        g_satPose[1] * 0.01745329f;
+    float qy[4] = { 0, sinf(yaw * 0.5f), 0, cosf(yaw * 0.5f) }, qx[4] =
+        { sinf(tx * 0.5f), 0, 0, cosf(tx * 0.5f) }, qz[4] =
+        { 0, 0, sinf(tz * 0.5f), cosf(tz * 0.5f) }, t1[4];
+    IspQmul(qy, qx, t1);
+    IspQmul(t1, qz, tq);
+    tp[0] = p4[0];
+    tp[1] = p4[1] - ISP_PICKUP_UP + ISP_SAT_LIFT + g_satPose[2];
+    tp[2] = p4[2];
+    tp[3] = 1.0f;
+    uint64_t bfa[5] = { (uint64_t) tp, (uint64_t) tq, 0, 0, 0 };
+    uint64_t bf =
+        DcCall(0x871ec52cc86b7427ULL /* alloc-bound-frame */ , 5, bfa);
+    uint64_t la[2] = { o, bf };
+    return bf
+        && bf != ~0ULL ? DcCall(FNV64("set-object-locator"), 2, la) : 0;
 }
+
 #ifndef T2R_RELEASE
-static void isp_bag_pose_dev(void) {
-    static uint64_t last; uint64_t t = GetTickCount64();
-    if (t - last < 2000) return;
+static void IspBagPoseDev(void)
+{
+    static uint64_t last;
+    uint64_t t = GetTickCount64();
+    if (t - last < 2000)
+        return;
     last = t;
-    FILE *f = exe_side_open("t2r-satchel-pose.txt", "r"); if (!f) return;
-    float n[3]; int ok = fscanf(f, "%f %f %f", &n[0], &n[1], &n[2]) == 3; fclose(f);
-    if (!ok || !memcmp(n, g_sat_pose, sizeof n)) return;
-    memcpy(g_sat_pose, n, sizeof n);
-    xlog("item spots: satchel pose tilt x %.0f z %.0f lift %.2f (dev file) - live bags re-placed", n[0], n[1], n[2]);
-    for (int i = 0; i < ISP_MAX; i++) if (g_isp.bag[i]) isp_bag_place(g_isp.bag[i], g_sat_bagpos[i]);    sd_bags_replace();
+    FILE *f = ExeSideOpen("t2r-satchel-pose.txt", "r");
+    if (!f)
+        return;
+    float n[3];
+    int ok = fscanf(f, "%f %f %f", &n[0], &n[1], &n[2]) == 3;
+    fclose(f);
+    if (!ok || !memcmp(n, g_satPose, sizeof n))
+        return;
+    memcpy(g_satPose, n, sizeof n);
+    Xlog("item spots: satchel pose tilt x %.0f z %.0f lift %.2f (dev file) - live bags re-placed", n[0], n[1], n[2]);
+    for (int i = 0; i < ISP_MAX; i++)
+        if (g_isp.bag[i])
+            IspBagPlace(g_isp.bag[i], g_satBagpos[i]);
+    SdBagsReplace();
 }
 #else
-static void isp_bag_pose_dev(void) {}
+static void IspBagPoseDev(void)
+{
+}
 #endif
-static uint64_t isp_bag_spawn(int si, const float *pos) {
+static uint64_t IspBagSpawn(int si, const float *pos)
+{
     static int nl;
-    if (g_sat_bag_off < 0) { FILE *f = exe_side_open("t2r-no-satchel-bag.txt", "r"); g_sat_bag_off = f != NULL; if (f) fclose(f); }
-    if (g_sat_bag_off) return 0;
-    uint64_t a[9] = {fnv64(ISP_SAT_ACTOR), fnv64("SimpleAttachable"), 0, 0, 1, 0, 0, 0, 0};
-    uint64_t o = dc_call(fnv64("spawn-object"), 9, a);
-    if (!o || o == ~0ULL) { if (nl < 6) { nl++; xlog("item spots: satchel bag %s: spawn-object failed (%llx) - the plain pickup stays (actor not in the MP level?)", ISP_SAT_ACTOR, (unsigned long long)o); } return 0; }
-    float yaw = (float)(isp_rnd(si, g_isp.c[si].rolls, 13) % 628) / 100.0f;          // a different turn per roll (deterministic: every client shows the same)
-    { const float *q = g_isp.sp[si].q; if (fabsf(q[1]) > 1e-4f) yaw = 2.0f * atan2f(q[1], q[3]); }   // box_place.py: a satchel spot against a wall carries the yaw facing out of the wall (identity quat = random turn)
-    float *p4 = g_sat_bagpos[si]; p4[0] = pos[0]; p4[1] = pos[1]; p4[2] = pos[2]; p4[3] = yaw;
-    uint64_t r = isp_bag_place(o, p4);
-    xlog("item spots: spot %d satchel bag %llx at %.2f %.2f %.2f yaw %.2f tilt %.0f/%.0f lift %.2f (set-object-locator -> %llx)", si + 1, (unsigned long long)o, pos[0], pos[1], pos[2], yaw, g_sat_pose[0], g_sat_pose[1], g_sat_pose[2], (unsigned long long)r);
+    if (g_satBagOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-satchel-bag.txt", "r");
+        g_satBagOff = f != NULL;
+        if (f)
+            fclose(f);
+    }
+    if (g_satBagOff)
+        return 0;
+    uint64_t a[9] =
+        { FNV64(ISP_SAT_ACTOR), FNV64("SimpleAttachable"), 0, 0, 1, 0, 0,
+0, 0 };
+    uint64_t o = DcCall(FNV64("spawn-object"), 9, a);
+    if (!o || o == ~0ULL) {
+        if (nl < 6) {
+            nl++;
+            Xlog("item spots: satchel bag %s: spawn-object failed (%llx) - the plain pickup stays (actor not in the MP level?)", ISP_SAT_ACTOR, (unsigned long long) o);
+        }
+        return 0;
+    }
+    float yaw = (float) (IspRnd(si, g_isp.c[si].rolls, 13) % 628) / 100.0f;    // a different turn per roll (deterministic: every client shows the same)
+    {
+        const float *q = g_isp.sp[si].q;
+        if (fabsf(q[1]) > 1e-4f)
+            yaw = 2.0f * atan2f(q[1], q[3]);
+    }                           // box_place.py: a satchel spot against a wall carries the yaw facing out of the wall (identity quat = random turn)
+    float *p4 = g_satBagpos[si];
+    p4[0] = pos[0];
+    p4[1] = pos[1];
+    p4[2] = pos[2];
+    p4[3] = yaw;
+    uint64_t r = IspBagPlace(o, p4);
+    Xlog("item spots: spot %d satchel bag %llx at %.2f %.2f %.2f yaw %.2f tilt %.0f/%.0f lift %.2f (set-object-locator -> %llx)", si + 1, (unsigned long long) o, pos[0], pos[1], pos[2], yaw, g_satPose[0], g_satPose[1], g_satPose[2], (unsigned long long) r);
     return o;
 }
-static void isp_bag_kill(int si) {
-    uint64_t o = g_isp.bag[si]; g_isp.bag[si] = 0;
-    if (o) dc_call(fnv64("kill-entity"), 1, &o);
+
+static void IspBagKill(int si)
+{
+    uint64_t o = g_isp.bag[si];
+    g_isp.bag[si] = 0;
+    if (o)
+        DcCall(FNV64("kill-entity"), 1, &o);
 }
+
 // we won a satchel claim: the clan's supplies (see ISP_SATCHEL)
-static void isp_sat_grant(int si, int n) {
-    if (g_isp.sat_got >= ISP_SAT_MAX) { xlog("item spots: spot %d roll %d satchel taken but this match already gave %d - nothing booked", si + 1, n, ISP_SAT_MAX); return; }
+static void IspSatGrant(int si, int n)
+{
+    if (g_isp.sat_got >= ISP_SAT_MAX) {
+        Xlog("item spots: spot %d roll %d satchel taken but this match already gave %d - nothing booked", si + 1, n, ISP_SAT_MAX);
+        return;
+    }
     g_isp.sat_got++;
-    g_clan_parts += ISP_SAT_PARTS;
-    pm_tally("Supply Satchel", ISP_SAT_PARTS);
+    g_clanParts += ISP_SAT_PARTS;
+    PmTally("Supply Satchel", ISP_SAT_PARTS);
     // no toast (picking up supplies must not give a notification) - the native pickup prompt / animation is the feedback
-    xlog("item spots: spot %d roll %d SATCHEL +%d clan parts (+%d supplies; %d of %d this match, match total %d parts)", si + 1, n, ISP_SAT_PARTS, ISP_SAT_PARTS / 50, g_isp.sat_got, ISP_SAT_MAX, g_clan_parts);
+    Xlog("item spots: spot %d roll %d SATCHEL +%d clan parts (+%d supplies; %d of %d this match, match total %d parts)", si + 1, n, ISP_SAT_PARTS, ISP_SAT_PARTS / 50, g_isp.sat_got, ISP_SAT_MAX, g_clanParts);
 }
+
 // a GRANT for (spot, roll) reached us (or we are the host and decided it): copy removed / item kept / item taken back
-static void isp_apply_grant(int si, int n, int winner, uint64_t now) {
-    typeof(g_isp.c[0]) *c = &g_isp.c[si];
-    uint32_t me = isp_me();
-    if (n > c->taken) c->taken = n;
-    if (c->rolls - 1 != n) return;                                  // not the roll we hold (not reached yet: `taken` makes us skip it)
+static void IspApplyGrant(int si, int n, int winner, uint64_t now)
+{
+    typeof(g_isp.c[0]) * c = &g_isp.c[si];
+    uint32_t me = IspMe();
+    if (n > c->taken)
+        c->taken = n;
+    if (c->rolls - 1 != n)
+        return;                 // not the roll we hold (not reached yet: `taken` makes us skip it)
     if (c->st == ISP_HOLD) {
-        c->kill = 1; c->st = ISP_COOL; c->due = now + isp_resp_ms(si);
-        xlog("item spots: spot %d roll %d (%s) granted to slot %d - our copy removed, rolls again in %llu s", si + 1, n, isp_item(si, c->item), winner, (unsigned long long)(isp_resp_ms(si) / 1000));
+        c->kill = 1;
+        c->st = ISP_COOL;
+        c->due = now + IspRespMs(si);
+        Xlog("item spots: spot %d roll %d (%s) granted to slot %d - our copy removed, rolls again in %llu s", si + 1, n, IspItem(si, c->item), winner, (unsigned long long) (IspRespMs(si) / 1000));
     } else if (c->st == ISP_CLAIM) {
-        c->st = ISP_COOL; c->due = now + isp_resp_ms(si);
-        if ((uint32_t)winner == me) {
-            xlog("item spots: spot %d roll %d (%s) GRANTED to us - kept, rolls again in %llu s", si + 1, n, isp_item(si, c->item), (unsigned long long)(isp_resp_ms(si) / 1000));
-            if (c->item == ISP_SATCHEL) isp_sat_grant(si, n);
-        }
-        else {
-            uint64_t cnt_ = 0; const char *ci = isp_item(si, c->item);
-            if (isp_is_ammo(ci)) { const char *ra = isp_ammo_for_me(ci, isp_rnd(si, n, 17), &cnt_); if (ra) ci = ra; }      // the copy we picked up was OUR gun's ammo
-            uint64_t r = dc_direct(fnv64("player-inventory-consume-item"), fnv64(ci), 1, 0);
-            xlog("item spots: spot %d roll %d (%s) DENIED - slot %d claimed first; the copy we picked up is taken back (%llx)%s", si + 1, n,
-                 isp_item(si, c->item), winner, (unsigned long long)r, c->item >= ISP_MELEE_BASE ? " - melee roll: consume-item may not take a weapon back (unproven)" : "");
+        c->st = ISP_COOL;
+        c->due = now + IspRespMs(si);
+        if ((uint32_t) winner == me) {
+            Xlog("item spots: spot %d roll %d (%s) GRANTED to us - kept, rolls again in %llu s", si + 1, n, IspItem(si, c->item), (unsigned long long) (IspRespMs(si) / 1000));
+            if (c->item == ISP_SATCHEL)
+                IspSatGrant(si, n);
+        } else {
+            uint64_t cnt_ = 0;
+            const char *ci = IspItem(si, c->item);
+            if (IspIsAmmo(ci)) {
+                const char *ra =
+                    IspAmmoForMe(ci, IspRnd(si, n, 17), &cnt_);
+                if (ra)
+                    ci = ra;
+            }                   // the copy we picked up was OUR gun's ammo
+            uint64_t r =
+                DcDirect(FNV64("player-inventory-consume-item"),
+                          FNV64(ci), 1, 0);
+            Xlog("item spots: spot %d roll %d (%s) DENIED - slot %d claimed first; the copy we picked up is taken back (%llx)%s", si + 1, n, IspItem(si, c->item), winner, (unsigned long long) r, c->item >= ISP_MELEE_BASE ? " - melee roll: consume-item may not take a weapon back (unproven)" : "");
         }
     }
 }
+
 // host: the first claim of a roll wins; any later claim of the same roll just hears the same grant again
-static void isp_host_claim(int si, int n, int slot, uint64_t now) {
-    typeof(g_isp.c[0]) *c = &g_isp.c[si];
-    if (isp_shared(si)) return;                                     // shared spots are never claimed
-    if (n < c->win_roll) return;                                    // stale
+static void IspHostClaim(int si, int n, int slot, uint64_t now)
+{
+    typeof(g_isp.c[0]) * c = &g_isp.c[si];
+    if (IspShared(si))
+        return;                 // shared spots are never claimed
+    if (n < c->win_roll)
+        return;                 // stale
     if (n == c->win_roll) {
-        xlog("item spots: spot %d roll %d claim from slot %d - already granted to slot %d (re-sent)", si + 1, n, slot, c->win_slot);
-        isp_queue(3, si, n, c->win_slot, now);
+        Xlog("item spots: spot %d roll %d claim from slot %d - already granted to slot %d (re-sent)", si + 1, n, slot, c->win_slot);
+        IspQueue(3, si, n, c->win_slot, now);
         return;
     }
-    c->win_roll = n; c->win_slot = slot;
-    xlog("item spots: spot %d roll %d claim from slot %d - GRANT (first claimer)", si + 1, n, slot);
-    isp_queue(3, si, n, slot, now);
-    isp_apply_grant(si, n, slot, now);
+    c->win_roll = n;
+    c->win_slot = slot;
+    Xlog("item spots: spot %d roll %d claim from slot %d - GRANT (first claimer)", si + 1, n, slot);
+    IspQueue(3, si, n, slot, now);
+    IspApplyGrant(si, n, slot, now);
 }
+
 // the pickup left the world while we hold it: that is OUR claim
-static void isp_taken_local(int si, uint64_t now) {
-    typeof(g_isp.c[0]) *c = &g_isp.c[si];
+static void IspTakenLocal(int si, uint64_t now)
+{
+    typeof(g_isp.c[0]) * c = &g_isp.c[si];
     int n = c->rolls - 1;
-    if (isp_shared(si)) {                                           // shared spot: our own copy goes, nobody else loses theirs
-        c->h = 0; c->st = ISP_COOL; c->due = now + isp_resp_ms(si);
-        xlog("item spots: spot %d roll %d (%s) picked up here - SHARED spot: only our copy goes, rolls again in %llu s", si + 1, n, isp_item(si, c->item), (unsigned long long)(isp_resp_ms(si) / 1000));
+    if (IspShared(si)) {       // shared spot: our own copy goes, nobody else loses theirs
+        c->h = 0;
+        c->st = ISP_COOL;
+        c->due = now + IspRespMs(si);
+        Xlog("item spots: spot %d roll %d (%s) picked up here - SHARED spot: only our copy goes, rolls again in %llu s", si + 1, n, IspItem(si, c->item), (unsigned long long) (IspRespMs(si) / 1000));
         return;
     }
-    c->taken = n; c->h = 0; c->st = ISP_CLAIM; c->claim_ms = now;
-    xlog("item spots: spot %d roll %d (%s) picked up here - CLAIM sent to the %s", si + 1, n, isp_item(si, c->item), isp_host() ? "authority (we are it)" : "host");
-    if (isp_host()) isp_host_claim(si, n, (int)isp_me(), now);
-    else isp_queue(2, si, n, 0, now);
+    c->taken = n;
+    c->h = 0;
+    c->st = ISP_CLAIM;
+    c->claim_ms = now;
+    Xlog("item spots: spot %d roll %d (%s) picked up here - CLAIM sent to the %s", si + 1, n, IspItem(si, c->item), IspHost()? "authority (we are it)" : "host");
+    if (IspHost())
+        IspHostClaim(si, n, (int) IspMe(), now);
+    else
+        IspQueue(2, si, n, 0, now);
 }
+
 // ---------------------------------------------------------------- execution supply satchels (2013 wiki: "blue bottled containers from the bodies of executed
 // opponents ... left on the ground after executions remain permanently during Supply Raid and appear on the radar until picked up")
 // 2013 (ss-respawn-intro): an execution spawns a supply bottle at the body (event 0xf1f52995); a bottle is
@@ -399,478 +713,879 @@ static void isp_taken_local(int si, uint64_t now) {
 // that body alone (sd_sweep_hold, like melee_drop.c's mown_sweep_hold), so it can never remove the satchel (which would read as a pickup). A pickup (entity gone) -> CLAIM [id] to the host, the
 // first claim wins -> GRANT [id][winner] to everyone (a copy still standing goes, the loser's local parts are taken back). A new peer gets the live drops
 // from the host (sd_resync). t2r-no-supply-drop.txt (or t2r-no-satchel.txt) = off. Log lines 'supply drop:'.
-#define SD_BAG_BOTTLES 2               // A lockbox-phase death drops ONE bag with 2 supplies
-#define SD_MAX 32                      // Was 16; a lockbox-phase death drops two bottles
+#define SD_BAG_BOTTLES 2        // A lockbox-phase death drops ONE bag with 2 supplies
+#define SD_MAX 32               // Was 16; a lockbox-phase death drops two bottles
 #define SD_PARTS 50
 #define SD_KEEP_MS 30000
-#define SD_RADAR_M 45.0f                // guess: the metres at which a blip reaches the radar's rim (not measured; blips beyond are pinned there)
+#define SD_RADAR_M 45.0f        // guess: the metres at which a blip reaches the radar's rim (not measured; blips beyond are pinned there)
 enum { SD_PEND, SD_HOLD, SD_CLAIM, SD_DONE };
 static struct {
     int on, st, winner, rays, fails, have_gy, vic;      // vic = the executed slot (whose body the sweep watches), -1 unknown
-    int bottle;                                          // Supply bottle of the lockbox-phase death rule: its pickup is 1 BOTTLE (clan supplies), not parts
-    int amt, local;                                      // Box satchel: amt = supplies it carries (0 = 1, the execution satchel); local = only on the opener's screen (never sent, never resynced)
+    int bottle;                 // Supply bottle of the lockbox-phase death rule: its pickup is 1 BOTTLE (clan supplies), not parts
+    int amt, local;             // Box satchel: amt = supplies it carries (0 = 1, the execution satchel); local = only on the opener's screen (never sent, never resynced)
     uint8_t id;
     float pos[3], gy;
-    uint64_t due_t60, h, bag, spawned_ms, claim_ms, done_ms, job, job_frame;
+    uint64_t due_t60, h, bag, spawned_ms, claim_ms, done_ms, job,
+        job_frame;
     __attribute__((aligned(16))) float p4[4];
 } g_sd[SD_MAX];
-static struct { uint8_t m[16]; uint8_t len, left; uint64_t at; } g_sd_tx[12];
-static int g_sd_off = -1, g_sd_seq;
-static uint64_t g_sd_vic_ms[T2R_MAX_PEERS], g_sd_swept_t60[T2R_MAX_PEERS];
-static int sd_sweep_hold(int s) {      // feature_no_puppet_drops: our satchel lies at slot s's body now - no more sweeps there
-    if (s < 0 || s >= T2R_MAX_PEERS) return 0;
-    for (int i = 0; i < SD_MAX; i++) if (g_sd[i].on && g_sd[i].vic == s && g_sd[i].st != SD_PEND && g_sd[i].st != SD_DONE) return 1;
+static struct {
+    uint8_t m[16];
+    uint8_t len, left;
+    uint64_t at;
+} g_sd_tx[12];
+static int g_sdOff = -1, g_sd_seq;
+static uint64_t g_sdVicMs[T2R_MAX_PEERS], g_sd_swept_t60[T2R_MAX_PEERS];
+static int SdSweepHold(int s)
+{                               // feature_no_puppet_drops: our satchel lies at slot s's body now - no more sweeps there
+    if (s < 0 || s >= T2R_MAX_PEERS)
+        return 0;
+    for (int i = 0; i < SD_MAX; i++)
+        if (g_sd[i].on && g_sd[i].vic == s && g_sd[i].st != SD_PEND
+            && g_sd[i].st != SD_DONE)
+            return 1;
     return 0;
 }
-static void sd_swept(int s) { if (s >= 0 && s < T2R_MAX_PEERS) g_sd_swept_t60[s] = g_t60 ? g_t60 : 1; }
-static int sdrop_off(void) {
-    if (g_sd_off < 0) { FILE *f = exe_side_open("t2r-no-supply-drop.txt", "r"); g_sd_off = f != NULL; if (f) fclose(f); xlog("supply drop: %s", g_sd_off ? "OFF (t2r-no-supply-drop.txt)" : "ON"); }
-    return g_sd_off;                    // the execution drop is independent of the map satchels (off by default)
+
+static void SdSwept(int s)
+{
+    if (s >= 0 && s < T2R_MAX_PEERS)
+        g_sd_swept_t60[s] = g_t60 ? g_t60 : 1;
 }
-static void sd_queue(const uint8_t *m, int len) {
-    for (int k = 0; k < 12; k++) if (!g_sd_tx[k].left) {
-        memcpy(g_sd_tx[k].m, m, (size_t)len); g_sd_tx[k].len = (uint8_t)len; g_sd_tx[k].left = 3; g_sd_tx[k].at = 0;
-        return;
+
+static int SdropOff(void)
+{
+    if (g_sdOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-supply-drop.txt", "r");
+        g_sdOff = f != NULL;
+        if (f)
+            fclose(f);
+        Xlog("supply drop: %s",
+             g_sdOff ? "OFF (t2r-no-supply-drop.txt)" : "ON");
     }
+    return g_sdOff;            // the execution drop is independent of the map satchels (off by default)
 }
-static void sd_tx_tick(uint64_t now) {
+
+static void SdQueue(const uint8_t *m, int len)
+{
+    for (int k = 0; k < 12; k++)
+        if (!g_sd_tx[k].left) {
+            memcpy(g_sd_tx[k].m, m, (size_t) len);
+            g_sd_tx[k].len = (uint8_t) len;
+            g_sd_tx[k].left = 3;
+            g_sd_tx[k].at = 0;
+            return;
+        }
+}
+
+static void SdTxTick(uint64_t now)
+{
     for (int k = 0; k < 12; k++) {
-        if (!g_sd_tx[k].left || now < g_sd_tx[k].at) continue;
-        isp_send(g_sd_tx[k].m, g_sd_tx[k].len);
+        if (!g_sd_tx[k].left || now < g_sd_tx[k].at)
+            continue;
+        IspSend(g_sd_tx[k].m, g_sd_tx[k].len);
         g_sd_tx[k].at = now + (g_sd_tx[k].left == 3 ? 250 : 500);
         g_sd_tx[k].left--;
     }
 }
-static int sd_find(uint8_t id) { for (int i = 0; i < SD_MAX; i++) if (g_sd[i].on && g_sd[i].id == id) return i; return -1; }
-static int sd_add(uint8_t id, const float *pos, int vic) {
+
+static int SdFind(uint8_t id)
+{
+    for (int i = 0; i < SD_MAX; i++)
+        if (g_sd[i].on && g_sd[i].id == id)
+            return i;
+    return -1;
+}
+
+static int SdAdd(uint8_t id, const float *pos, int vic)
+{
     int fi = -1;
-    for (int i = 0; i < SD_MAX && fi < 0; i++) if (!g_sd[i].on) fi = i;
-    for (int i = 0; i < SD_MAX && fi < 0; i++) if (g_sd[i].st == SD_DONE) fi = i;
-    if (fi < 0) fi = 0;
+    for (int i = 0; i < SD_MAX && fi < 0; i++)
+        if (!g_sd[i].on)
+            fi = i;
+    for (int i = 0; i < SD_MAX && fi < 0; i++)
+        if (g_sd[i].st == SD_DONE)
+            fi = i;
+    if (fi < 0)
+        fi = 0;
     memset(&g_sd[fi], 0, sizeof g_sd[fi]);
-    g_sd[fi].on = 1; g_sd[fi].id = id; g_sd[fi].winner = -1; memcpy(g_sd[fi].pos, pos, 12);
+    g_sd[fi].on = 1;
+    g_sd[fi].id = id;
+    g_sd[fi].winner = -1;
+    memcpy(g_sd[fi].pos, pos, 12);
     g_sd[fi].vic = vic >= 0 && vic < T2R_MAX_PEERS ? vic : -1;
-    g_sd[fi].due_t60 = g_t60 ? g_t60 : 1;          // (the time the drop was added: sd_due compares the victim's sweep pass against it)
+    g_sd[fi].due_t60 = g_t60 ? g_t60 : 1;       // (the time the drop was added: sd_due compares the victim's sweep pass against it)
     return fi;
 }
+
 // spawn now? Once the victim's post-death sweep has made a pass since the drop was added, or when no sweep runs for that body (sweeps off, the window
 // over, an unknown victim) - same window test as feature_no_puppet_drops
-static int sd_due(int vic, uint64_t added_t60) {
-    if (vic < 0 || vic >= T2R_MAX_PEERS || !g_no_drops) return 1;
-    if (g_sd_swept_t60[vic] >= added_t60) return 1;
-    return !g_grace_dead[vic] || g_t60 - g_died_frame[vic] > NO_DROP_FRAMES;
+static int SdDue(int vic, uint64_t added_t60)
+{
+    if (vic < 0 || vic >= T2R_MAX_PEERS || !g_noDrops)
+        return 1;
+    if (g_sd_swept_t60[vic] >= added_t60)
+        return 1;
+    return !g_graceDead[vic]
+        || g_t60 - g_diedFrame[vic] > NO_DROP_FRAMES;
 }
-static void sd_finish(int i) {         // the pickup and the bag go (a grant, a timeout)
-    typeof(g_sd[0]) *e = &g_sd[i];
-    if (e->h && drops_alive(e->h)) dc_call(fnv64("kill-entity"), 1, &e->h);
-    if (e->bag) dc_call(fnv64("kill-entity"), 1, &e->bag);
-    e->h = e->bag = 0; e->st = SD_DONE; e->done_ms = GetTickCount64();
+
+static void SdFinish(int i)
+{                               // the pickup and the bag go (a grant, a timeout)
+    typeof(g_sd[0]) * e = &g_sd[i];
+    if (e->h && DropsAlive(e->h))
+        DcCall(FNV64("kill-entity"), 1, &e->h);
+    if (e->bag)
+        DcCall(FNV64("kill-entity"), 1, &e->bag);
+    e->h = e->bag = 0;
+    e->st = SD_DONE;
+    e->done_ms = GetTickCount64();
 }
-static void sd_bags_replace(void) { for (int i = 0; i < SD_MAX; i++) if (g_sd[i].on && g_sd[i].bag) isp_bag_place(g_sd[i].bag, g_sd[i].p4); }
-static uint64_t sd_bag_spawn(int i) {
-    typeof(g_sd[0]) *e = &g_sd[i];
-    if (g_sat_bag_off < 0) { FILE *f = exe_side_open("t2r-no-satchel-bag.txt", "r"); g_sat_bag_off = f != NULL; if (f) fclose(f); }
-    if (g_sat_bag_off) return 0;
-    uint64_t a[9] = {fnv64(ISP_SAT_ACTOR), fnv64("SimpleAttachable"), 0, 0, 1, 0, 0, 0, 0};
-    uint64_t o = dc_call(fnv64("spawn-object"), 9, a);
-    if (!o || o == ~0ULL) { xlog("supply drop: %02x bag spawn-object failed (%llx) - the plain pickup stays", e->id, (unsigned long long)o); return 0; }
-    e->p4[0] = e->pos[0]; e->p4[1] = (e->have_gy ? e->gy : e->pos[1]) + 0.06f; e->p4[2] = e->pos[2];
-    e->p4[3] = (float)((uint32_t)e->id * 2654435761u % 628u) / 100.0f;
-    isp_bag_place(o, e->p4);
+
+static void SdBagsReplace(void)
+{
+    for (int i = 0; i < SD_MAX; i++)
+        if (g_sd[i].on && g_sd[i].bag)
+            IspBagPlace(g_sd[i].bag, g_sd[i].p4);
+}
+
+static uint64_t SdBagSpawn(int i)
+{
+    typeof(g_sd[0]) * e = &g_sd[i];
+    if (g_satBagOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-satchel-bag.txt", "r");
+        g_satBagOff = f != NULL;
+        if (f)
+            fclose(f);
+    }
+    if (g_satBagOff)
+        return 0;
+    uint64_t a[9] =
+        { FNV64(ISP_SAT_ACTOR), FNV64("SimpleAttachable"), 0, 0, 1, 0, 0,
+0, 0 };
+    uint64_t o = DcCall(FNV64("spawn-object"), 9, a);
+    if (!o || o == ~0ULL) {
+        Xlog("supply drop: %02x bag spawn-object failed (%llx) - the plain pickup stays", e->id, (unsigned long long) o);
+        return 0;
+    }
+    e->p4[0] = e->pos[0];
+    e->p4[1] = (e->have_gy ? e->gy : e->pos[1]) + 0.06f;
+    e->p4[2] = e->pos[2];
+    e->p4[3] = (float) ((uint32_t) e->id * 2654435761u % 628u) / 100.0f;
+    IspBagPlace(o, e->p4);
     return o;
 }
-static void sd_grant_us(int i) {       // we won the claim: one supply for the clan (a box satchel: the box's in-game parts)
-    if (g_sd[i].bottle) {              // 2013 pickup = 1 supply bottle (clan supplies = bottles + parts/50), no parts, no award popup; reported as 0xE2 label 33
+
+static void SdGrantUs(int i)
+{                               // we won the claim: one supply for the clan (a box satchel: the box's in-game parts)
+    if (g_sd[i].bottle) {       // 2013 pickup = 1 supply bottle (clan supplies = bottles + parts/50), no parts, no award popup; reported as 0xE2 label 33
         int nb = g_sd[i].amt > 0 ? g_sd[i].amt : SD_BAG_BOTTLES;
-        g_clan_bottles += nb;
-        pm_tally("Supply Bottle", 0);
-        xlog("supply drop: %02x BOTTLE BAG GRANTED to us - +%d supplies (match bottles %d, parts %d)", g_sd[i].id, nb, g_clan_bottles, g_clan_parts);
+        g_clanBottles += nb;
+        PmTally("Supply Bottle", 0);
+        Xlog("supply drop: %02x BOTTLE BAG GRANTED to us - +%d supplies (match bottles %d, parts %d)", g_sd[i].id, nb, g_clanBottles, g_clanParts);
         return;
     }
     int sup = g_sd[i].amt > 0 ? g_sd[i].amt : 1, parts = sup * SD_PARTS;
     // The pickup message shows the supply count (2), not the parts value (100):
-        // a box satchel books like an execution satchel - its supplies in the clan counter, no parts award / +100 popup
-    g_clan_parts += parts;
-    pm_tally(g_sd[i].local ? "Supply Satchel" : "Supply Bottle", parts);
+    // a box satchel books like an execution satchel - its supplies in the clan counter, no parts award / +100 popup
+    g_clanParts += parts;
+    PmTally(g_sd[i].local ? "Supply Satchel" : "Supply Bottle", parts);
     // no toast - the native pickup prompt / animation is the feedback
-    xlog("supply drop: %02x GRANTED to us - +%d clan parts (+%d supplies, %s), match total %d parts", g_sd[i].id, parts, sup, g_sd[i].local ? "box satchel" : "execution satchel", g_clan_parts);
+    Xlog("supply drop: %02x GRANTED to us - +%d clan parts (+%d supplies, %s), match total %d parts", g_sd[i].id, parts, sup, g_sd[i].local ? "box satchel" : "execution satchel", g_clanParts);
 }
-static void sd_apply_grant(int i, int winner) {
-    typeof(g_sd[0]) *e = &g_sd[i];
-    uint32_t me = isp_me();
+
+static void SdApplyGrant(int i, int winner)
+{
+    typeof(g_sd[0]) * e = &g_sd[i];
+    uint32_t me = IspMe();
     e->winner = winner;
-    if (e->st == SD_DONE) return;
+    if (e->st == SD_DONE)
+        return;
     if (e->st == SD_CLAIM) {
-        if ((uint32_t)winner == me) sd_grant_us(i);
+        if ((uint32_t) winner == me)
+            SdGrantUs(i);
         else {
-            uint64_t r = dc_direct(fnv64("player-inventory-consume-item"), fnv64("parts"), 1, 0);
-            xlog("supply drop: %02x DENIED - slot %d claimed first; the parts we picked up are taken back (%llx)", e->id, winner, (unsigned long long)r);
+            uint64_t r =
+                DcDirect(FNV64("player-inventory-consume-item"),
+                          FNV64("parts"), 1, 0);
+            Xlog("supply drop: %02x DENIED - slot %d claimed first; the parts we picked up are taken back (%llx)", e->id, winner, (unsigned long long) r);
         }
-    } else xlog("supply drop: %02x taken by slot %d - our copy removed", e->id, winner);
-    sd_finish(i);
+    } else
+        Xlog("supply drop: %02x taken by slot %d - our copy removed",
+             e->id, winner);
+    SdFinish(i);
 }
-static void sd_host_claim(int i, int slot) {
-    typeof(g_sd[0]) *e = &g_sd[i];
-    uint8_t m[3] = {7, e->id, 0};
-    if (e->winner >= 0) { m[2] = (uint8_t)e->winner; sd_queue(m, 3); return; }      // a later claim just hears the same grant again
-    m[2] = (uint8_t)slot; sd_queue(m, 3);
-    xlog("supply drop: %02x claim from slot %d - GRANT (first claimer)", e->id, slot);
-    sd_apply_grant(i, slot);
+
+static void SdHostClaim(int i, int slot)
+{
+    typeof(g_sd[0]) * e = &g_sd[i];
+    uint8_t m[3] = { 7, e->id, 0 };
+    if (e->winner >= 0) {
+        m[2] = (uint8_t) e->winner;
+        SdQueue(m, 3);
+        return;
+    }                           // a later claim just hears the same grant again
+    m[2] = (uint8_t) slot;
+    SdQueue(m, 3);
+    Xlog("supply drop: %02x claim from slot %d - GRANT (first claimer)",
+         e->id, slot);
+    SdApplyGrant(i, slot);
 }
+
 // the executioner's client: our own execution killed the victim at pos
-static void sd_originate(uint32_t victim, const float *pos) {
-    if (sdrop_off() || match_substate() != 6 || victim >= T2R_MAX_PEERS) return;
+static void SdOriginate(uint32_t victim, const float *pos)
+{
+    if (SdropOff() || MatchSubstate() != 6 || victim >= T2R_MAX_PEERS)
+        return;
     uint64_t now = GetTickCount64();
-    if (now - g_sd_vic_ms[victim] < 5000) return;                                 // one per kill (the kill gate can see the event twice)
-    g_sd_vic_ms[victim] = now;
-    if (!kill_pos_ok(pos)) { xlog("supply drop: execution of slot %u - no body position, nothing dropped", victim); return; }
-    uint32_t me = isp_me();
-    if (me >= T2R_MAX_PEERS) return;
-    uint8_t id = (uint8_t)((me << 5) | (g_sd_seq++ & 31));
-    if (sd_find(id) >= 0) return;
-    int i = sd_add(id, pos, (int)victim);
+    if (now - g_sdVicMs[victim] < 5000)
+        return;                 // one per kill (the kill gate can see the event twice)
+    g_sdVicMs[victim] = now;
+    if (!KillPosOk(pos)) {
+        Xlog("supply drop: execution of slot %u - no body position, nothing dropped", victim);
+        return;
+    }
+    uint32_t me = IspMe();
+    if (me >= T2R_MAX_PEERS)
+        return;
+    uint8_t id = (uint8_t) ((me << 5) | (g_sd_seq++ & 31));
+    if (SdFind(id) >= 0)
+        return;
+    int i = SdAdd(id, pos, (int) victim);
     // Supplies dropped by teammate kills are not shared: the satchel is the
     // executioner's own, like the box satchel: only on our screen, never sent, the pickup pays us directly. t2r-shared-satchel.txt = the old shared one.
-    if (i >= 0 && GetFileAttributesA("t2r-shared-satchel.txt") == INVALID_FILE_ATTRIBUTES) g_sd[i].local = 1;
-    else { uint8_t m[15] = {5, id}; memcpy(m + 2, pos, 12); m[14] = (uint8_t)victim; sd_queue(m, 15); }
-    xlog("supply drop: execution of slot %u -> satchel %02x at %.1f %.1f %.1f (spawns on every screen after the body's first weapon sweep)", victim, id, pos[0], pos[1], pos[2]);
+    if (i >= 0
+        && GetFileAttributesA("t2r-shared-satchel.txt") ==
+        INVALID_FILE_ATTRIBUTES)
+        g_sd[i].local = 1;
+    else {
+        uint8_t m[15] = { 5, id };
+        memcpy(m + 2, pos, 12);
+        m[14] = (uint8_t) victim;
+        SdQueue(m, 15);
+    }
+    Xlog("supply drop: execution of slot %u -> satchel %02x at %.1f %.1f %.1f (spawns on every screen after the body's first weapon sweep)", victim, id, pos[0], pos[1], pos[2]);
 }
+
 // Interrogation, lockbox phase: a player killed (downed + finished, or killed outright) drops 2 supply bottles at the body, anyone can take them. The VICTIM's client
 // originates (kill_drop_gate, it knows its own death), op 8 to everyone, same pickup / bag / radar blip / first-claim-wins as the execution satchel; each pickup is worth 1 supply bottle
 // (g_clan_bottles -> 0xE2 label 33 -> clan.apply_match bottles=), NOT parts. t2r-no-supply-drop.txt = off.
-static void sd_bottles_originate(uint32_t victim, const float *pos) {
+static void SdBottlesOriginate(uint32_t victim, const float *pos)
+{
     static uint64_t last_ms;
-    if (sdrop_off() || match_substate() != 6 || victim >= T2R_MAX_PEERS) return;
+    if (SdropOff() || MatchSubstate() != 6 || victim >= T2R_MAX_PEERS)
+        return;
     uint64_t now = GetTickCount64();
-    if (last_ms && now - last_ms < 5000) return;                                  // one death = one pair (the kill gate can see the event twice)
+    if (last_ms && now - last_ms < 5000)
+        return;                 // one death = one pair (the kill gate can see the event twice)
     last_ms = now;
-    if (!pos || !kill_pos_ok(pos)) { xlog("supply drop: our death in the lockbox phase - no body position, no bottles"); return; }
-    uint32_t me = isp_me();
-    if (me >= T2R_MAX_PEERS) return;
-    {   // ONE supply bag with 2 supplies (not two bags)
+    if (!pos || !KillPosOk(pos)) {
+        Xlog("supply drop: our death in the lockbox phase - no body position, no bottles");
+        return;
+    }
+    uint32_t me = IspMe();
+    if (me >= T2R_MAX_PEERS)
+        return;
+    {                           // ONE supply bag with 2 supplies (not two bags)
         const float *p = pos;
-        uint8_t id = (uint8_t)((me << 5) | (g_sd_seq++ & 31));
-        if (sd_find(id) >= 0) return;
-        int i = sd_add(id, p, (int)victim);
-        if (i < 0) return;
-        g_sd[i].bottle = 1; g_sd[i].amt = SD_BAG_BOTTLES;
-        uint8_t m[15] = {8, id}; memcpy(m + 2, p, 12); m[14] = (uint8_t)victim; sd_queue(m, 15);
-        xlog("supply drop: lockbox-phase death of slot %u -> bag %02x (%d supplies) at %.1f %.1f %.1f (spawns on every screen)", victim, id, SD_BAG_BOTTLES, p[0], p[1], p[2]);
+        uint8_t id = (uint8_t) ((me << 5) | (g_sd_seq++ & 31));
+        if (SdFind(id) >= 0)
+            return;
+        int i = SdAdd(id, p, (int) victim);
+        if (i < 0)
+            return;
+        g_sd[i].bottle = 1;
+        g_sd[i].amt = SD_BAG_BOTTLES;
+        uint8_t m[15] = { 8, id };
+        memcpy(m + 2, p, 12);
+        m[14] = (uint8_t) victim;
+        SdQueue(m, 15);
+        Xlog("supply drop: lockbox-phase death of slot %u -> bag %02x (%d supplies) at %.1f %.1f %.1f (spawns on every screen)", victim, id, SD_BAG_BOTTLES, p[0], p[1], p[2]);
     }
 }
+
 // A supply box's supplies come as a satchel, not straight into the count: the box plan (supplybox.c b13_crafting, Supply Raid 'two or more
 // fewer than ...' = +100 parts = 2 supplies) asks for a satchel carrying that exact amount, lying on the crate floor where its loot lies. The box loot is per
 // player (2013's script runs per local player: nobody else sees the other loot either), so this satchel is local to the opener: no network message, never
 // resynced; same pickup (the parts pickup, its count = the supplies), bag, radar blip and 'stays until taken' as the execution satchel. The pickup books
 // supplies * 50 clan parts (sd_grant_us) once, on this client. t2r-no-box-satchel.txt next to the exe = off (the +100 parts award as before).
-static int g_bsat_off = -1;
-static int bsat_off(void) {
-    if (g_bsat_off < 0) { FILE *f = exe_side_open("t2r-no-box-satchel.txt", "r"); g_bsat_off = f != NULL; if (f) fclose(f); xlog("box satchel: %s", g_bsat_off ? "OFF (t2r-no-box-satchel.txt)" : "ON"); }
-    return g_bsat_off;
+static int g_bsatOff = -1;
+static int BsatOff(void)
+{
+    if (g_bsatOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-box-satchel.txt", "r");
+        g_bsatOff = f != NULL;
+        if (f)
+            fclose(f);
+        Xlog("box satchel: %s",
+             g_bsatOff ? "OFF (t2r-no-box-satchel.txt)" : "ON");
+    }
+    return g_bsatOff;
 }
-static int bsat_add(const float *pos, int supplies) {   // 1 = queued (the caller pays nothing), 0 = not possible (the caller pays as before)
-    if (bsat_off() || sdrop_off() || !g_spawn_pickup_orig || supplies < 1 || match_substate() != 6) return 0;
-    uint32_t me = isp_me();
-    if (me >= T2R_MAX_PEERS) return 0;
-    uint8_t id = (uint8_t)((me << 5) | (g_sd_seq++ & 31));
-    if (sd_find(id) >= 0) return 0;
-    int i = sd_add(id, pos, -1);
-    g_sd[i].amt = supplies; g_sd[i].local = 1;
-    g_sd[i].gy = pos[1]; g_sd[i].have_gy = 1;           // the crate slot height is the floor (no ray: it would hit the lid)
-    xlog("box satchel: %02x carrying %d supplies queued at %.2f %.2f %.2f (crate floor)", id, supplies, pos[0], pos[1], pos[2]);
+
+static int BsatAdd(const float *pos, int supplies)
+{                               // 1 = queued (the caller pays nothing), 0 = not possible (the caller pays as before)
+    if (BsatOff() || SdropOff() || !g_spawnPickupOrig || supplies < 1
+        || MatchSubstate() != 6)
+        return 0;
+    uint32_t me = IspMe();
+    if (me >= T2R_MAX_PEERS)
+        return 0;
+    uint8_t id = (uint8_t) ((me << 5) | (g_sd_seq++ & 31));
+    if (SdFind(id) >= 0)
+        return 0;
+    int i = SdAdd(id, pos, -1);
+    g_sd[i].amt = supplies;
+    g_sd[i].local = 1;
+    g_sd[i].gy = pos[1];
+    g_sd[i].have_gy = 1;        // the crate slot height is the floor (no ray: it would hit the lid)
+    Xlog("box satchel: %02x carrying %d supplies queued at %.2f %.2f %.2f (crate floor)", id, supplies, pos[0], pos[1], pos[2]);
     return 1;
 }
-static void sd_resync(uint32_t to) {   // host: the live satchels to a newcomer
-    if (!isp_host() || !g_send_tramp || to >= T2R_MAX_PEERS) return;
+
+static void SdResync(uint32_t to)
+{                               // host: the live satchels to a newcomer
+    if (!IspHost() || !g_sendTramp || to >= T2R_MAX_PEERS)
+        return;
     for (int i = 0; i < SD_MAX; i++) {
-        if (!g_sd[i].on || g_sd[i].st == SD_DONE || g_sd[i].local) continue;
-        uint8_t m[15] = {(uint8_t)(g_sd[i].bottle ? 8 : 5), g_sd[i].id}; memcpy(m + 2, g_sd[i].pos, 12); m[14] = (uint8_t)g_sd[i].vic;
-        g_send_tramp(MSG_ISPOT, m, 15, (uint8_t)to);
+        if (!g_sd[i].on || g_sd[i].st == SD_DONE || g_sd[i].local)
+            continue;
+        uint8_t m[15] = { (uint8_t) (g_sd[i].bottle ? 8 : 5), g_sd[i].id };
+        memcpy(m + 2, g_sd[i].pos, 12);
+        m[14] = (uint8_t) g_sd[i].vic;
+        g_sendTramp(MSG_ISPOT, m, 15, (uint8_t) to);
     }
 }
-static void sd_recv(uint32_t slot, const uint8_t *b, uint64_t len) {
-    if (sdrop_off()) return;
-    if (b[0] == 5 && len >= 14 && GetFileAttributesA("t2r-shared-satchel.txt") == INVALID_FILE_ATTRIBUTES) {
-        xlog("supply drop: satchel %02x from slot %u ignored (11-06: execution satchels are the executioner's own)", b[1], slot);
+
+static void SdRecv(uint32_t slot, const uint8_t *b, uint64_t len)
+{
+    if (SdropOff())
+        return;
+    if (b[0] == 5 && len >= 14
+        && GetFileAttributesA("t2r-shared-satchel.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        Xlog("supply drop: satchel %02x from slot %u ignored (11-06: execution satchels are the executioner's own)", b[1], slot);
     } else if (b[0] == 5 && len >= 14) {
-        float p[3]; memcpy(p, b + 2, 12);
-        if ((uint32_t)(b[1] >> 5) != slot && !pt_host_slot_ok(slot) && pt_deny(PTK_wire, slot)) return;       // only the executioner's own id (or the host's resync)
-        if (!kill_pos_ok(p) || sd_find(b[1]) >= 0) return;
-        sd_add(b[1], p, len >= 15 && b[14] < T2R_MAX_PEERS ? b[14] : -1);
-        xlog("supply drop: satchel %02x from slot %u at %.1f %.1f %.1f", b[1], slot, p[0], p[1], p[2]);
-    } else if (b[0] == 8 && len >= 14) {                  // A bottle of a lockbox-phase death: [8][id][x y z][victim], shared like the old op 5 satchel
-        float p[3]; memcpy(p, b + 2, 12);
-        if ((uint32_t)(b[1] >> 5) != slot && !pt_host_slot_ok(slot) && pt_deny(PTK_wire, slot)) return;
-        if (!kill_pos_ok(p) || sd_find(b[1]) >= 0) return;
-        int bi = sd_add(b[1], p, len >= 15 && b[14] < T2R_MAX_PEERS ? b[14] : -1);
-        if (bi < 0) return;
-        g_sd[bi].bottle = 1; g_sd[bi].amt = SD_BAG_BOTTLES;
-        xlog("supply drop: bottle %02x from slot %u at %.1f %.1f %.1f", b[1], slot, p[0], p[1], p[2]);
-    } else if (b[0] == 6 && len >= 2 && isp_host()) {
-        int i = sd_find(b[1]);
-        if (i < 0) return;
-        if (!pt_on() || pt_near_sender(slot, g_sd[i].pos, 16.0f, 8.0f) || !pt_deny(PTK_claim_near, slot)) sd_host_claim(i, (int)slot);
-    } else if (b[0] == 7 && len >= 3 && !isp_host()) {
-        int i = sd_find(b[1]);
-        if (i >= 0 && (b[2] < T2R_MAX_PEERS || !pt_deny(PTK_wire, slot))) { xlog("supply drop: GRANT %02x -> slot %d (from slot %u)", b[1], b[2], slot); sd_apply_grant(i, b[2]); }
+        float p[3];
+        memcpy(p, b + 2, 12);
+        if ((uint32_t) (b[1] >> 5) != slot && !PtHostSlotOk(slot)
+            && PtDeny(PTK_wire, slot))
+            return;             // only the executioner's own id (or the host's resync)
+        if (!KillPosOk(p) || SdFind(b[1]) >= 0)
+            return;
+        SdAdd(b[1], p, len >= 15 && b[14] < T2R_MAX_PEERS ? b[14] : -1);
+        Xlog("supply drop: satchel %02x from slot %u at %.1f %.1f %.1f",
+             b[1], slot, p[0], p[1], p[2]);
+    } else if (b[0] == 8 && len >= 14) {        // A bottle of a lockbox-phase death: [8][id][x y z][victim], shared like the old op 5 satchel
+        float p[3];
+        memcpy(p, b + 2, 12);
+        if ((uint32_t) (b[1] >> 5) != slot && !PtHostSlotOk(slot)
+            && PtDeny(PTK_wire, slot))
+            return;
+        if (!KillPosOk(p) || SdFind(b[1]) >= 0)
+            return;
+        int bi = SdAdd(b[1], p, len >= 15
+                        && b[14] < T2R_MAX_PEERS ? b[14] : -1);
+        if (bi < 0)
+            return;
+        g_sd[bi].bottle = 1;
+        g_sd[bi].amt = SD_BAG_BOTTLES;
+        Xlog("supply drop: bottle %02x from slot %u at %.1f %.1f %.1f",
+             b[1], slot, p[0], p[1], p[2]);
+    } else if (b[0] == 6 && len >= 2 && IspHost()) {
+        int i = SdFind(b[1]);
+        if (i < 0)
+            return;
+        if (!PtOn() || PtNearSender(slot, g_sd[i].pos, 16.0f, 8.0f)
+            || !PtDeny(PTK_claim_near, slot))
+            SdHostClaim(i, (int) slot);
+    } else if (b[0] == 7 && len >= 3 && !IspHost()) {
+        int i = SdFind(b[1]);
+        if (i >= 0 && (b[2] < T2R_MAX_PEERS || !PtDeny(PTK_wire, slot))) {
+            Xlog("supply drop: GRANT %02x -> slot %d (from slot %u)", b[1],
+                 b[2], slot);
+            SdApplyGrant(i, b[2]);
+        }
     }
 }
-static void sd_tick(uint64_t now) {
-    sd_tx_tick(now);
-    if (sdrop_off() || !g_spawn_pickup_orig || !ms_player_exists()) return;
+
+static void SdTick(uint64_t now)
+{
+    SdTxTick(now);
+    if (SdropOff() || !g_spawnPickupOrig || !MsPlayerExists())
+        return;
     for (int i = 0; i < SD_MAX; i++) {
-        typeof(g_sd[0]) *e = &g_sd[i];
-        if (!e->on) continue;
-        if (e->st == SD_DONE) { if (now - e->done_ms > SD_KEEP_MS) e->on = 0; continue; }
+        typeof(g_sd[0]) * e = &g_sd[i];
+        if (!e->on)
+            continue;
+        if (e->st == SD_DONE) {
+            if (now - e->done_ms > SD_KEEP_MS)
+                e->on = 0;
+            continue;
+        }
         if (e->st == SD_PEND) {
-            if (!sd_due(e->vic, e->due_t60)) continue;
-            if (!e->have_gy && e->rays < 2) {          // the surface under the body (static-world ray, answered on the next frame like the item spots)
+            if (!SdDue(e->vic, e->due_t60))
+                continue;
+            if (!e->have_gy && e->rays < 2) {   // the surface under the body (static-world ray, answered on the next frame like the item spots)
                 if (!e->job) {
-                    float top = e->pos[1] + 0.4f, a[3] = {e->pos[0], top, e->pos[2]}, b[3] = {e->pos[0], top - 2.0f, e->pos[2]};
-                    e->job = world_ray_kick(a, b); e->job_frame = g_frame;
-                    if (!e->job) e->rays++;
+                    float top = e->pos[1] + 0.4f, a[3] =
+                        { e->pos[0], top, e->pos[2] }, b[3] =
+                        { e->pos[0], top - 2.0f, e->pos[2] };
+                    e->job = WorldRayKick(a, b);
+                    e->job_frame = g_frame;
+                    if (!e->job)
+                        e->rays++;
                     continue;
                 }
-                if (g_frame == e->job_frame) continue;
-                float t = ray_t(e->job); e->job = 0; e->rays++;
-                if (t > 0.005f && t < 0.999f) { e->gy = e->pos[1] + 0.4f - 2.0f * t; e->have_gy = 1; xlog("supply drop: %02x surface y %.3f (body %.3f)", e->id, e->gy, e->pos[1]); }
+                if (g_frame == e->job_frame)
+                    continue;
+                float t = RayT(e->job);
+                e->job = 0;
+                e->rays++;
+                if (t > 0.005f && t < 0.999f) {
+                    e->gy = e->pos[1] + 0.4f - 2.0f * t;
+                    e->have_gy = 1;
+                    Xlog("supply drop: %02x surface y %.3f (body %.3f)",
+                         e->id, e->gy, e->pos[1]);
+                }
                 continue;
             }
-            float pos[3] = {e->pos[0], (e->have_gy ? e->gy : e->pos[1]) + 0.06f, e->pos[2]};
-            uint64_t ret[4] = {0};
-            box_spawn_like(ret, fnv64("parts"), pos, e->amt > 0 ? (uint64_t)e->amt : 1);   // the pickup says what you get: supplies, not parts
+            float pos[3] =
+                { e->pos[0], (e->have_gy ? e->gy : e->pos[1]) + 0.06f,
+         e->pos[2] };
+            uint64_t ret[4] = { 0 };
+            BoxSpawnLike(ret, FNV64("parts"), pos, e->amt > 0 ? (uint64_t) e->amt : 1);       // the pickup says what you get: supplies, not parts
             if (!ret[0] || ret[0] == ~0ULL) {
-                if (++e->fails >= 3) { e->st = SD_DONE; e->done_ms = now; xlog("supply drop: %02x pickup spawn failed 3 times - dropped", e->id); }
-                else e->due_t60 = g_t60 + 60;
+                if (++e->fails >= 3) {
+                    e->st = SD_DONE;
+                    e->done_ms = now;
+                    Xlog("supply drop: %02x pickup spawn failed 3 times - dropped", e->id);
+                } else
+                    e->due_t60 = g_t60 + 60;
                 continue;
             }
-            e->h = ret[0]; e->st = SD_HOLD; e->spawned_ms = now;
-            e->bag = sd_bag_spawn(i);
-            xlog("supply drop: %02x satchel at %.2f %.2f %.2f (handle %llx, bag %llx)%s", e->id, pos[0], pos[1], pos[2], (unsigned long long)e->h, (unsigned long long)e->bag, e->local ? " - BOX SATCHEL" : "");
-            if (e->local) xlog("box satchel: %02x spawned with %d supplies (pickup count %d)", e->id, e->amt, e->amt);
+            e->h = ret[0];
+            e->st = SD_HOLD;
+            e->spawned_ms = now;
+            e->bag = SdBagSpawn(i);
+            Xlog("supply drop: %02x satchel at %.2f %.2f %.2f (handle %llx, bag %llx)%s", e->id, pos[0], pos[1], pos[2], (unsigned long long) e->h, (unsigned long long) e->bag, e->local ? " - BOX SATCHEL" : "");
+            if (e->local)
+                Xlog("box satchel: %02x spawned with %d supplies (pickup count %d)", e->id, e->amt, e->amt);
         } else if (e->st == SD_HOLD) {
-            if (now - e->spawned_ms > 800 && !drops_alive(e->h)) {
-                e->h = 0; e->st = SD_CLAIM; e->claim_ms = now;
-                if (e->local) { xlog("box satchel: %02x picked up with %d supplies", e->id, e->amt); sd_grant_us(i); sd_finish(i); continue; }
-                xlog("supply drop: %02x picked up here - CLAIM sent to the %s", e->id, isp_host() ? "authority (we are it)" : "host");
-                if (isp_host()) sd_host_claim(i, (int)isp_me());
-                else { uint8_t m[2] = {6, e->id}; sd_queue(m, 2); }
-            } else if (e->bag && e->h) { uint64_t ha[2] = {e->h, 0}; dc_call(fnv64("hide-object-for-one-frame"), 1, ha); }
-        } else if (e->st == SD_CLAIM && now - e->claim_ms > ISP_CLAIM_TIMEOUT_MS) {
-            xlog("supply drop: %02x - no GRANT within %d ms (host gone?): we keep it", e->id, ISP_CLAIM_TIMEOUT_MS);
-            sd_grant_us(i); sd_finish(i);
+            if (now - e->spawned_ms > 800 && !DropsAlive(e->h)) {
+                e->h = 0;
+                e->st = SD_CLAIM;
+                e->claim_ms = now;
+                if (e->local) {
+                    Xlog("box satchel: %02x picked up with %d supplies",
+                         e->id, e->amt);
+                    SdGrantUs(i);
+                    SdFinish(i);
+                    continue;
+                }
+                Xlog("supply drop: %02x picked up here - CLAIM sent to the %s", e->id, IspHost()? "authority (we are it)" : "host");
+                if (IspHost())
+                    SdHostClaim(i, (int) IspMe());
+                else {
+                    uint8_t m[2] = { 6, e->id };
+                    SdQueue(m, 2);
+                }
+            } else if (e->bag && e->h) {
+                uint64_t ha[2] = { e->h, 0 };
+                DcCall(FNV64("hide-object-for-one-frame"), 1, ha);
+            }
+        } else if (e->st == SD_CLAIM
+                   && now - e->claim_ms > ISP_CLAIM_TIMEOUT_MS) {
+            Xlog("supply drop: %02x - no GRANT within %d ms (host gone?): we keep it", e->id, ISP_CLAIM_TIMEOUT_MS);
+            SdGrantUs(i);
+            SdFinish(i);
         }
     }
 }
+
 // radar: the item dot (same glyph, size, colour) per standing satchel (the radar's own glyph, drawn like the no-lives pulses)
-static void sd_radar_draw(void) {
-    if (match_substate() != 6) return;
+static void SdRadarDraw(void)
+{
+    if (MatchSubstate() != 6)
+        return;
     int any = 0;
-    for (int i = 0; i < SD_MAX; i++) if (g_sd[i].on && g_sd[i].st == SD_HOLD) any = 1;
-    if (!any) return;
+    for (int i = 0; i < SD_MAX; i++)
+        if (g_sd[i].on && g_sd[i].st == SD_HOLD)
+            any = 1;
+    if (!any)
+        return;
     float pb[16];
-    const float *pl = player_locator(pb);
-    uint64_t none = 0, rd = dc_call(fnv64("camera-get-dir-through-reticle"), 0, &none);
-    if (!pl || !rd || rd == ~0ULL || IsBadReadPtr((void *)rd, 12)) return;
-    float fx = ((float *)rd)[0], fz = ((float *)rd)[2], fl = __builtin_sqrtf(fx * fx + fz * fz);
-    if (fl < 1e-3f) return;
-    fx /= fl; fz /= fl;
-    const float *ctr = (const float *)VMA(0x1800A79D0), *rad = (const float *)VMA(0x1800A79C0);
-    const char *glyph = (const char *)VMA(0x180120357);
+    const float *pl = PlayerLocator(pb);
+    uint64_t none = 0, rd =
+        DcCall(FNV64("camera-get-dir-through-reticle"), 0, &none);
+    if (!pl || !rd || rd == ~0ULL || IsBadReadPtr((void *) rd, 12))
+        return;
+    float fx = ((float *) rd)[0], fz = ((float *) rd)[2], fl =
+        __builtin_sqrtf(fx * fx + fz * fz);
+    if (fl < 1e-3f)
+        return;
+    fx /= fl;
+    fz /= fl;
+    const float *ctr = (const float *) T2R_SYM(kItemCenter), *rad =
+        (const float *) T2R_SYM(kItemRadius);
+    const char *glyph = (const char *) T2R_SYM(kGlyphString);
     for (int i = 0; i < SD_MAX; i++) {
-        if (!g_sd[i].on || g_sd[i].st != SD_HOLD) continue;
-        float dx = g_sd[i].pos[0] - pl[0], dz = g_sd[i].pos[2] - pl[2], dist = __builtin_sqrtf(dx * dx + dz * dz);
+        if (!g_sd[i].on || g_sd[i].st != SD_HOLD)
+            continue;
+        float dx = g_sd[i].pos[0] - pl[0], dz =
+            g_sd[i].pos[2] - pl[2], dist =
+            __builtin_sqrtf(dx * dx + dz * dz);
         float bf = 0.0f, br = 0.0f, k = 0.0f;
-        if (dist > 0.5f) { bf = (dx * fx + dz * fz) / dist; br = (dx * fz - dz * fx) / dist; k = dist / SD_RADAR_M; if (k > 1.0f) k = 1.0f; }
-        float y = ctr[0] + rad[0] * 0.9f * bf * k, x = ctr[1] + rad[1] * 0.9f * br * k, size = 0.3f;       // dropped supplies = exactly the item dot (winmm 0x180061263: glyph 0x180120357, size 0.3, colour 0x64a99642)
-        uint64_t wh = ((fn_measure)VMA(0x1800051B0))(glyph, size);
-        float w, hgt; uint32_t lo32 = (uint32_t)wh, hi32 = (uint32_t)(wh >> 32);
-        memcpy(&w, &lo32, 4); memcpy(&hgt, &hi32, 4);
-        ((fn_text_va)VMA(0x1800039D0))(fbits(x - w * 0.5f), fbits(y - hgt * 0.5f), fbits(size), 0x64a99642ull, "%s", glyph);
+        if (dist > 0.5f) {
+            bf = (dx * fx + dz * fz) / dist;
+            br = (dx * fz - dz * fx) / dist;
+            k = dist / SD_RADAR_M;
+            if (k > 1.0f)
+                k = 1.0f;
+        }
+        float y = ctr[0] + rad[0] * 0.9f * bf * k, x = ctr[1] + rad[1] * 0.9f * br * k, size = 0.3f;    // dropped supplies = exactly the item dot (winmm 0x180061263: glyph 0x180120357, size 0.3, colour 0x64a99642)
+        uint64_t wh = ((fn_measure) T2R_SYM(kFnMeasureText)) (glyph, size);
+        float w, hgt;
+        uint32_t lo32 = (uint32_t) wh, hi32 = (uint32_t) (wh >> 32);
+        memcpy(&w, &lo32, 4);
+        memcpy(&hgt, &hi32, 4);
+        ((fn_text_va) T2R_SYM(kFnDrawTextVa)) (Fbits(x - w * 0.5f),
+                                               Fbits(y - hgt * 0.5f),
+                                               Fbits(size), 0x64a99642ull,
+                                               "%s", glyph);
     }
 }
-static void isp_recv(uint32_t slot, const uint8_t *buf, uint64_t len) {
-    if (!buf || len < 1 || match_substate() != 6) return;
-    if (slot == isp_me() || slot >= T2R_MAX_PEERS) return;
+
+static void IspRecv(uint32_t slot, const uint8_t *buf, uint64_t len)
+{
+    if (!buf || len < 1 || MatchSubstate() != 6)
+        return;
+    if (slot == IspMe() || slot >= T2R_MAX_PEERS)
+        return;
     // peer msg trust: the seed (op 1), the grants (op 3) and the roll table (op 4) are the HOST's word; any other slot sending them is dropped
-    if ((buf[0] == 1 || buf[0] == 3 || buf[0] == 4 || buf[0] == 7 || buf[0] == 8) && !pt_host_slot_ok(slot) && pt_deny(PTK_host_only, slot)) {
-        static uint64_t nh_ms; uint64_t tn = GetTickCount64();
-        if (pt_log_due(&nh_ms, tn)) xlog("item spots: op %u from slot %u dropped - it is not the host", buf[0], slot);
+    if ((buf[0] == 1 || buf[0] == 3 || buf[0] == 4 || buf[0] == 7
+         || buf[0] == 8) && !PtHostSlotOk(slot)
+        && PtDeny(PTK_host_only, slot)) {
+        static uint64_t nh_ms;
+        uint64_t tn = GetTickCount64();
+        if (PtLogDue(&nh_ms, tn))
+            Xlog("item spots: op %u from slot %u dropped - it is not the host", buf[0], slot);
         return;
     }
-    if (buf[0] == 8) { if (len >= 7 && g_isp.active && !isp_host()) isp_apply_snapshot(buf, len); return; }   // a later chunk of the host's roll table
-    if (buf[0] >= 5) { sd_recv(slot, buf, len); return; }      // execution supply satchels (ops 5 DROP, 6 CLAIM, 7 GRANT)
-    if (buf[0] == 0) {                                   // a client asks for the seed
-        if (g_isp.seed && isp_host()) { isp_send_seed(); xlog("item spots: seed %08x sent to slot %u (asked)", g_isp.seed, slot); }
+    if (buf[0] == 8) {
+        if (len >= 7 && g_isp.active && !IspHost())
+            IspApplySnapshot(buf, len);
+        return;
+    }                           // a later chunk of the host's roll table
+    if (buf[0] >= 5) {
+        SdRecv(slot, buf, len);
+        return;
+    }                           // execution supply satchels (ops 5 DROP, 6 CLAIM, 7 GRANT)
+    if (buf[0] == 0) {          // a client asks for the seed
+        if (g_isp.seed && IspHost()) {
+            IspSendSeed();
+            Xlog("item spots: seed %08x sent to slot %u (asked)",
+                 g_isp.seed, slot);
+        }
     } else if (buf[0] == 1 && len >= 5) {
-        uint32_t s; memcpy(&s, buf + 1, 4);
-        if (s && !g_isp.seed) { g_isp.seed = s; xlog("item spots: seed %08x from slot %u", s, slot); }
-        else if (s && s != g_isp.seed) { static int nd; if (LOGCAP(nd, 4)) xlog("item spots: seed %08x from slot %u differs from ours %08x - ignored", s, slot, g_isp.seed); }
-    } else if (buf[0] == 2 && len >= 3 && g_isp.active && isp_host()) {          // CLAIM (host only)
+        uint32_t s;
+        memcpy(&s, buf + 1, 4);
+        if (s && !g_isp.seed) {
+            g_isp.seed = s;
+            Xlog("item spots: seed %08x from slot %u", s, slot);
+        } else if (s && s != g_isp.seed) {
+            static int nd;
+            if (LOGCAP(nd, 4))
+                Xlog("item spots: seed %08x from slot %u differs from ours %08x - ignored", s, slot, g_isp.seed);
+        }
+    } else if (buf[0] == 2 && len >= 3 && g_isp.active && IspHost()) { // CLAIM (host only)
         // a claim names a spot of the table, the roll we hold (or one ahead) and comes from a player standing at the spot (a roll no. of 250 would close the spot for the match)
-        if (buf[1] < g_isp.n && (pt_roll_ok(buf[2], g_isp.c[buf[1]].rolls) || !pt_deny(PTK_claim_roll, slot)) && (!pt_on() || pt_near_sender(slot, g_isp.sp[buf[1]].p, 16.0f, 8.0f) || !pt_deny(PTK_claim_near, slot))) isp_host_claim(buf[1], buf[2], (int)slot, GetTickCount64());
-        else { static uint64_t bc_ms; uint64_t tn = GetTickCount64(); if (pt_log_due(&bc_ms, tn)) xlog("item spots: claim spot %u roll %u from slot %u dropped (bad spot / roll / too far from it)", buf[1], buf[2], slot); }
-    } else if (buf[0] == 4 && len >= 6 && g_isp.active && !isp_host()) {         // the host's roll table (a newcomer / after a migration)
-        isp_apply_snapshot(buf, len);
-    } else if (buf[0] == 3 && len >= 4 && g_isp.active && !isp_host()) {         // GRANT (clients)
-        if (buf[1] < g_isp.n && (buf[3] < T2R_MAX_PEERS || !pt_deny(PTK_wire, slot)) && (pt_roll_ok(buf[2], g_isp.c[buf[1]].rolls) || !pt_deny(PTK_claim_roll, slot))) {
-            xlog("item spots: GRANT spot %d roll %d -> slot %d (from slot %u)", buf[1] + 1, buf[2], buf[3], slot);
-            isp_apply_grant(buf[1], buf[2], buf[3], GetTickCount64());
+        if (buf[1] < g_isp.n
+            && (PtRollOk(buf[2], g_isp.c[buf[1]].rolls)
+                || !PtDeny(PTK_claim_roll, slot)) && (!PtOn()
+                                                       ||
+                                                       PtNearSender(slot,
+                                                                      g_isp.
+                                                                      sp
+                                                                      [buf
+                                                                       [1]].
+                                                                      p,
+                                                                      16.0f,
+                                                                      8.0f)
+                                                       ||
+                                                       !PtDeny
+                                                       (PTK_claim_near,
+                                                        slot)))
+            IspHostClaim(buf[1], buf[2], (int) slot, GetTickCount64());
+        else {
+            static uint64_t bc_ms;
+            uint64_t tn = GetTickCount64();
+            if (PtLogDue(&bc_ms, tn))
+                Xlog("item spots: claim spot %u roll %u from slot %u dropped (bad spot / roll / too far from it)", buf[1], buf[2], slot);
+        }
+    } else if (buf[0] == 4 && len >= 6 && g_isp.active && !IspHost()) {        // the host's roll table (a newcomer / after a migration)
+        IspApplySnapshot(buf, len);
+    } else if (buf[0] == 3 && len >= 4 && g_isp.active && !IspHost()) {        // GRANT (clients)
+        if (buf[1] < g_isp.n
+            && (buf[3] < T2R_MAX_PEERS || !PtDeny(PTK_wire, slot))
+            && (PtRollOk(buf[2], g_isp.c[buf[1]].rolls)
+                || !PtDeny(PTK_claim_roll, slot))) {
+            Xlog("item spots: GRANT spot %d roll %d -> slot %d (from slot %u)", buf[1] + 1, buf[2], buf[3], slot);
+            IspApplyGrant(buf[1], buf[2], buf[3], GetTickCount64());
         }
     }
 }
+
 // 0.85 m missed the ground under a kit surface that is not collision (Houses foliage: the satchel floated ~0.8 m); 1.8 m reaches
 // the floor there and still stops at a real surface (dumpster lid, table) first
 #define ISP_RAY_LEN 1.8f
 // the surface under the spot: a static-world ray down from 25 cm above the editor position (same as the health kits); 6 cm over the hit
-static int isp_height(int si, uint64_t now) {
-    typeof(g_isp.c[0]) *c = &g_isp.c[si];
+static int IspHeight(int si, uint64_t now)
+{
+    typeof(g_isp.c[0]) * c = &g_isp.c[si];
     const float *p = g_isp.sp[si].p;
-    if (c->hy_tries >= 2 || c->have_hy) return 1;
+    if (c->hy_tries >= 2 || c->have_hy)
+        return 1;
     if (!c->hy_state) {
         float top = p[1] + 0.25f;
-        float a[3] = {p[0], top, p[2]}, b[3] = {p[0], top - ISP_RAY_LEN, p[2]};
-        c->hy_job = world_ray_kick(a, b);
-        c->hy_start = top; c->hy_ms = g_frame;   // answered on the NEXT frame (pin camera does the same); 60 ms later read t 0 every time
+        float a[3] = { p[0], top, p[2] }, b[3] =
+            { p[0], top - ISP_RAY_LEN, p[2] };
+        c->hy_job = WorldRayKick(a, b);
+        c->hy_start = top;
+        c->hy_ms = g_frame;     // answered on the NEXT frame (pin camera does the same); 60 ms later read t 0 every time
         c->hy_state = c->hy_job ? 1 : 0;
-        if (!c->hy_job) c->hy_tries++;
+        if (!c->hy_job)
+            c->hy_tries++;
         return c->hy_tries >= 2;
     }
-    if (g_frame == c->hy_ms) return 0;
-    float t = ray_t(c->hy_job);
-    c->hy_job = 0; c->hy_state = 0; c->hy_tries++;
+    if (g_frame == c->hy_ms)
+        return 0;
+    float t = RayT(c->hy_job);
+    c->hy_job = 0;
+    c->hy_state = 0;
+    c->hy_tries++;
     if (t > 0.005f && t < 0.999f) {
-        c->hy = c->hy_start - ISP_RAY_LEN * t; c->have_hy = 1;
-        xlog("item spots: spot %d surface y %.3f (stored %.3f, %+.3f)", si + 1, c->hy, p[1], c->hy - p[1]);
+        c->hy = c->hy_start - ISP_RAY_LEN * t;
+        c->have_hy = 1;
+        Xlog("item spots: spot %d surface y %.3f (stored %.3f, %+.3f)",
+             si + 1, c->hy, p[1], c->hy - p[1]);
         return 1;
     }
-    xlog("item spots: spot %d no surface under the spot (t %.3f) - stored y %.3f%s", si + 1, t, p[1], c->hy_tries >= 2 ? "" : ", once more");
+    Xlog("item spots: spot %d no surface under the spot (t %.3f) - stored y %.3f%s", si + 1, t, p[1], c->hy_tries >= 2 ? "" : ", once more");
     return c->hy_tries >= 2;
 }
-static void isp_tick(void) {
-    if (g_isp_off < 0) { FILE *f = exe_side_open("t2r-no-itemspots.txt", "r"); g_isp_off = f != NULL; if (f) fclose(f); xlog("item spots: %s", g_isp_off ? "OFF (t2r-no-itemspots.txt)" : "ON (default)"); }
-    if (g_isp_off) return;
-    if (g_isp_melee_off < 0) { FILE *f = exe_side_open("t2r-no-itemspot-melee.txt", "r"); g_isp_melee_off = f != NULL; if (f) fclose(f); xlog("item spots: melee rolls %s", g_isp_melee_off ? "OFF (t2r-no-itemspot-melee.txt)" : "ON (PT127)"); }
-    if (match_substate() != 6) { if (g_isp.active || g_isp.live_ms) isp_reset(); memset(g_sd, 0, sizeof g_sd); memset(g_sd_tx, 0, sizeof g_sd_tx); return; }
-    isp_bag_pose_dev();
+
+static void IspTick(void)
+{
+    if (g_ispOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-itemspots.txt", "r");
+        g_ispOff = f != NULL;
+        if (f)
+            fclose(f);
+        Xlog("item spots: %s",
+             g_ispOff ? "OFF (t2r-no-itemspots.txt)" : "ON (default)");
+    }
+    if (g_ispOff)
+        return;
+    if (g_ispMeleeOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-itemspot-melee.txt", "r");
+        g_ispMeleeOff = f != NULL;
+        if (f)
+            fclose(f);
+        Xlog("item spots: melee rolls %s",
+             g_ispMeleeOff ? "OFF (t2r-no-itemspot-melee.txt)" :
+             "ON (PT127)");
+    }
+    if (MatchSubstate() != 6) {
+        if (g_isp.active || g_isp.live_ms)
+            IspReset();
+        memset(g_sd, 0, sizeof g_sd);
+        memset(g_sd_tx, 0, sizeof g_sd_tx);
+        return;
+    }
+    IspBagPoseDev();
     uint64_t now = GetTickCount64();
-    sd_tick(now);
+    SdTick(now);
     if (!g_isp.live_ms) {
         g_isp.live_ms = now;
-        uint8_t *lo = lobby_obj();
+        uint8_t *lo = LobbyObj();
         int map = lo && !IsBadReadPtr(lo + 0x18, 1) ? lo[0x18] : 255;
         g_isp.map = map;
-        for (size_t t = 0; t < sizeof ISP_TAB / sizeof *ISP_TAB; t++) if (ISP_TAB[t].map == map) { g_isp.sp = ISP_TAB[t].p; g_isp.n = ISP_TAB[t].n; }
-        if (g_isp.n > ISP_MAX) g_isp.n = ISP_MAX;
-        for (int i = 0; i < g_isp.n; i++) { g_isp.c[i].taken = -1; g_isp.c[i].win_roll = -1; g_isp.c[i].due = now + ISP_START_MS + (uint64_t)ISP_STAGGER_MS * (uint64_t)i; }
-        g_isp.active = g_isp.n > 0;
-        { int nsh = 0; for (int i = 0; i < g_isp.n; i++) nsh += g_isp.sp[i].sh != 0;
-          xlog("item spots: map %d %d spots, %d shared (fill %d %% / respawn %d s unless the spot sets its own, melee %d %% of the filled rolls)%s", map, g_isp.n, nsh, ISP_FILL_PCT, ISP_RESPAWN_S, g_isp_melee_off == 1 ? 0 : ISP_MELEE_PCT, g_isp.n ? "" : " - none, untouched"); }
-    }
-    if (!g_isp.active || !g_spawn_pickup_orig) return;
-    // ---- seed: the host picks it, the clients take it
-    uint8_t role = *(volatile uint8_t *)VMA(HM_ROLE);
-    if (!g_isp.seed && role != 2) {            // host (1) or no session role (solo test): we decide
-        uint32_t s = (uint32_t)isp_mix(now * 0x9E3779B97F4A7C15ULL ^ (uint64_t)GetCurrentProcessId() ^ 0x49535054ULL);
-        g_isp.seed = s ? s : 1;
-        g_isp.seed_tx_ms = 0; g_isp.seed_tx_until = now + 60000;
-        xlog("item spots: seed %08x (we host)", g_isp.seed);
+        for (size_t t = 0; t < sizeof ISP_TAB / sizeof *ISP_TAB; t++)
+            if (ISP_TAB[t].map == map) {
+                g_isp.sp = ISP_TAB[t].p;
+                g_isp.n = ISP_TAB[t].n;
+            }
+        if (g_isp.n > ISP_MAX)
+            g_isp.n = ISP_MAX;
         for (int i = 0; i < g_isp.n; i++) {
-            int r = isp_roll(i, 0);
-            xlog("item spots: map %d %d spots ... spot %d -> %s (first roll)", g_isp.map, g_isp.n, i + 1, r < 0 ? "empty" : isp_item(i, r));
+            g_isp.c[i].taken = -1;
+            g_isp.c[i].win_roll = -1;
+            g_isp.c[i].due =
+                now + ISP_START_MS +
+                (uint64_t) ISP_STAGGER_MS *(uint64_t) i;
+        }
+        g_isp.active = g_isp.n > 0;
+        {
+            int nsh = 0;
+            for (int i = 0; i < g_isp.n; i++)
+                nsh += g_isp.sp[i].sh != 0;
+            Xlog("item spots: map %d %d spots, %d shared (fill %d %% / respawn %d s unless the spot sets its own, melee %d %% of the filled rolls)%s", map, g_isp.n, nsh, ISP_FILL_PCT, ISP_RESPAWN_S, g_ispMeleeOff == 1 ? 0 : ISP_MELEE_PCT, g_isp.n ? "" : " - none, untouched");
         }
     }
-    if (g_isp.seed && role != 2 && now < g_isp.seed_tx_until && now >= g_isp.seed_tx_ms) { isp_send_seed(); g_isp.seed_tx_ms = now + 5000; }
-    if (!g_isp.seed && role == 2 && now - g_isp.live_ms > 3000 && now >= g_isp.seed_rq_ms) {
-        uint8_t m[1] = {0};
-        isp_send(m, 1);
+    if (!g_isp.active || !g_spawnPickupOrig)
+        return;
+    // ---- seed: the host picks it, the clients take it
+    uint8_t role = *(volatile uint8_t *) T2R_SYM(kRoleByte);
+    if (!g_isp.seed && role != 2) {     // host (1) or no session role (solo test): we decide
+        uint32_t s =
+            (uint32_t) IspMix(now *
+                               0x9E3779B97F4A7C15ULL ^ (uint64_t)
+                               GetCurrentProcessId() ^ 0x49535054ULL);
+        g_isp.seed = s ? s : 1;
+        g_isp.seed_tx_ms = 0;
+        g_isp.seed_tx_until = now + 60000;
+        Xlog("item spots: seed %08x (we host)", g_isp.seed);
+        for (int i = 0; i < g_isp.n; i++) {
+            int r = IspRoll(i, 0);
+            Xlog("item spots: map %d %d spots ... spot %d -> %s (first roll)", g_isp.map, g_isp.n, i + 1, r < 0 ? "empty" : IspItem(i, r));
+        }
+    }
+    if (g_isp.seed && role != 2 && now < g_isp.seed_tx_until
+        && now >= g_isp.seed_tx_ms) {
+        IspSendSeed();
+        g_isp.seed_tx_ms = now + 5000;
+    }
+    if (!g_isp.seed && role == 2 && now - g_isp.live_ms > 3000
+        && now >= g_isp.seed_rq_ms) {
+        uint8_t m[1] = { 0 };
+        IspSend(m, 1);
         g_isp.seed_rq_ms = now + 3000;
     }
     // ---- CLAIM / GRANT messages: sent now, again after 250 ms and 750 ms
     for (int k = 0; k < 16; k++) {
-        if (!g_isp.tx[k].left || now < g_isp.tx[k].at) continue;
-        uint8_t m[4] = {g_isp.tx[k].op, g_isp.tx[k].si, g_isp.tx[k].n, g_isp.tx[k].slot};
-        isp_send(m, g_isp.tx[k].op == 3 ? 4 : 3);
+        if (!g_isp.tx[k].left || now < g_isp.tx[k].at)
+            continue;
+        uint8_t m[4] =
+            { g_isp.tx[k].op, g_isp.tx[k].si, g_isp.tx[k].n,
+     g_isp.tx[k].slot };
+        IspSend(m, g_isp.tx[k].op == 3 ? 4 : 3);
         g_isp.tx[k].at = now + (g_isp.tx[k].left == 3 ? 250 : 500);
         g_isp.tx[k].left--;
     }
-    if (!g_isp.seed || now - g_isp.live_ms < ISP_START_MS || !ms_player_exists()) return;
+    if (!g_isp.seed || now - g_isp.live_ms < ISP_START_MS
+        || !MsPlayerExists())
+        return;
     // ---- the spots
     for (int i = 0; i < g_isp.n; i++) {
-        typeof(g_isp.c[0]) *c = &g_isp.c[i];
-        const isp_spot_t *sp = &g_isp.sp[i];
+        typeof(g_isp.c[0]) * c = &g_isp.c[i];
+        const IspSpotT *sp = &g_isp.sp[i];
         if (c->kill) {
             c->kill = 0;
-            uint64_t h = c->h; c->h = 0;
-            if (h && drops_alive(h)) dc_call(fnv64("kill-entity"), 1, &h);
+            uint64_t h = c->h;
+            c->h = 0;
+            if (h && DropsAlive(h))
+                DcCall(FNV64("kill-entity"), 1, &h);
         }
-        if (g_isp.bag[i] && c->st != ISP_HOLD) isp_bag_kill(i);                  // the pickup is gone / claimed / re-rolling: the bag goes with it
-        if (c->st == ISP_COOL) { if (now >= c->due) c->st = ISP_WAIT; else continue; }
+        if (g_isp.bag[i] && c->st != ISP_HOLD)
+            IspBagKill(i);    // the pickup is gone / claimed / re-rolling: the bag goes with it
+        if (c->st == ISP_COOL) {
+            if (now >= c->due)
+                c->st = ISP_WAIT;
+            else
+                continue;
+        }
         if (c->st == ISP_CLAIM) {
             if (now - c->claim_ms > ISP_CLAIM_TIMEOUT_MS) {
-                c->st = ISP_COOL; c->due = now + isp_resp_ms(i);
-                xlog("item spots: spot %d roll %d - no GRANT within %d ms (host gone?): we keep the item, rolls again in %llu s", i + 1, c->rolls - 1, ISP_CLAIM_TIMEOUT_MS, (unsigned long long)(isp_resp_ms(i) / 1000));
-                if (c->item == ISP_SATCHEL) isp_sat_grant(i, c->rolls - 1);
+                c->st = ISP_COOL;
+                c->due = now + IspRespMs(i);
+                Xlog("item spots: spot %d roll %d - no GRANT within %d ms (host gone?): we keep the item, rolls again in %llu s", i + 1, c->rolls - 1, ISP_CLAIM_TIMEOUT_MS, (unsigned long long) (IspRespMs(i) / 1000));
+                if (c->item == ISP_SATCHEL)
+                    IspSatGrant(i, c->rolls - 1);
             }
             continue;
         }
         if (c->st == ISP_HOLD) {
-            if (now - c->spawned_ms > 800 && !drops_alive(c->h)) isp_taken_local(i, now);
-            else if (g_isp.bag[i] && c->h) { uint64_t ha[2] = {c->h, 0}; dc_call(fnv64("hide-object-for-one-frame"), 1, ha); }   // the bag stands for the pickup's own model
+            if (now - c->spawned_ms > 800 && !DropsAlive(c->h))
+                IspTakenLocal(i, now);
+            else if (g_isp.bag[i] && c->h) {
+                uint64_t ha[2] = { c->h, 0 };
+                DcCall(FNV64("hide-object-for-one-frame"), 1, ha);
+            }                   // the bag stands for the pickup's own model
             continue;
         }
-        if (now < c->due || c->fails >= 3) continue;
-        if (!isp_height(i, now)) continue;               // the surface probe is async (kick, read a few frames later)
+        if (now < c->due || c->fails >= 3)
+            continue;
+        if (!IspHeight(i, now))
+            continue;           // the surface probe is async (kick, read a few frames later)
         // ---- roll
-        int n = c->rolls++, r = isp_roll(i, n);
+        int n = c->rolls++, r = IspRoll(i, n);
         if (r < 0) {
-            c->st = ISP_COOL; c->due = now + isp_resp_ms(i);
-            xlog("item spots: spot %d roll %d -> empty (rolls again in %llu s)", i + 1, n, (unsigned long long)(isp_resp_ms(i) / 1000));
+            c->st = ISP_COOL;
+            c->due = now + IspRespMs(i);
+            Xlog("item spots: spot %d roll %d -> empty (rolls again in %llu s)", i + 1, n, (unsigned long long) (IspRespMs(i) / 1000));
             continue;
         }
         c->item = r;
-        const char *item = isp_item(i, r);
+        const char *item = IspItem(i, r);
         uint64_t acount = 0;
-        if (r < ISP_MELEE_BASE && isp_is_ammo(item)) {
-            const char *ra = isp_ammo_for_me(item, isp_rnd(i, n, 17), &acount);
-            if (!ra) {                                   // no gun of ours takes box ammo: the spot is empty on this screen (never a '?' placeholder pickup)
-                c->st = ISP_COOL; c->due = now + isp_resp_ms(i);
-                xlog("item spots: spot %d roll %d -> %s: no gun with box ammo in our loadout - empty here (rolls again in %llu s)", i + 1, n, item, (unsigned long long)(isp_resp_ms(i) / 1000));
+        if (r < ISP_MELEE_BASE && IspIsAmmo(item)) {
+            const char *ra =
+                IspAmmoForMe(item, IspRnd(i, n, 17), &acount);
+            if (!ra) {          // no gun of ours takes box ammo: the spot is empty on this screen (never a '?' placeholder pickup)
+                c->st = ISP_COOL;
+                c->due = now + IspRespMs(i);
+                Xlog("item spots: spot %d roll %d -> %s: no gun with box ammo in our loadout - empty here (rolls again in %llu s)", i + 1, n, item, (unsigned long long) (IspRespMs(i) / 1000));
                 continue;
             }
-            xlog("item spots: spot %d roll %d -> %s becomes %s x%llu (our gun's ammo)", i + 1, n, item, ra, (unsigned long long)acount);
+            Xlog("item spots: spot %d roll %d -> %s becomes %s x%llu (our gun's ammo)", i + 1, n, item, ra, (unsigned long long) acount);
             item = ra;
         }
-        int melee = r >= ISP_MELEE_BASE || isp_is_melee(item);
-        if (c->taken >= n && !isp_shared(i)) {          // somebody already took this one before we spawned it
-            c->st = ISP_COOL; c->due = now + isp_resp_ms(i);
-            xlog("item spots: spot %d roll %d -> %s was already taken by another player - rolls again in %llu s", i + 1, n, item, (unsigned long long)(isp_resp_ms(i) / 1000));
+        int melee = r >= ISP_MELEE_BASE || IspIsMelee(item);
+        if (c->taken >= n && !IspShared(i)) {  // somebody already took this one before we spawned it
+            c->st = ISP_COOL;
+            c->due = now + IspRespMs(i);
+            Xlog("item spots: spot %d roll %d -> %s was already taken by another player - rolls again in %llu s", i + 1, n, item, (unsigned long long) (IspRespMs(i) / 1000));
             continue;
         }
-        float pos[3] = {sp->p[0], (c->have_hy ? c->hy + sp->dy : sp->p[1]) + isp_up(item), sp->p[2]};     // dy: visible surface - collision (loot_place.py)
-        float wq[4] = {0, 0, 0, 1}; int has_q = 0;
-        if (r < ISP_MELEE_BASE && r >= 0 && r < sp->n) {              // the item's own spot (editor 'Edit item positions'): offset rotated by the spot, then the item's rotation
-            const isp_cand_t *cd = &sp->c[r]; float ro[3];
-            isp_rotv(sp->q, cd->off, ro);
-            pos[0] += ro[0]; pos[1] += ro[1]; pos[2] += ro[2];
-            isp_qmul(sp->q, cd->q, wq);
+        float pos[3] = { sp->p[0], (c->have_hy ? c->hy + sp->dy : sp->p[1]) + IspUp(item), sp->p[2] }; // dy: visible surface - collision (loot_place.py)
+        float wq[4] = { 0, 0, 0, 1 };
+        int has_q = 0;
+        if (r < ISP_MELEE_BASE && r >= 0 && r < sp->n) {        // the item's own spot (editor 'Edit item positions'): offset rotated by the spot, then the item's rotation
+            const IspCandT *cd = &sp->c[r];
+            float ro[3];
+            IspRotv(sp->q, cd->off, ro);
+            pos[0] += ro[0];
+            pos[1] += ro[1];
+            pos[2] += ro[2];
+            IspQmul(sp->q, cd->q, wq);
             has_q = fabsf(wq[0]) + fabsf(wq[1]) + fabsf(wq[2]) > 1e-4f;
         }
-        uint64_t ret[4] = {0};
-        g_bsl_q_on = has_q; if (has_q) memcpy(g_bsl_q, wq, sizeof wq);
-        box_spawn_like(ret, fnv64(item), pos, melee ? (uint64_t)melee_dur_name(item) : acount ? acount : isp_count(item));
-        g_bsl_q_on = 0;   // a melee weapon: count = its durability (full condition, as from a box)
+        uint64_t ret[4] = { 0 };
+        g_bslQOn = has_q;
+        if (has_q)
+            memcpy(g_bslQ, wq, sizeof wq);
+        BoxSpawnLike(ret, FNV64(item), pos,
+                       melee ? (uint64_t) MeleeDurName(item) : acount ?
+                       acount : IspCount(item));
+        g_bslQOn = 0;         // a melee weapon: count = its durability (full condition, as from a box)
         uint64_t h = ret[0];
         if (!h || h == ~0ULL) {
-            if (isp_kind_ok(item)) c->fails++;           // a kind refusal is not the spot's fault: it never counts toward the 3-strike kill
-            c->st = ISP_COOL; c->due = now + 10000;
-            c->rolls--;                                  // not a roll: the same one again
-            xlog("item spots: spot %d roll %d -> %s: the spawn failed (%llx), try %d/3", i + 1, n, item, (unsigned long long)h, c->fails);
+            if (IspKindOk(item))
+                c->fails++;     // a kind refusal is not the spot's fault: it never counts toward the 3-strike kill
+            c->st = ISP_COOL;
+            c->due = now + 10000;
+            c->rolls--;         // not a roll: the same one again
+            Xlog("item spots: spot %d roll %d -> %s: the spawn failed (%llx), try %d/3", i + 1, n, item, (unsigned long long) h, c->fails);
             continue;
         }
-        c->h = h; c->st = ISP_HOLD; c->spawned_ms = now;
-        if (r == ISP_SATCHEL) g_isp.bag[i] = isp_bag_spawn(i, pos);
-        if (melee) md_track(h, item, pos);              // the melee drop floor guard + kinematic body (meleedrop:), like every other melee pickup
-        xlog("item spots: spot %d roll %d -> %s%s%s at %.3f %.3f %.3f (handle %llx)", i + 1, n, item, melee ? " (melee roll)" : r == ISP_SATCHEL ? " (SUPPLY SATCHEL)" : "", isp_shared(i) ? " [shared]" : "", pos[0], pos[1], pos[2], (unsigned long long)h);
+        c->h = h;
+        c->st = ISP_HOLD;
+        c->spawned_ms = now;
+        if (r == ISP_SATCHEL)
+            g_isp.bag[i] = IspBagSpawn(i, pos);
+        if (melee)
+            MdTrack(h, item, pos);     // the melee drop floor guard + kinematic body (meleedrop:), like every other melee pickup
+        Xlog("item spots: spot %d roll %d -> %s%s%s at %.3f %.3f %.3f (handle %llx)", i + 1, n, item, melee ? " (melee roll)" : r == ISP_SATCHEL ? " (SUPPLY SATCHEL)" : "", IspShared(i) ? " [shared]" : "", pos[0], pos[1], pos[2], (unsigned long long) h);
     }
 }

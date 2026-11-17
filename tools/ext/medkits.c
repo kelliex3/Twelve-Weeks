@@ -22,16 +22,16 @@
 // Logs 'medkit:' (map, kit count, source, taken, respawn, remote taken, spawn failures).
 #include "medkits.h"
 
-#define MSG_MEDKIT 0x67                 // ours: [u8 op] op 2 [u8 kit][u8 cycle] = taken
+#define MSG_MEDKIT 0x67         // ours: [u8 op] op 2 [u8 kit][u8 cycle] = taken
 #define MK_MAX 16
 #define MK_START_MS 8000
-#define MK_MIN_S 180                    // loot pass: 180..240 s (was the 2013 box refill 110..140 s; 2013 kits never came back; seconds-left resync byte caps at 255)
+#define MK_MIN_S 180            // loot pass: 180..240 s (was the 2013 box refill 110..140 s; 2013 kits never came back; seconds-left resync byte caps at 255)
 #define MK_SPAN_S 61
 // Placing a medkit perfectly in the scene editor made them float in game. The `medkit` mesh (actor all-standard-pickups, group medkit)
 // has its origin AT THE BOTTOM (y -0.0005 .. 0.0559, 5.6 cm tall) and the editor draws it at the marker, so a marker on the surface = kit on the surface.
 // The spawn used surface + 6 cm (the ammo-box habit), i.e. the kit hovered by more than its own height. Now surface + 0.5 cm.
 #define MK_UP 0.005f
-#define MK_SEEN_MS 12000                // a spawner kit never seen alive this long after the start: the engine does not track as assumed -> leave it alone
+#define MK_SEEN_MS 12000        // a spawner kit never seen alive this long after the start: the engine does not track as assumed -> leave it alone
 enum { MK_WAIT, MK_HOLD, MK_COOL, MK_ENGINE };
 static struct {
     int active, map, n;
@@ -39,285 +39,530 @@ static struct {
     int qty, qty_ok;
     struct {
         int st, cycle, taken, kill;
-        int src;                        // 0 = ours from the table, 1 = the engine's spawner kit first
+        int src;                // 0 = ours from the table, 1 = the engine's spawner kit first
         float p[3];
-        uint64_t sid;                   // engine entity handle (spawner name hash), src 1
-        int seen;                       // the engine kit was seen alive
-        uint64_t kh;                    // handle to kill-entity next tick (a consumed pickup may linger)
-        uint8_t snap[0x300]; int snapped;   // process bytes while the pickup was untouched (diff logged at the pickup: the real 'collected' state)
+        uint64_t sid;           // engine entity handle (spawner name hash), src 1
+        int seen;               // the engine kit was seen alive
+        uint64_t kh;            // handle to kill-entity next tick (a consumed pickup may linger)
+        uint8_t snap[0x300];
+        int snapped;            // process bytes while the pickup was untouched (diff logged at the pickup: the real 'collected' state)
         uint64_t h, due, spawned_ms;
         uint8_t fails;
         int hy_state, hy_tries, have_hy;
         uint64_t hy_job, hy_ms;
         float hy_start, hy;
     } k[MK_MAX];
-    struct { uint8_t ki, n, left; uint64_t at; } tx[8];
+    struct {
+        uint8_t ki, n, left;
+        uint64_t at;
+    } tx[8];
 } g_mk;
-static int g_mk_off = -1;
+static int g_mkOff = -1;
 
-static uint64_t mk_mix(uint64_t x) {
+static uint64_t MkMix(uint64_t x)
+{
     x += 0x9E3779B97F4A7C15ULL;
     x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
     x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
     return x ^ (x >> 31);
 }
-static uint64_t mk_delay_ms(int ki, int n) { return 1000ULL * (MK_MIN_S + mk_mix(0x4D4B4954ULL ^ ((uint64_t)(ki + 1) << 20) ^ (uint64_t)(n + 1)) % MK_SPAN_S); }
-static void mk_send(const uint8_t *b, uint64_t len) { if (g_send_tramp) g_send_tramp(MSG_MEDKIT, (uint8_t *)b, len, 0xff); }
+
+static uint64_t MkDelayMs(int ki, int n)
+{
+    return 1000ULL * (MK_MIN_S +
+                      MkMix(0x4D4B4954ULL ^ ((uint64_t) (ki + 1) << 20) ^
+                             (uint64_t) (n + 1)) % MK_SPAN_S);
+}
+
+static void MkSend(const uint8_t *b, uint64_t len)
+{
+    if (g_sendTramp)
+        g_sendTramp(MSG_MEDKIT, (uint8_t *) b, len, 0xff);
+}
+
 // peer resync (re/jip-state-resync-1019.md): same problem as the item spots - a newcomer's kits start at cycle 0 (and the ENGINE spawns every first kit
 // again, also the ones already taken). The HOST sends its table to the newcomer (op 4: [n][per kit: cycle, taken (i8), state 0 wait / 1 held / 2 cooling /
 // 3 engine kit untouched, seconds left]); a kit that is behind (or still the engine's kit, though the host's is already ours) jumps to the host's cycle.
-static void mk_resync(uint32_t to) {
-    if (!g_mk.active || *(volatile uint8_t *)VMA(HM_ROLE) == 2 || !g_send_tramp || to >= T2R_MAX_PEERS) return;
-    uint8_t m[2 + 4 * MK_MAX]; int n = g_mk.n > MK_MAX ? MK_MAX : g_mk.n; uint64_t now = GetTickCount64();
-    m[0] = 4; m[1] = (uint8_t)n;
+static void MkResync(uint32_t to)
+{
+    if (!g_mk.active || *(volatile uint8_t *) T2R_SYM(kRoleByte) == 2
+        || !g_sendTramp || to >= T2R_MAX_PEERS)
+        return;
+    uint8_t m[2 + 4 * MK_MAX];
+    int n = g_mk.n > MK_MAX ? MK_MAX : g_mk.n;
+    uint64_t now = GetTickCount64();
+    m[0] = 4;
+    m[1] = (uint8_t) n;
     for (int i = 0; i < n; i++) {
-        typeof(g_mk.k[0]) *c = &g_mk.k[i];
-        int st = (c->st == MK_ENGINE || c->st == MK_HOLD + 100) ? 3 : c->st == MK_HOLD ? 1 : c->st == MK_COOL ? 2 : 0;
+        typeof(g_mk.k[0]) * c = &g_mk.k[i];
+        int st = (c->st == MK_ENGINE
+                  || c->st == MK_HOLD + 100) ? 3 : c->st ==
+            MK_HOLD ? 1 : c->st == MK_COOL ? 2 : 0;
         uint64_t left = c->due > now ? c->due - now : 0;
-        m[2 + 4 * i] = (uint8_t)(c->cycle > 255 ? 255 : c->cycle); m[3 + 4 * i] = (uint8_t)(int8_t)(c->taken > 127 ? 127 : c->taken < -128 ? -128 : c->taken);
-        m[4 + 4 * i] = (uint8_t)st; m[5 + 4 * i] = (uint8_t)(left / 1000 > 255 ? 255 : left / 1000);
+        m[2 + 4 * i] = (uint8_t) (c->cycle > 255 ? 255 : c->cycle);
+        m[3 + 4 * i] =
+            (uint8_t) (int8_t) (c->taken > 127 ? 127 : c->taken <
+                                -128 ? -128 : c->taken);
+        m[4 + 4 * i] = (uint8_t) st;
+        m[5 + 4 * i] = (uint8_t) (left / 1000 > 255 ? 255 : left / 1000);
     }
-    g_send_tramp(MSG_MEDKIT, m, (uint64_t)(2 + 4 * n), (uint8_t)to);
-    xlog("medkit: cycle table (%d kits) sent to slot %u", n, to);
+    g_sendTramp(MSG_MEDKIT, m, (uint64_t) (2 + 4 * n), (uint8_t) to);
+    Xlog("medkit: cycle table (%d kits) sent to slot %u", n, to);
 }
-static void mk_apply_snapshot(const uint8_t *b, uint64_t len) {
-    int n = (int)pt_count(b[1], (uint32_t)(g_mk.n > 0 ? g_mk.n : 0), len, 2, 4);      // (peertrust.h: what the table holds AND what the message carries)
-    uint64_t now = GetTickCount64(); int moved = 0;
+
+static void MkApplySnapshot(const uint8_t *b, uint64_t len)
+{
+    int n = (int) PtCount(b[1], (uint32_t) (g_mk.n > 0 ? g_mk.n : 0), len, 2, 4);      // (peertrust.h: what the table holds AND what the message carries)
+    uint64_t now = GetTickCount64();
+    int moved = 0;
     for (int i = 0; i < n; i++) {
-        typeof(g_mk.k[0]) *c = &g_mk.k[i];
-        int cyc = b[2 + 4 * i], taken = (int8_t)b[3 + 4 * i], st = b[4 + 4 * i], left = b[5 + 4 * i];
-        if (taken > c->taken) c->taken = taken;
-        if (st == 3) continue;                                                  // the host's kit is still the engine's untouched one: so is ours
+        typeof(g_mk.k[0]) * c = &g_mk.k[i];
+        int cyc = b[2 + 4 * i], taken = (int8_t) b[3 + 4 * i], st =
+            b[4 + 4 * i], left = b[5 + 4 * i];
+        if (taken > c->taken)
+            c->taken = taken;
+        if (st == 3)
+            continue;           // the host's kit is still the engine's untouched one: so is ours
         int engine = c->st == MK_ENGINE || c->st == MK_HOLD + 100;
         int want = st == 1 ? cyc - 1 : cyc;
-        if (!engine && (c->cycle >= want || (c->st != MK_WAIT && c->st != MK_COOL && c->st != MK_HOLD))) continue;
-        if (engine) { c->kill = 1; c->kh = c->sid; }                            // the engine's first kit was taken long ago
-        else if (c->st == MK_HOLD) { c->kill = 1; c->kh = c->h; c->h = 0; }     // our copy of an older cycle goes
+        if (!engine
+            && (c->cycle >= want
+                || (c->st != MK_WAIT && c->st != MK_COOL
+                    && c->st != MK_HOLD)))
+            continue;
+        if (engine) {
+            c->kill = 1;
+            c->kh = c->sid;
+        }                       // the engine's first kit was taken long ago
+        else if (c->st == MK_HOLD) {
+            c->kill = 1;
+            c->kh = c->h;
+            c->h = 0;
+        }                       // our copy of an older cycle goes
         c->cycle = want < 0 ? 0 : want;
-        if (st == 1) { c->st = MK_WAIT; c->due = now; }
-        else { c->st = st == 2 ? MK_COOL : MK_WAIT; c->due = now + 1000ULL * (uint64_t)left; }
+        if (st == 1) {
+            c->st = MK_WAIT;
+            c->due = now;
+        } else {
+            c->st = st == 2 ? MK_COOL : MK_WAIT;
+            c->due = now + 1000ULL * (uint64_t) left;
+        }
         moved++;
     }
-    if (moved) xlog("medkit: host's cycle table taken over - %d of %d kit(s) were behind", moved, n);
+    if (moved)
+        Xlog("medkit: host's cycle table taken over - %d of %d kit(s) were behind", moved, n);
 }
-static void mk_reset(void) {
-    if (g_mk.active) xlog("medkit: match over - state cleared");
+
+static void MkReset(void)
+{
+    if (g_mk.active)
+        Xlog("medkit: match over - state cleared");
     memset(&g_mk, 0, sizeof g_mk);
 }
-static void mk_taken_local(int ki, uint64_t now, const char *by) {
-    int n = g_mk.k[ki].cycle - 1;               // the cycle that was just taken (engine kit = cycle -1 -> reported as 255)
+
+static void MkTakenLocal(int ki, uint64_t now, const char *by)
+{
+    int n = g_mk.k[ki].cycle - 1;       // the cycle that was just taken (engine kit = cycle -1 -> reported as 255)
     g_mk.k[ki].taken = n;
     g_mk.k[ki].kh = g_mk.k[ki].h;
     g_mk.k[ki].kill = 1;
     g_mk.k[ki].h = 0;
     g_mk.k[ki].st = MK_COOL;
-    g_mk.k[ki].due = now + mk_delay_ms(ki, n);
-    for (int t = 0; t < 8; t++) if (!g_mk.tx[t].left) {
-        g_mk.tx[t].ki = (uint8_t)ki; g_mk.tx[t].n = (uint8_t)n; g_mk.tx[t].left = 3; g_mk.tx[t].at = now;
-        break;
-    }
-    xlog("medkit: kit %d (%.1f %.1f %.1f) taken (%s, cycle %d) - back in %.0f s", ki + 1, g_mk.k[ki].p[0], g_mk.k[ki].p[1], g_mk.k[ki].p[2], by, n,
-         (double)mk_delay_ms(ki, n) / 1000.0);
+    g_mk.k[ki].due = now + MkDelayMs(ki, n);
+    for (int t = 0; t < 8; t++)
+        if (!g_mk.tx[t].left) {
+            g_mk.tx[t].ki = (uint8_t) ki;
+            g_mk.tx[t].n = (uint8_t) n;
+            g_mk.tx[t].left = 3;
+            g_mk.tx[t].at = now;
+            break;
+        }
+    Xlog("medkit: kit %d (%.1f %.1f %.1f) taken (%s, cycle %d) - back in %.0f s", ki + 1, g_mk.k[ki].p[0], g_mk.k[ki].p[1], g_mk.k[ki].p[2], by, n, (double) MkDelayMs(ki, n) / 1000.0);
 }
-static void mk_recv(uint32_t slot, const uint8_t *buf, uint64_t len) {
-    if (!buf || len < 3 || match_substate() != 6 || !g_mk.active) return;
-    uint32_t me = *(uint32_t *)VMA(0x180138090);
-    if (slot == me || slot >= T2R_MAX_PEERS) return;
+
+static void MkRecv(uint32_t slot, const uint8_t *buf, uint64_t len)
+{
+    if (!buf || len < 3 || MatchSubstate() != 6 || !g_mk.active)
+        return;
+    uint32_t me = *(uint32_t *) T2R_SYM(kMySlot);
+    if (slot == me || slot >= T2R_MAX_PEERS)
+        return;
     // picked up health kits by teammates must not disappear for you too (that only applies to random utils) - kits are
     // PER PLAYER now: another player's pickup (or the host's cycle table) never removes our copy; each player has their own kit + respawn
     // timer. t2r-medkit-shared.txt next to the exe = the old shared behaviour.
-    {   static int shared = -1; if (shared < 0) { FILE *f = exe_side_open("t2r-medkit-shared.txt", "r"); shared = f != NULL; if (f) fclose(f);
-            xlog("medkit: kits are %s", shared ? "SHARED (t2r-medkit-shared.txt)" : "per player (another player's pickup does not remove ours)"); }
-        if (!shared) return; }
-    if (buf[0] == 4 && len >= 6 && *(volatile uint8_t *)VMA(HM_ROLE) == 2) {                                           // the host's cycle table (peer msg trust: from the host only)
-        if (pt_host_slot_ok(slot) || !pt_deny(PTK_host_only, slot)) mk_apply_snapshot(buf, len);
-        else { static uint64_t nh_ms; uint64_t tn = GetTickCount64(); if (pt_log_due(&nh_ms, tn)) xlog("medkit: cycle table from slot %u dropped - it is not the host", slot); }
+    {
+        static int shared = -1;
+        if (shared < 0) {
+            FILE *f = ExeSideOpen("t2r-medkit-shared.txt", "r");
+            shared = f != NULL;
+            if (f)
+                fclose(f);
+            Xlog("medkit: kits are %s",
+                 shared ? "SHARED (t2r-medkit-shared.txt)" :
+                 "per player (another player's pickup does not remove ours)");
+        }
+        if (!shared)
+            return;
+    }
+    if (buf[0] == 4 && len >= 6 && *(volatile uint8_t *) T2R_SYM(kRoleByte) == 2) {     // the host's cycle table (peer msg trust: from the host only)
+        if (PtHostSlotOk(slot) || !PtDeny(PTK_host_only, slot))
+            MkApplySnapshot(buf, len);
+        else {
+            static uint64_t nh_ms;
+            uint64_t tn = GetTickCount64();
+            if (PtLogDue(&nh_ms, tn))
+                Xlog("medkit: cycle table from slot %u dropped - it is not the host", slot);
+        }
         return;
     }
-    if (buf[0] != 2) return;
-    int ki = buf[1], n = (int)(int8_t)buf[2];
-    if (ki >= g_mk.n) return;
+    if (buf[0] != 2)
+        return;
+    int ki = buf[1], n = (int) (int8_t) buf[2];
+    if (ki >= g_mk.n)
+        return;
     // peer msg trust: a taken-claim names the cycle we hold (or one ahead; -1 = the engine's first kit) and comes from a player standing at the kit
-    if ((n < -1 && pt_deny(PTK_wire, slot)) || (!pt_roll_ok(n < 0 ? 0 : n, g_mk.k[ki].cycle) && pt_deny(PTK_claim_roll, slot)) || (pt_on() && !pt_near_sender(slot, g_mk.k[ki].p, 16.0f, 8.0f) && pt_deny(PTK_claim_near, slot))) {
-        static uint64_t bc_ms; uint64_t tn = GetTickCount64();
-        if (pt_log_due(&bc_ms, tn)) xlog("medkit: taken kit %d cycle %d from slot %u dropped (bad cycle / too far from the kit)", ki + 1, n, slot);
+    if ((n < -1 && PtDeny(PTK_wire, slot))
+        || (!PtRollOk(n < 0 ? 0 : n, g_mk.k[ki].cycle)
+            && PtDeny(PTK_claim_roll, slot)) || (PtOn()
+                                                  && !PtNearSender(slot,
+                                                                     g_mk.
+                                                                     k[ki].
+                                                                     p,
+                                                                     16.0f,
+                                                                     8.0f)
+                                                  &&
+                                                  PtDeny(PTK_claim_near,
+                                                          slot))) {
+        static uint64_t bc_ms;
+        uint64_t tn = GetTickCount64();
+        if (PtLogDue(&bc_ms, tn))
+            Xlog("medkit: taken kit %d cycle %d from slot %u dropped (bad cycle / too far from the kit)", ki + 1, n, slot);
         return;
     }
-    if (n > g_mk.k[ki].taken) g_mk.k[ki].taken = n;
+    if (n > g_mk.k[ki].taken)
+        g_mk.k[ki].taken = n;
     if (g_mk.k[ki].st == MK_HOLD && g_mk.k[ki].cycle - 1 == n) {
-        g_mk.k[ki].kill = 1; g_mk.k[ki].kh = g_mk.k[ki].h; g_mk.k[ki].h = 0;
+        g_mk.k[ki].kill = 1;
+        g_mk.k[ki].kh = g_mk.k[ki].h;
+        g_mk.k[ki].h = 0;
         g_mk.k[ki].st = MK_COOL;
-        g_mk.k[ki].due = GetTickCount64() + mk_delay_ms(ki, n);
-        xlog("medkit: kit %d cycle %d taken by slot %u - our copy removed, back in %.0f s", ki + 1, n, slot, (double)mk_delay_ms(ki, n) / 1000.0);
-    } else if ((g_mk.k[ki].st == MK_ENGINE || g_mk.k[ki].st == MK_HOLD + 100) && n < 0) {
-        g_mk.k[ki].kill = 1; g_mk.k[ki].kh = g_mk.k[ki].sid;
+        g_mk.k[ki].due = GetTickCount64() + MkDelayMs(ki, n);
+        Xlog("medkit: kit %d cycle %d taken by slot %u - our copy removed, back in %.0f s", ki + 1, n, slot, (double) MkDelayMs(ki, n) / 1000.0);
+    } else
+        if ((g_mk.k[ki].st == MK_ENGINE || g_mk.k[ki].st == MK_HOLD + 100)
+            && n < 0) {
+        g_mk.k[ki].kill = 1;
+        g_mk.k[ki].kh = g_mk.k[ki].sid;
         g_mk.k[ki].st = MK_COOL;
         g_mk.k[ki].cycle = 0;
-        g_mk.k[ki].due = GetTickCount64() + mk_delay_ms(ki, n);
-        xlog("medkit: kit %d (engine kit) taken by slot %u - removed here, back in %.0f s", ki + 1, slot, (double)mk_delay_ms(ki, n) / 1000.0);
+        g_mk.k[ki].due = GetTickCount64() + MkDelayMs(ki, n);
+        Xlog("medkit: kit %d (engine kit) taken by slot %u - removed here, back in %.0f s", ki + 1, slot, (double) MkDelayMs(ki, n) / 1000.0);
     }
 }
+
 // the surface under the kit: a static-world ray down from 25 cm above the stored y (the stored y came from the same collision offline; the ray
 // settles props / moved parts). 6 cm over the hit like every pickup of ours. No hit within 60 cm: the stored y.
-static int mk_height(int ki, uint64_t now) {
-    typeof(g_mk.k[0]) *c = &g_mk.k[ki];
-    if (c->hy_tries >= 2 || c->have_hy) return 1;
+static int MkHeight(int ki, uint64_t now)
+{
+    typeof(g_mk.k[0]) * c = &g_mk.k[ki];
+    if (c->hy_tries >= 2 || c->have_hy)
+        return 1;
     if (!c->hy_state) {
         float top = c->p[1] + 0.25f;
-        float a[3] = {c->p[0], top, c->p[2]}, b[3] = {c->p[0], top - 0.85f, c->p[2]};
-        c->hy_job = world_ray_kick(a, b);
-        c->hy_start = top; c->hy_ms = g_frame;   // answered on the NEXT frame (pin camera does the same); 60 ms later read t 0 every time
+        float a[3] = { c->p[0], top, c->p[2] }, b[3] =
+            { c->p[0], top - 0.85f, c->p[2] };
+        c->hy_job = WorldRayKick(a, b);
+        c->hy_start = top;
+        c->hy_ms = g_frame;     // answered on the NEXT frame (pin camera does the same); 60 ms later read t 0 every time
         c->hy_state = c->hy_job ? 1 : 0;
-        if (!c->hy_job) c->hy_tries++;
+        if (!c->hy_job)
+            c->hy_tries++;
         return c->hy_tries >= 2;
     }
-    if (g_frame == c->hy_ms) return 0;
-    float t = ray_t(c->hy_job);
-    c->hy_job = 0; c->hy_state = 0; c->hy_tries++;
+    if (g_frame == c->hy_ms)
+        return 0;
+    float t = RayT(c->hy_job);
+    c->hy_job = 0;
+    c->hy_state = 0;
+    c->hy_tries++;
     if (t > 0.005f && t < 0.999f) {
-        c->hy = c->hy_start - 0.85f * t; c->have_hy = 1;
-        xlog("medkit: kit %d surface y %.3f (stored %.3f, %+.3f)", ki + 1, c->hy, c->p[1], c->hy - c->p[1]);
+        c->hy = c->hy_start - 0.85f * t;
+        c->have_hy = 1;
+        Xlog("medkit: kit %d surface y %.3f (stored %.3f, %+.3f)", ki + 1,
+             c->hy, c->p[1], c->hy - c->p[1]);
         return 1;
     }
-    xlog("medkit: kit %d no surface under the spot (t %.3f) - stored y %.3f%s", ki + 1, t, c->p[1], c->hy_tries >= 2 ? "" : ", once more");
+    Xlog("medkit: kit %d no surface under the spot (t %.3f) - stored y %.3f%s", ki + 1, t, c->p[1], c->hy_tries >= 2 ? "" : ", once more");
     return c->hy_tries >= 2;
 }
-static int mk_spawner_pos(const char *name, float *out) {
-    typedef uint64_t (*fn_loc)(uint64_t);
+
+static int MkSpawnerPos(const char *name, float *out)
+{
+    typedef uint64_t(*fn_loc) (uint64_t);
     typedef void *(*fn_pos)(float *, uint64_t);
-    uint64_t loc = ((fn_loc)VMA(0x18000ADB0))(fnv64(name));
-    float b[16] = {0};
-    if (!loc || loc == ~0ULL || IsBadReadPtr((void *)loc, 8)) return 0;
-    ((fn_pos)VMA(0x18000A6F0))(b, loc);
-    if (b[0] != b[0] || (b[0] == 0 && b[1] == 0 && b[2] == 0)) return 0;
+    uint64_t loc = ((fn_loc) T2R_SYM(kFnLocate)) (FNV64(name));
+    float b[16] = { 0 };
+    if (!loc || loc == ~0ULL || IsBadReadPtr((void *) loc, 8))
+        return 0;
+    ((fn_pos) T2R_SYM(kFnObjectPosition)) (b, loc);
+    if (b[0] != b[0] || (b[0] == 0 && b[1] == 0 && b[2] == 0))
+        return 0;
     memcpy(out, b, 12);
     return 1;
 }
+
 // the pickup entity's bytes: snapshot while untouched, diff when taken -> the log shows what a collected pickup changes (flags / state)
-static uint8_t *mk_proc(uint64_t h) { return h && h != ~0ULL ? ((uint8_t *(*)(uint64_t))VMA(0x18000A200))(h) : NULL; }
-static void mk_snap(int ki, uint64_t h) {
-    typeof(g_mk.k[0]) *c = &g_mk.k[ki];
-    uint8_t *p = mk_proc(h);
-    if (p && !IsBadReadPtr(p, sizeof c->snap)) { memcpy(c->snap, p, sizeof c->snap); c->snapped = 1; }
+static uint8_t *MkProc(uint64_t h)
+{
+    return h
+        && h !=
+        ~0ULL ? ((uint8_t * (*)(uint64_t))
+                 T2R_SYM(kFnEntityFromHandle)) (h) : NULL;
 }
-static void mk_snap_diff(int ki, uint64_t h) {
-    typeof(g_mk.k[0]) *c = &g_mk.k[ki];
-    uint8_t *p = mk_proc(h);
-    if (!p) { xlog("medkit: kit %d entity %llx no longer resolves (destroyed)", ki + 1, (unsigned long long)h); return; }
-    if (!c->snapped || IsBadReadPtr(p, sizeof c->snap)) { xlog("medkit: kit %d entity %llx still resolves (%p), no snapshot", ki + 1, (unsigned long long)h, (void *)p); return; }
-    char b[700]; int o = 0, cnt = 0;
-    for (size_t i = 0; i < sizeof c->snap && cnt < 24; i++) if (p[i] != c->snap[i]) o += snprintf(b + o, SNLEFT(b, o), " +%zx:%02x>%02x", i, c->snap[i], p[i]), cnt++;
-    xlog("medkit: kit %d entity %llx STILL ALIVE after the pickup (%p); changed bytes (%d shown):%s", ki + 1, (unsigned long long)h, (void *)p, cnt, cnt ? b : " none");
+
+static void MkSnap(int ki, uint64_t h)
+{
+    typeof(g_mk.k[0]) * c = &g_mk.k[ki];
+    uint8_t *p = MkProc(h);
+    if (p && !IsBadReadPtr(p, sizeof c->snap)) {
+        memcpy(c->snap, p, sizeof c->snap);
+        c->snapped = 1;
+    }
 }
-static void mk_taken_engine(int i, uint64_t now, const char *by) {
-    typeof(g_mk.k[0]) *c = &g_mk.k[i];
-    c->cycle = 0; c->taken = -1; c->h = 0; c->kh = c->sid; c->kill = 1; c->st = MK_COOL; c->due = now + mk_delay_ms(i, -1);
-    for (int t = 0; t < 8; t++) if (!g_mk.tx[t].left) { g_mk.tx[t].ki = (uint8_t)i; g_mk.tx[t].n = 0xff; g_mk.tx[t].left = 3; g_mk.tx[t].at = now; break; }
-    xlog("medkit: kit %d (engine kit) taken (%s) - back in %.0f s", i + 1, by, (double)mk_delay_ms(i, -1) / 1000.0);
+
+static void MkSnapDiff(int ki, uint64_t h)
+{
+    typeof(g_mk.k[0]) * c = &g_mk.k[ki];
+    uint8_t *p = MkProc(h);
+    if (!p) {
+        Xlog("medkit: kit %d entity %llx no longer resolves (destroyed)",
+             ki + 1, (unsigned long long) h);
+        return;
+    }
+    if (!c->snapped || IsBadReadPtr(p, sizeof c->snap)) {
+        Xlog("medkit: kit %d entity %llx still resolves (%p), no snapshot",
+             ki + 1, (unsigned long long) h, (void *) p);
+        return;
+    }
+    char b[700];
+    int o = 0, cnt = 0;
+    for (size_t i = 0; i < sizeof c->snap && cnt < 24; i++)
+        if (p[i] != c->snap[i])
+            o += snprintf(b + o, SNLEFT(b, o), " +%zx:%02x>%02x", i,
+                          c->snap[i], p[i]), cnt++;
+    Xlog("medkit: kit %d entity %llx STILL ALIVE after the pickup (%p); changed bytes (%d shown):%s", ki + 1, (unsigned long long) h, (void *) p, cnt, cnt ? b : " none");
 }
-static void mk_tick(void) {
-    if (g_mk_off < 0) { FILE *f = exe_side_open("t2r-no-medkit-respawn.txt", "r"); g_mk_off = f != NULL; if (f) fclose(f); xlog("medkit: respawn %s", g_mk_off ? "OFF (t2r-no-medkit-respawn.txt)" : "ON (default)"); }
-    if (g_mk_off) return;
-    if (match_substate() != 6) { if (g_mk.active || g_mk.live_ms) mk_reset(); return; }
+
+static void MkTakenEngine(int i, uint64_t now, const char *by)
+{
+    typeof(g_mk.k[0]) * c = &g_mk.k[i];
+    c->cycle = 0;
+    c->taken = -1;
+    c->h = 0;
+    c->kh = c->sid;
+    c->kill = 1;
+    c->st = MK_COOL;
+    c->due = now + MkDelayMs(i, -1);
+    for (int t = 0; t < 8; t++)
+        if (!g_mk.tx[t].left) {
+            g_mk.tx[t].ki = (uint8_t) i;
+            g_mk.tx[t].n = 0xff;
+            g_mk.tx[t].left = 3;
+            g_mk.tx[t].at = now;
+            break;
+        }
+    Xlog("medkit: kit %d (engine kit) taken (%s) - back in %.0f s", i + 1,
+         by, (double) MkDelayMs(i, -1) / 1000.0);
+}
+
+static void MkTick(void)
+{
+    if (g_mkOff < 0) {
+        FILE *f = ExeSideOpen("t2r-no-medkit-respawn.txt", "r");
+        g_mkOff = f != NULL;
+        if (f)
+            fclose(f);
+        Xlog("medkit: respawn %s",
+             g_mkOff ? "OFF (t2r-no-medkit-respawn.txt)" :
+             "ON (default)");
+    }
+    if (g_mkOff)
+        return;
+    if (MatchSubstate() != 6) {
+        if (g_mk.active || g_mk.live_ms)
+            MkReset();
+        return;
+    }
     uint64_t now = GetTickCount64();
     if (!g_mk.live_ms) {
         g_mk.live_ms = now;
-        uint8_t *lo = lobby_obj();
+        uint8_t *lo = LobbyObj();
         int map = lo && !IsBadReadPtr(lo + 0x18, 1) ? lo[0x18] : 255;
         g_mk.map = map;
         int n = 0, sp = 0;
-        for (int i = 1; i <= 8 && n < MK_MAX; i++) {         // the engine's own kits: to1-healthkit-N spawners of the loaded level
-            char nm[40]; snprintf(nm, sizeof nm, "to1-healthkit-%d", i);
+        for (int i = 1; i <= 8 && n < MK_MAX; i++) {    // the engine's own kits: to1-healthkit-N spawners of the loaded level
+            char nm[40];
+            snprintf(nm, sizeof nm, "to1-healthkit-%d", i);
             float p[3];
-            if (!mk_spawner_pos(nm, p)) continue;
+            if (!MkSpawnerPos(nm, p))
+                continue;
             memcpy(g_mk.k[n].p, p, 12);
-            g_mk.k[n].src = 1; g_mk.k[n].sid = fnv64(nm); g_mk.k[n].st = MK_ENGINE;
-            n++; sp++;
+            g_mk.k[n].src = 1;
+            g_mk.k[n].sid = FNV64(nm);
+            g_mk.k[n].st = MK_ENGINE;
+            n++;
+            sp++;
         }
         int tb = 0;
-        if (!sp) for (size_t t = 0; t < sizeof MK_TAB / sizeof *MK_TAB; t++) if (MK_TAB[t].map == map) {
-            for (int i = 0; i < MK_TAB[t].n && n < MK_MAX; i++) {
-                memcpy(g_mk.k[n].p, MK_TAB[t].p[i].p, 12);
-                g_mk.k[n].src = 0; g_mk.k[n].st = MK_WAIT; g_mk.k[n].due = now + MK_START_MS + 250ULL * (uint64_t)n; g_mk.k[n].taken = -2;
-                n++; tb++;
-            }
-        }
-        for (int i = 0; i < n; i++) if (g_mk.k[i].src == 1) g_mk.k[i].taken = -2;
+        if (!sp)
+            for (size_t t = 0; t < sizeof MK_TAB / sizeof *MK_TAB; t++)
+                if (MK_TAB[t].map == map) {
+                    for (int i = 0; i < MK_TAB[t].n && n < MK_MAX; i++) {
+                        memcpy(g_mk.k[n].p, MK_TAB[t].p[i].p, 12);
+                        g_mk.k[n].src = 0;
+                        g_mk.k[n].st = MK_WAIT;
+                        g_mk.k[n].due =
+                            now + MK_START_MS + 250ULL * (uint64_t) n;
+                        g_mk.k[n].taken = -2;
+                        n++;
+                        tb++;
+                    }
+                }
+        for (int i = 0; i < n; i++)
+            if (g_mk.k[i].src == 1)
+                g_mk.k[i].taken = -2;
         g_mk.n = n;
         g_mk.active = n > 0;
-        xlog("medkit: match live, map %d: %d kit(s) (%d engine spawner kits, %d from the table)%s", map, n, sp, tb, n ? "" : " - none, untouched");
+        Xlog("medkit: match live, map %d: %d kit(s) (%d engine spawner kits, %d from the table)%s", map, n, sp, tb, n ? "" : " - none, untouched");
     }
-    if (!g_mk.active || !g_spawn_pickup_orig) return;
+    if (!g_mk.active || !g_spawnPickupOrig)
+        return;
     for (int t = 0; t < 8; t++) {
-        if (!g_mk.tx[t].left || now < g_mk.tx[t].at) continue;
-        uint8_t m[3] = {2, g_mk.tx[t].ki, g_mk.tx[t].n};
-        mk_send(m, 3);
+        if (!g_mk.tx[t].left || now < g_mk.tx[t].at)
+            continue;
+        uint8_t m[3] = { 2, g_mk.tx[t].ki, g_mk.tx[t].n };
+        MkSend(m, 3);
         g_mk.tx[t].at = now + (g_mk.tx[t].left == 3 ? 250 : 500);
         g_mk.tx[t].left--;
     }
-    if (!ms_player_exists()) return;
+    if (!MsPlayerExists())
+        return;
     // the real pickup signal: the local health-kit count rises while the player stands at a kit (the engine pickup entity does not
     // necessarily die - an earlier log never saw an engine entity vanish after pickups)
     int near_ki = -1;
     if (now - g_mk.qty_ms >= 80) {
         g_mk.qty_ms = now;
-        int q = (int)inv_qty(0xa4311670996f650aULL);
+        int q = (int) InvQty(0xa4311670996f650aULL);
         if (g_mk.qty_ok && q > g_mk.qty) {
-            float lb[16]; const float *pl = player_locator(lb);
+            float lb[16];
+            const float *pl = PlayerLocator(lb);
             float best = 4.0f;
             for (int i = 0; pl && i < g_mk.n; i++) {
-                typeof(g_mk.k[0]) *c = &g_mk.k[i];
-                if (c->st != MK_ENGINE && c->st != MK_HOLD && c->st != MK_HOLD + 100) continue;
-                float dx = pl[0] - c->p[0], dy = pl[1] - c->p[1], dz = pl[2] - c->p[2];
-                float d = sqrtf(dx * dx + dz * dz) + (fabsf(dy) > 2.5f ? 99.0f : 0.0f);
-                if (d < best) { best = d; near_ki = i; }
+                typeof(g_mk.k[0]) * c = &g_mk.k[i];
+                if (c->st != MK_ENGINE && c->st != MK_HOLD
+                    && c->st != MK_HOLD + 100)
+                    continue;
+                float dx = pl[0] - c->p[0], dy = pl[1] - c->p[1], dz =
+                    pl[2] - c->p[2];
+                float d =
+                    sqrtf(dx * dx + dz * dz) + (fabsf(dy) >
+                                                2.5f ? 99.0f : 0.0f);
+                if (d < best) {
+                    best = d;
+                    near_ki = i;
+                }
             }
-            xlog("medkit: health kits %d -> %d, nearest active kit %d (%.1f m)", g_mk.qty, q, near_ki + 1, near_ki >= 0 ? best : -1.0f);
+            Xlog("medkit: health kits %d -> %d, nearest active kit %d (%.1f m)", g_mk.qty, q, near_ki + 1, near_ki >= 0 ? best : -1.0f);
         }
-        g_mk.qty = q; g_mk.qty_ok = 1;
+        g_mk.qty = q;
+        g_mk.qty_ok = 1;
     }
     for (int i = 0; i < g_mk.n; i++) {
-        typeof(g_mk.k[0]) *c = &g_mk.k[i];
+        typeof(g_mk.k[0]) * c = &g_mk.k[i];
         if (c->kill) {
             c->kill = 0;
-            uint64_t h = c->kh; c->kh = 0;
-            if (h && drops_alive(h)) { mk_snap_diff(i, h); dc_call(fnv64("kill-entity"), 1, &h); xlog("medkit: kit %d kill-entity on the consumed pickup %llx", i + 1, (unsigned long long)h); }
+            uint64_t h = c->kh;
+            c->kh = 0;
+            if (h && DropsAlive(h)) {
+                MkSnapDiff(i, h);
+                DcCall(FNV64("kill-entity"), 1, &h);
+                Xlog("medkit: kit %d kill-entity on the consumed pickup %llx", i + 1, (unsigned long long) h);
+            }
         }
         if (c->st == MK_ENGINE || c->st == MK_HOLD + 100) {
-            int alive = drops_alive(c->sid);
-            if (alive && !c->seen) { c->seen = 1; mk_snap(i, c->sid); xlog("medkit: kit %d engine entity seen (%.1f %.1f %.1f)", i + 1, c->p[0], c->p[1], c->p[2]); }
-            if (i == near_ki) { mk_taken_engine(i, now, alive ? "health-kit count rose at the spot, entity still alive" : "count rose, entity gone"); near_ki = -1; continue; }
-            if (c->st == MK_ENGINE && c->seen && !alive) { mk_taken_engine(i, now, "entity gone"); continue; }
-            if (c->st == MK_ENGINE && !c->seen && now - g_mk.live_ms > MK_SEEN_MS) { c->st = MK_HOLD + 100; xlog("medkit: kit %d - the engine entity was never seen alive (%llx): taken before we looked or never spawned; watching the count near it (%.1f %.1f %.1f)", i + 1, (unsigned long long)c->sid, c->p[0], c->p[1], c->p[2]); }
+            int alive = DropsAlive(c->sid);
+            if (alive && !c->seen) {
+                c->seen = 1;
+                MkSnap(i, c->sid);
+                Xlog("medkit: kit %d engine entity seen (%.1f %.1f %.1f)",
+                     i + 1, c->p[0], c->p[1], c->p[2]);
+            }
+            if (i == near_ki) {
+                MkTakenEngine(i, now,
+                                alive ?
+                                "health-kit count rose at the spot, entity still alive"
+                                : "count rose, entity gone");
+                near_ki = -1;
+                continue;
+            }
+            if (c->st == MK_ENGINE && c->seen && !alive) {
+                MkTakenEngine(i, now, "entity gone");
+                continue;
+            }
+            if (c->st == MK_ENGINE && !c->seen
+                && now - g_mk.live_ms > MK_SEEN_MS) {
+                c->st = MK_HOLD + 100;
+                Xlog("medkit: kit %d - the engine entity was never seen alive (%llx): taken before we looked or never spawned; watching the count near it (%.1f %.1f %.1f)", i + 1, (unsigned long long) c->sid, c->p[0], c->p[1], c->p[2]);
+            }
             continue;
         }
-        if (c->st == MK_COOL) { if (now >= c->due) c->st = MK_WAIT; else continue; }
+        if (c->st == MK_COOL) {
+            if (now >= c->due)
+                c->st = MK_WAIT;
+            else
+                continue;
+        }
         if (c->st == MK_HOLD) {
-            if (i == near_ki) { mk_taken_local(i, now, "health-kit count rose at the spot"); near_ki = -1; continue; }
-            if (now - c->spawned_ms > 800 && !drops_alive(c->h)) mk_taken_local(i, now, "entity gone");
-            else if (!c->snapped && now - c->spawned_ms > 300) mk_snap(i, c->h);
+            if (i == near_ki) {
+                MkTakenLocal(i, now,
+                               "health-kit count rose at the spot");
+                near_ki = -1;
+                continue;
+            }
+            if (now - c->spawned_ms > 800 && !DropsAlive(c->h))
+                MkTakenLocal(i, now, "entity gone");
+            else if (!c->snapped && now - c->spawned_ms > 300)
+                MkSnap(i, c->h);
             continue;
         }
-        if (now < c->due || c->fails >= 3) continue;
-        if (!mk_height(i, now)) continue;
+        if (now < c->due || c->fails >= 3)
+            continue;
+        if (!MkHeight(i, now))
+            continue;
         int n = c->cycle;
-        if (c->taken >= n) {                              // another player took this cycle before we spawned it
+        if (c->taken >= n) {    // another player took this cycle before we spawned it
             c->cycle++;
-            c->st = MK_COOL; c->due = now + mk_delay_ms(i, n);
-            xlog("medkit: kit %d cycle %d was already taken by another player - back in %.0f s", i + 1, n, (double)mk_delay_ms(i, n) / 1000.0);
+            c->st = MK_COOL;
+            c->due = now + MkDelayMs(i, n);
+            Xlog("medkit: kit %d cycle %d was already taken by another player - back in %.0f s", i + 1, n, (double) MkDelayMs(i, n) / 1000.0);
             continue;
         }
-        float pos[3] = {c->p[0], (c->have_hy ? c->hy : c->p[1]) + MK_UP, c->p[2]};
-        uint64_t ret[4] = {0};
-        box_spawn_like(ret, fnv64("health-kit"), pos, 1);
+        float pos[3] =
+            { c->p[0], (c->have_hy ? c->hy : c->p[1]) + MK_UP, c->p[2] };
+        uint64_t ret[4] = { 0 };
+        BoxSpawnLike(ret, FNV64("health-kit"), pos, 1);
         uint64_t h = ret[0];
         if (!h || h == ~0ULL) {
             c->fails++;
-            c->st = MK_COOL; c->due = now + 10000;
-            xlog("medkit: kit %d cycle %d: the spawn failed (%llx), try %d/3", i + 1, n, (unsigned long long)h, c->fails);
+            c->st = MK_COOL;
+            c->due = now + 10000;
+            Xlog("medkit: kit %d cycle %d: the spawn failed (%llx), try %d/3", i + 1, n, (unsigned long long) h, c->fails);
             continue;
         }
-        c->h = h; c->st = MK_HOLD; c->spawned_ms = now; c->cycle = n + 1;
-        xlog("medkit: kit %d cycle %d spawned at %.2f %.2f %.2f (handle %llx)", i + 1, n, pos[0], pos[1], pos[2], (unsigned long long)h);
+        c->h = h;
+        c->st = MK_HOLD;
+        c->spawned_ms = now;
+        c->cycle = n + 1;
+        Xlog("medkit: kit %d cycle %d spawned at %.2f %.2f %.2f (handle %llx)", i + 1, n, pos[0], pos[1], pos[2], (unsigned long long) h);
     }
 }

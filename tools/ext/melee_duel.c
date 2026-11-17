@@ -37,50 +37,88 @@
 //  END      no blow for 1 s, partner > 3 m for 0.3 s, a lethal blow (the normal Melee Down takes it), either fighter down: END + 1.2 s cooldown on that pair.
 //           A third player's hit on either fighter breaks the duel for both (op 5 BREAK + psync ABORT).
 #include "mduel_moves.h"
-static int dc_armed_at(uint64_t now);      // dcounter.c: the counter window is open now
-#define MDU_DODGE_CAP 1.15f        // m: max travel of a dodge inside a duel (SP's in-melee dodge 0.38-1.12 m; was 0.55 with the confined clips; directional dodges travel)
-#define MDU_HOLD_MS 2400           // after a dodge / miss the duel is held engaged this long: the counter window (600 ms) + the counter pair (~1.5 s)
+static int DcArmedAt(uint64_t now);   // dcounter.c: the counter window is open now
+#define MDU_DODGE_CAP 1.15f     // m: max travel of a dodge inside a duel (SP's in-melee dodge 0.38-1.12 m; was 0.55 with the confined clips; directional dodges travel)
+#define MDU_HOLD_MS 2400        // after a dodge / miss the duel is held engaged this long: the counter window (600 ms) + the counter pair (~1.5 s)
 // ps39: with one dodge clip at a time (melee_dodge.c) a dodger who pressed on the contact frame is free 60 + up to 990 ms later (the longest landing in rec37a);
 // the attacker's next contact came 650 + 380 = 1030 ms after the missed one - no time left to dodge it. The lock is 800 ms [TUNING ps39]: next contact >= 1180 ms
 // = that landing + SP's latest successful dodge start (133 ms before a contact). t2r-miss-lock-ps38.txt = 650.
-static int mdu_miss_lock_ms(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-miss-lock-ps38.txt") != INVALID_FILE_ATTRIBUTES; } return v ? 650 : 800; }
-#define MDU_MISS_LOCK_MS mdu_miss_lock_ms()       // the missed attacker's melee lock (SP: the NPC recovers ~0.6 s)
+static int MduMissLockMs(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-miss-lock-ps38.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v ? 650 : 800;
+}
+
+#define MDU_MISS_LOCK_MS MduMissLockMs()     // the missed attacker's melee lock (SP: the NPC recovers ~0.6 s)
 #define MDU_REACH 2.4f
 // v5-lethal (a lethal switchblade swing from 2.96 m played the plain knockdown, no finisher): a LETHAL swing engages up to the lunge reach
 // of its swing class (t2r-ext.c ml_reach: the lock-on glide's search, 3.2 m fists / knife, 3.8 m 1h, 4.1 m 2h), capped here - the engine's lunge + glide
 // carried that swing to a contact anyway, only without the duel's SP finisher. The finisher's run-in pull (paired.c PS_FIN_PULL_MS) closes the gap.
 #define MDU_LETHAL_MAX 3.5f
 #define MDU_MIN_D 0.3f
-#define MDU_SIDE_COS 0.866f        // cos 30 deg - a blow from beyond this off the victim's facing is the plain directional-reaction blow (TUNING: <= ~30 deg turn)
-#define MDU_CONE_COS 0.5f         // the soft-lock arc: +-60 deg of our facing
+#define MDU_SIDE_COS 0.866f     // cos 30 deg - a blow from beyond this off the victim's facing is the plain directional-reaction blow (TUNING: <= ~30 deg turn)
+#define MDU_CONE_COS 0.5f       // the soft-lock arc: +-60 deg of our facing
 #define MDU_COOL_MS 1200
-#define MDU_IDLE_MS 2500   // 1 s ended the duel between combos
-#define MDU_FAR_M 3.0f   
+#define MDU_IDLE_MS 2500        // 1 s ended the duel between combos
+#define MDU_FAR_M 3.0f
 #define MDU_GLIDE_MAX 1.0f      // [TUNING] m a swing may close beyond its clip's own root travel (a lunge step, ~3.7 m/s over a 266 ms jab)
-#define MDU_LATE_DODGE_MS 70   // [TUNING] a dodge press reaching the attacker later than this before its contact is too late (the blow lands)
-#define MDU_LUNGE_MAX 8.0f          // a free swing engages out to its lunge reach (a clash works regardless of the duel reach); 8 m = safety cap only
+#define MDU_LATE_DODGE_MS 70    // [TUNING] a dodge press reaching the attacker later than this before its contact is too late (the blow lands)
+#define MDU_LUNGE_MAX 8.0f      // a free swing engages out to its lunge reach (a clash works regardless of the duel reach); 8 m = safety cap only
 #define MDU_FAR_MS 300
 // Midpoint of ours and SP 330 / ~1.0 s / 1.0-1.3 s / 0.6-0.9 s: next-press 450 -> 390, breath 820 -> 910, 4th-hit gap 1400 -> 1275, old-pace windup floors 420/360 -> 585/555 (cap x0.65 -> x0.45)
 // The queue is spaced out more: combo steps 330 -> 450 ms after the contact, the late steps 500 -> 620, 4th-hit gap 1150 -> 1400
 // Spamming melee looked janky, so this is back to the earlier press flow, fluid and reactive on the client with no jumps, slower only through the windup animations -
 // the next press is taken while the -hit pair still runs (330 / 500 ms), so each step starts from the previous step's -hit pose, never from idle.
-#define MDU_FAIR_MAX_MS 60          // [TUNING ps24] ms the dodge-exit fairness floor may add to the next-press gate
-#define MDU_NEXT_MS 330            // SP: the next press is accepted 330 ms after the -hit switch
+#define MDU_FAIR_MAX_MS 60      // [TUNING ps24] ms the dodge-exit fairness floor may add to the next-press gate
+#define MDU_NEXT_MS 330         // SP: the next press is accepted 330 ms after the -hit switch
 // The victim gets more reaction after the 2nd/3rd stagger (running away from melee was very hard): from the 2nd chained
 // blow on the same victim its -hit pair hands off at MDU_VIC_FREE_S (both screens: the shared hand-off), so the victim moves / dodges again, and the
 // attacker's next press is accepted from MDU_NEXT2_MS instead of 330 ms: ~0.4 s of the victim's own control before the next contact. The first blow is SP.
 #define MDU_VIC_FREE_STEP 2
 #define MDU_VIC_FREE_S 0.6f
-#define MDU_NEXT2_MS 500           // below the 0.60 s hand-off - the chain step blends from the -hit, not from idle
-static int g_mdu_chain; static uint64_t g_mdu_chain_ms; static int g_mdu_chain_slot = -1;   // landed duel blows in a row on one victim (< 1.3 s apart)
+#define MDU_NEXT2_MS 500        // below the 0.60 s hand-off - the chain step blends from the -hit, not from idle
+static int g_mduChain;
+static uint64_t g_mduChainMs;
+static int g_mduChainSlot = -1;       // landed duel blows in a row on one victim (< 1.3 s apart)
 // The victim's hand-off at 0.6 s and the attacker's next press at 620 ms met on the same frame -
 // the next windup began the instant the victim was free. A 200 ms breath (820 ms): the victim moves / dodges before the windup even starts. t2r-duel-next2-old.txt = 620.
 #define MDU_NEXT2_BREATH_MS 910
-static int mdu_next2_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-duel-next2-old.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
+static int MduNext2Old(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-next2-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
 // night82: the 910 ms breath released a buffered press ~300 ms after the hand-off, from the idle pose (a pop at every chained step). Opt-in only now:
 // t2r-duel-breath.txt (mdu_next2_old reads the old file name too: t2r-duel-next2-old.txt = 500 either way).
-static int mdu_breath_on(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-duel-breath.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-#define MDU_NEXT_BASE() (g_mdu_chain >= MDU_VIC_FREE_STEP ? (!mdu_breath_on() || mdu_next2_old() ? MDU_NEXT2_MS : MDU_NEXT2_BREATH_MS) : MDU_NEXT_MS)
+static int MduBreathOn(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-breath.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+#define MDU_NEXT_BASE() (g_mduChain >= MDU_VIC_FREE_STEP ? (!MduBreathOn() || MduNext2Old() ? MDU_NEXT2_MS : MDU_NEXT2_BREATH_MS) : MDU_NEXT_MS)
 // Animations were cut early by swings with no momentum carried over, so the attacker cannot initiate another swing until at least the victim has
 // started recovering a bit in the pose: the next press is accepted no earlier than the victim's RECOVERY
 // START of the running -hit pair = where the victim -hit clip's root motion (its recoil) has died down: sampled once per pair row from the clip
@@ -91,68 +129,127 @@ static int mdu_breath_on(void) { static int v = -1; static uint64_t at; uint64_t
 // the duel -hit pair's VICTIM half plays at MDU_REACT_RATE on every screen (paired.c, re-applied on its first frames), its hand-off and the next-press
 // gate are divided by it. TUNING (not SP data: SP plays the reaction at 1.0). t2r-duel-react-rate-old.txt = 1.0.
 #define MDU_REACT_RATE 1.12f
-static float mdu_react_rate(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-duel-react-rate-old.txt") != INVALID_FILE_ATTRIBUTES; } return v ? 1.0f : MDU_REACT_RATE; }
-#define MDU_REC_WIN_MS 600            // the recoil lives in the victim clip's first 0.6 s (= the victim's free time from blow 2)
-#define MDU_REC_PEAK_MS 350           // a root speed peak later than this is not the recoil
-static int g_mdu_rec_ms;                       // the running pair's measured recovery start (ms after the contact), 0 = none
-static int g_mdu_rec_row[CD_N];                // per pair row: measured recovery ms, -1 = unreadable, 0 = not yet
-static int mdu_next_sp_only(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-duel-next-sp.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int mdu_next_at(void) { int b = MDU_NEXT_BASE(); return !mdu_next_sp_only() && g_mdu_rec_ms > b ? g_mdu_rec_ms : b; }
-#define MDU_NEXT_AT() mdu_next_at()
-static void mdu_rec_measure(int cd, uint64_t h, float end_s);
-#define MDU_PLOCK_FREE_MS 200      // TUNING (not measured): the press lock left after a parry / clash pair is cut early (see mdu_tick)
-static uint32_t g_mdu_plock_uid; static uint64_t g_mdu_plock_end;   // melee_duel_parry.c: the running parry / clash pair's uid + its planned end
+static float MduReactRate(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-react-rate-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v ? 1.0f : MDU_REACT_RATE;
+}
+
+#define MDU_REC_WIN_MS 600      // the recoil lives in the victim clip's first 0.6 s (= the victim's free time from blow 2)
+#define MDU_REC_PEAK_MS 350     // a root speed peak later than this is not the recoil
+static int g_mduRecMs;        // the running pair's measured recovery start (ms after the contact), 0 = none
+static int g_mduRecRow[CD_N]; // per pair row: measured recovery ms, -1 = unreadable, 0 = not yet
+static int MduNextSpOnly(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-next-sp.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static int MduNextAt(void)
+{
+    int b = MDU_NEXT_BASE();
+    return !MduNextSpOnly() && g_mduRecMs > b ? g_mduRecMs : b;
+}
+
+#define MDU_NEXT_AT() MduNextAt()
+static void MduRecMeasure(int cd, uint64_t h, float end_s);
+#define MDU_PLOCK_FREE_MS 200   // TUNING (not measured): the press lock left after a parry / clash pair is cut early (see mdu_tick)
+static uint32_t g_mduPlockUid;
+static uint64_t g_mduPlockEnd;        // melee_duel_parry.c: the running parry / clash pair's uid + its planned end
 // ps28 (after a parry the parrier could swing first and the other player could still dodge that swing; ps27's 300 ms head start was a pad block only - the
 // keyboard's F is not under padinj_block, line "keyboard F is not under padinj_block" below - and a clash gave the same free press): while now < g_mdu_init_until our
 // melee is off through the press latch (mdu_press_latched: pad and keyboard, nothing buffered or replayed). Set by melee_duel_parry.c for the swinger of a parry /
 // clash pair: the pair's hand-off (+ MDP_INIT28_MS when we were parried). The dodge is not part of it. t2r-parry-ps27.txt = never set.
-static uint64_t g_mdu_init_until;
-#define MDU_MP_WINDUP_MS 100      // night82: the MP windup stretch of every duel swing (constant clip rate, see mdu_swing_note)
+static uint64_t g_mduInitUntil;
+#define MDU_MP_WINDUP_MS 100    // night82: the MP windup stretch of every duel swing (constant clip rate, see mdu_swing_note)
 // ps31 (SP melee-only run, 31 min: after a landed 4-punch the next opener started 998-1049 ms later (6 of 6), after the 4-kick 999 ms; SP honours
 // a press 250-270 ms before that): the gap after the 4th hit is 1000 ms and ONE press inside its last MDU_GAP4_BUF_MS is kept and released when the gap ends (was
 // 1275 ms with every press dropped). t2r-duel-gap4-ps30.txt = 1275 ms, presses dropped.
-#define MDU_GAP4_PS30_MS 1275      // (ps30: "SP: 1.0-1.3 s after the 4th hit")
+#define MDU_GAP4_PS30_MS 1275   // (ps30: "SP: 1.0-1.3 s after the 4th hit")
 #define MDU_GAP4_PS31_MS 1000
 #define MDU_GAP4_BUF_MS 270
-static int mdu_gap4_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-gap4-ps30.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int mdu_gap4_ms(void) { return mdu_gap4_old() ? MDU_GAP4_PS30_MS : MDU_GAP4_PS31_MS; }
-#define MDU_GAP4_MS mdu_gap4_ms()
+static int MduGap4Old(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-gap4-ps30.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static int MduGap4Ms(void)
+{
+    return MduGap4Old()? MDU_GAP4_PS30_MS : MDU_GAP4_PS31_MS;
+}
+
+#define MDU_GAP4_MS MduGap4Ms()
 // ps31 (MP lacked variety: SP has left backhands and other moves MP did not use; MP contacts of a hand-played
 // fight: light-1 28, light-2 22, light-3 4, 4-kick 9, 4-punch 1, left-1 0 - SP's run: light-2 22, dodge-back 18, light-3 12, light-1 11, left-1 8, 4-punch 7): the duel
 // table already holds every SP swing that has a synced pair and shipped clips; what was missing is SP's USE of them. State of the ps31 rules (functions: 'ps31' below).
-#define P31_FAR_MIN 3.0f           // SP: the "-far" openers start at 3-5 m (melee-moves.json range 3 / 5; SP log 3.05-4.98 m)
+#define P31_FAR_MIN 3.0f        // SP: the "-far" openers start at 3-5 m (melee-moves.json range 3 / 5; SP log 3.05-4.98 m)
 #define P31_FAR_MAX 5.0f
-#define P31_LEFT_M 2.0f            // SP: fist-light-attack-left-1 from neutral inside 2.0 m (its distance-less-than 2.0 test; SP log 0.84-2.44 m, median 1.73)
-#define P31_LEFT_ENDER_M 3.0f      // SP: left-1's second distance test (3.0) - the opener after a 4-punch came from up to 2.44 m
-#define P31_ENDER_MS 2500          // [TUNING ps31] how long the last combo ender decides the next opener (SP: the next opener came 998-1049 ms after the ender)
-#define P31_PRESS_MS 800           // [TUNING ps31] a refused engine opener is replaced only with a melee press this recent (the engine buffers a press through a recovery)
-#define P31_RUN_MIN_MS 233         // SP: player-kill-close-distance ran 233-484 ms before the finisher intro (10 lethal presses at 3.05-4.98 m)
+#define P31_LEFT_M 2.0f         // SP: fist-light-attack-left-1 from neutral inside 2.0 m (its distance-less-than 2.0 test; SP log 0.84-2.44 m, median 1.73)
+#define P31_LEFT_ENDER_M 3.0f   // SP: left-1's second distance test (3.0) - the opener after a 4-punch came from up to 2.44 m
+#define P31_ENDER_MS 2500       // [TUNING ps31] how long the last combo ender decides the next opener (SP: the next opener came 998-1049 ms after the ender)
+#define P31_PRESS_MS 800        // [TUNING ps31] a refused engine opener is replaced only with a melee press this recent (the engine buffers a press through a recovery)
+#define P31_RUN_MIN_MS 233      // SP: player-kill-close-distance ran 233-484 ms before the finisher intro (10 lethal presses at 3.05-4.98 m)
 #define P31_RUN_MAX_MS 484
-static struct { uint64_t veto_ms, veto_frame, started_ms, press_ms, direct_ms, ender_ms, gap_lock, gap_buf, force_intro_until, want, dec_frame, ok_at; int slot, ender, chain_left, held, dec_slot, dec_lethal, ok[8]; float d, dec_d; const char *why, *want_name, *was; } g_p31 = {.dec_slot = -1, .slot = -1};
-static struct { int on, slot, row, T, fin; uint64_t t0, move, sid, ray, ray_f, blocked_until; float d0, dend; } g_p31r;   // C: the far finisher run-in (player-kill-close-distance)
-static void eb_fin_gasp(uint64_t ent, uint32_t slot, uint32_t seed, const char *why);   // exec_beg.c (ps31 D)
-#define MDU_GATE_LEAD_MS 120       // the path gate is asked this long before the contact (answers in 1-3 frames)
-#define MDU_MAX_STEP 0.12f         // m per frame of warp
-#define MDU_TURN_MS 100            // v5-feel3: the swing faces the victim this long after its start (SP turns early in the swing)
+static struct {
+    uint64_t veto_ms, veto_frame, started_ms, press_ms, direct_ms,
+        ender_ms, gap_lock, gap_buf, force_intro_until, want, dec_frame,
+        ok_at;
+    int slot, ender, chain_left, held, dec_slot, dec_lethal, ok[8];
+    float d, dec_d;
+    const char *why, *want_name, *was;
+} g_p31 = {.dec_slot = -1,.slot = -1 };
+
+static struct {
+    int on, slot, row, T, fin;
+    uint64_t t0, move, sid, ray, ray_f, blocked_until;
+    float d0, dend;
+} g_p31r;                       // C: the far finisher run-in (player-kill-close-distance)
+static void EbFinGasp(uint64_t ent, uint32_t slot, uint32_t seed, const char *why);   // exec_beg.c (ps31 D)
+#define MDU_GATE_LEAD_MS 120    // the path gate is asked this long before the contact (answers in 1-3 frames)
+#define MDU_MAX_STEP 0.12f      // m per frame of warp
+#define MDU_TURN_MS 100         // v5-feel3: the swing faces the victim this long after its start (SP turns early in the swing)
 #define MDU_TURN_STR "100"
-#define MDU_TURN_CAP_DPS 600.0f    // deg/s cap of the swing's turn onto the victim (no one-frame body flips), TUNING
-#define MDU_CF_STEP 0.08f          // night82: placement cap on the contact frame / after a stall (the rest = the pair's eased anchor pull)
-#define MDU_OWN_MAX_STEP 0.25f    // v5-feel2: per-frame cap of the one-owner placement (it also takes back the engine's own lunge step, up to ~0.12 m a frame)
+#define MDU_TURN_CAP_DPS 600.0f // deg/s cap of the swing's turn onto the victim (no one-frame body flips), TUNING
+#define MDU_CF_STEP 0.08f       // night82: placement cap on the contact frame / after a stall (the rest = the pair's eased anchor pull)
+#define MDU_OWN_MAX_STEP 0.25f  // v5-feel2: per-frame cap of the one-owner placement (it also takes back the engine's own lunge step, up to ~0.12 m a frame)
 #define MDUO_ENGAGE 1
 #define MDUO_SWING 2
 #define MDUO_END 3
 #define MDUO_BREAK 4
-#define MDUO_LATE 0        // attacker -> victim: our contact ruled your dodge press TOO LATE - take the blow (victim: melee_dodge.c g_mdu_late_rx)
-#define MDUO_PLAIN 5       // v5-var: attacker -> victim {row, step}: this blow landed WITHOUT a synced pair (path blocked / no anchor / psync refused) - the victim plays SP's
+#define MDUO_LATE 0             // attacker -> victim: our contact ruled your dodge press TOO LATE - take the blow (victim: melee_dodge.c g_mdu_late_rx)
+#define MDUO_PLAIN 5            // v5-var: attacker -> victim {row, step}: this blow landed WITHOUT a synced pair (path blocked / no anchor / psync refused) - the victim plays SP's
                            // npc-generic-hit-reactions fallback (melee_hitreact.c: the full-body ellie-1h-hr-* clip, collision-capped recoil) instead of only the additive flinch
 // melee_duel_parry.c (included after this file): the parry / clash beat
-static void mad_note(int slot, const char *why);   // melee_autodraw.c (v5-mdraw)
-static void mdp_press(int row, uint64_t now);
-static int md50_on(void);
+static void MadNote(int slot, const char *why);        // melee_autodraw.c (v5-mdraw)
+static void MdpPress(int row, uint64_t now);
+static int Md50On(void);
 // ps50 dodger priority (mdu swing note -> mdu_press_edge -> melee_duel_parry.c): the dodger's counter swing inside our MISS lock; our parry press stays open with a
 // narrower early edge (the attacker can still parry the punch back, but the parry window is smaller than usual)
-static uint64_t g_md50_pri_until; static int g_md50_pri_slot = -1, g_md50_narrow;
-#define MD50_PARRY_W_MS 90             // [TUNING ps50] the parry window's width under the dodger's priority (usual 167 ms)
+static uint64_t g_md50PriUntil;
+static int g_md50PriSlot = -1, g_md50_narrow;
+#define MD50_PARRY_W_MS 90      // [TUNING ps50] the parry window's width under the dodger's priority (usual 167 ms)
 // ps41 TURN LOCK (in SP the states are locked, each has its own turn; in MP the characters cut in between those states a lot; measured: 6 of
 // 20 pair starts put the victim half on a body inside its OWN swing - log [18567] 'CLASH cooldown: their swing started 180 ms before ours - FIRST WINS', 'PARRY no
 // claim ... (press +180 ms from their swing start ...)', [18580] 'swing switchblade-light-attack-1 cancelled at +203 ms: the partner's pair takes our body', 'victim
@@ -161,97 +258,283 @@ static uint64_t g_md50_pri_until; static int g_md50_pri_slot = -1, g_md50_narrow
 // ours starts NO swing: it is the parry / clash claim when melee_duel_parry.c's rules allow one (unchanged), otherwise the engine swing it started is cancelled
 // on its first frame and melee presses stay off (the press latch, nothing buffered) until their swing's contact time - their turn; the dodge stays open. A
 // press inside the latency (true simultaneous swings) keeps FIRST WINS. t2r-duel-turnlock-ps40.txt = old.
-static int g_mdp_tl, g_mdp_tl_since; static const char *g_mdp_tl_no; static uint64_t g_mdp_tl_until;   // set by mdp_press (melee_duel_parry.c)
-static int mdu_turnlock_on(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-duel-turnlock-ps40.txt") != INVALID_FILE_ATTRIBUTES; } return !off; }
-static int mdu_tl_cancel_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-turnlock-cancel-old.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: turn lock %s (ps41b)", o ? "by the FIRST-FRAME CANCEL (t2r-turnlock-cancel-old.txt): the engine starts the swing, it is cancelled on its first frame" : "decided in the engine's move search: a press in the partner's registered swing that is no parry / clash claim starts nothing (first-frame cancel = fallback only)"); v = o; } return v; }   // ps41b (melee_duel_parry.c mdu_tl_veto)
-static void mdp_note_swing(uint32_t slot, int row, int tc_ms, uint64_t now);
-static int mdp_recv(uint32_t slot, int op, const uint8_t *buf, uint64_t len);
-static int mdp_hold(uint64_t now);
-static int mdp_is_pair(int pr);
-static void mdp_victim_cues(uint64_t now, int skip_ms, int pr);
-static void mdp_tick(uint64_t now);
-static void mdp_fu_miss(const char *why);   // ps28: the parrier's follow-up swing was dodged (log)
+static int g_mdp_tl, g_mdp_tl_since;
+static const char *g_mdpTlNo;
+static uint64_t g_mdpTlUntil; // set by mdp_press (melee_duel_parry.c)
+static int MduTurnlockOn(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-duel-turnlock-ps40.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return !off;
+}
+
+static int MduTlCancelOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-turnlock-cancel-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: turn lock %s (ps41b)",
+                 o ?
+                 "by the FIRST-FRAME CANCEL (t2r-turnlock-cancel-old.txt): the engine starts the swing, it is cancelled on its first frame"
+                 :
+                 "decided in the engine's move search: a press in the partner's registered swing that is no parry / clash claim starts nothing (first-frame cancel = fallback only)");
+        v = o;
+    }
+    return v;
+}                               // ps41b (melee_duel_parry.c mdu_tl_veto)
+
+static void MdpNoteSwing(uint32_t slot, int row, int tc_ms,
+                           uint64_t now);
+static int MdpRecv(uint32_t slot, int op, const uint8_t * buf,
+                    uint64_t len);
+static int MdpHold(uint64_t now);
+static int MdpIsPair(int pr);
+static void MdpVictimCues(uint64_t now, int skip_ms, int pr);
+static void MdpTick(uint64_t now);
+static void MdpFuMiss(const char *why);       // ps28: the parrier's follow-up swing was dodged (log)
 // melee_duel_tl.c (included after melee_duel_parry.c): the duel timeline - presentation arbiter of both duel bodies (re/melee-duel-timeline.md)
-static void dtl_tick(void); static void dtl_pred_swing(uint32_t slot, int row, int tce, float ow); static int dtl_window_trim(uint32_t slot);
-static float dtl_reach_bonus(int s); static void dtl_note_reach(int s, float d, float lim, float bonus);
-static void dtl_pred_fin(uint32_t slot, int row, int fin, int tce, float ow);   // (v5-finwind)
-static int g_mdp_nosw44_slot = -1; static uint64_t g_mdp_nosw44_until;   // ps44 T4 (melee_duel_parry.c mdp_loser_cut44): this SWING lost the first-wins ruling - no replica / carry for it
-static int mdp_nosw44(uint32_t slot, const char *what) {
-    if (g_mdp_nosw44_slot != (int)slot || GetTickCount64() >= g_mdp_nosw44_until) return 0;
-    g_mdp_nosw44_slot = -1;
-    xlog("DUEL: first-wins LOSER CUT: slot %u's %s lost the ruling - no swing replica / contact carry on its puppet, our blow lands on it in its stance (ps44 T4; t2r-duel-loser-cut-old.txt = old)", slot, what);   /* (xlog: DULOG is defined further down) */
+static void DtlTick(void);
+static void DtlPredSwing(uint32_t slot, int row, int tce, float ow);
+static int DtlWindowTrim(uint32_t slot);
+static float DtlReachBonus(int s);
+static void DtlNoteReach(int s, float d, float lim, float bonus);
+static void DtlPredFin(uint32_t slot, int row, int fin, int tce, float ow);   // (v5-finwind)
+static int g_mdpNosw44Slot = -1;
+static uint64_t g_mdpNosw44Until;     // ps44 T4 (melee_duel_parry.c mdp_loser_cut44): this SWING lost the first-wins ruling - no replica / carry for it
+static int MdpNosw44(uint32_t slot, const char *what)
+{
+    if (g_mdpNosw44Slot != (int) slot
+        || GetTickCount64() >= g_mdpNosw44Until)
+        return 0;
+    g_mdpNosw44Slot = -1;
+    Xlog("DUEL: first-wins LOSER CUT: slot %u's %s lost the ruling - no swing replica / contact carry on its puppet, our blow lands on it in its stance (ps44 T4; t2r-duel-loser-cut-old.txt = old)", slot, what);      /* (xlog: DULOG is defined further down) */
     return 1;
 }
+
 // melee_duel_contact.c (included after melee_duel_tl.c): every blow visibly connects on both screens (re/melee-duel-contact.md)
-static void mct_tick(void); static void mct_arm_swing(uint32_t slot, int row, int tce, float ow, int pin_row1);
-static void mct_note_plain(uint32_t slot);   // ps25: the partner's blow landed plain (no pair START will come) - its replica switches to the -hit clip now
-static int mpn_predict(int set, int s, uint64_t h, float sw_D);   // melee_duel_pin.c (v5-contact3): the push variant this swing's contact will pick, -1 none
+static void MctTick(void);
+static void MctArmSwing(uint32_t slot, int row, int tce, float ow,
+                          int pin_row1);
+static void MctNotePlain(uint32_t slot);      // ps25: the partner's blow landed plain (no pair START will come) - its replica switches to the -hit clip now
+static int MpnPredict(int set, int s, uint64_t h, float sw_D); // melee_duel_pin.c (v5-contact3): the push variant this swing's contact will pick, -1 none
 // melee_duel_sptl.c (included after melee_duel_contact.c): every exchange's halves on SP's timeline + one 'sptl:' line per exchange (re/melee-sp-timeline.md)
-static int sptl_on(void); static void sptl_tick(void); static void sptl_note_swing(int row, float sp); static void sptl_note_rswing(uint32_t slot, int row, int tce); static void sptl_engine_hit(uint64_t move);
-static int sptl_cue_shift(void); static void sptl_drop_vic_cues(const char *why); static void sptl_note_miss(const char *why); static float sptl_cue_k(int tc, int tce);
-static void mst_tick(void); static void mst_note_move(int started);   // melee_duel_stance.c (included after melee_duel_sptl.c)
-static float g_mdu_cue_k = 1.0f;   // sptl: the swing cue times x this (the windup clip runs at tc / tce: its own vox / swish frames come tce / tc later)
+static int SptlOn(void);
+static void SptlTick(void);
+static void SptlNoteSwing(int row, float sp);
+static void SptlNoteRswing(uint32_t slot, int row, int tce);
+static void SptlEngineHit(uint64_t move);
+static int SptlCueShift(void);
+static void SptlDropVicCues(const char *why);
+static void SptlNoteMiss(const char *why);
+static float SptlCueK(int tc, int tce);
+static void MstTick(void);
+static void MstNoteMove(int started); // melee_duel_stance.c (included after melee_duel_sptl.c)
+static float g_mduCueK = 1.0f;        // sptl: the swing cue times x this (the windup clip runs at tc / tce: its own vox / swish frames come tce / tc later)
 enum { MDUA_VOX, MDUA_SWISH, MDUA_PAIN1, MDUA_IMPACT, MDUA_PAIN2 };
-static const char *const MDUA_NAME[] = {"effort vox", "swish", "pain vox", "impact", "second pain"};
+static const char *const MDUA_NAME[] =
+    { "effort vox", "swish", "pain vox", "impact", "second pain" };
 static struct {
-    int on, cfg_logged, nlog, slot, step, pair_row, gate, gate_tries, pair_on, pair_role, n_blows;
-    float gate_short_s;            // v5-geo2: the victim's recoil cut to this hand-off (s) so it stops 0.30 m before the wall the path gate found (0 = the full recoil)
-    uint16_t uid; uint32_t ps_uid;
-    uint64_t cfg_at, eng_ms, act_ms, far_since, hit_ms, buf_at, lock_until, win_end, next_move, pair_ms, vic_fx_ms, cool_until[T2R_MAX_PEERS], sw_from[T2R_MAX_PEERS];
+    int on, cfg_logged, nlog, slot, step, pair_row, gate, gate_tries,
+        pair_on, pair_role, n_blows;
+    float gate_short_s;         // v5-geo2: the victim's recoil cut to this hand-off (s) so it stops 0.30 m before the wall the path gate found (0 = the full recoil)
+    uint16_t uid;
+    uint32_t ps_uid;
+    uint64_t cfg_at, eng_ms, act_ms, far_since, hit_ms, buf_at, lock_until,
+        win_end, next_move, pair_ms, vic_fx_ms, cool_until[T2R_MAX_PEERS],
+        sw_from[T2R_MAX_PEERS];
     // the running swing (attacker)
-    int sw_on, sw_row, sw_lethal, sw_done, synthing, eng_contact; uint64_t sw_t0, sw_tc; float sw_D, sw_d0, sw_auth, sw_F[9];
-    struct { uint64_t at, ent, w; int8_t act, set, slot; } q[12];
-    uint64_t mv_id[MDU_MOVES_N]; int mv_cd[MDU_MOVES_N], init;
-    uint64_t hold_until, vsw_end[T2R_MAX_PEERS], vsw_at[T2R_MAX_PEERS]; int n_dodged;   // beat 2: engaged-hold after a dodge / counter, the victim-side window ends of the partner's duel swings
-} g_mdu = {.pair_row = -1, .slot = -1};
-static uint64_t g_mdu49_vtc[T2R_MAX_PEERS];   // ps49: the partner's swing contact on our clock, as its SWING message said (before the window trims)
-static uint64_t mdu49_vic_contact(uint32_t slot) { return slot < T2R_MAX_PEERS ? g_mdu49_vtc[slot] : 0; }
-static uint64_t mdu49_att_contact(uint32_t slot) { return g_mdu.sw_on && g_mdu.slot == (int)slot && !g_mdu.sw_done ? g_mdu.sw_tc : 0; }
-static int mdu49c_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-dodge-commit-ps49-old.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: ps49 committed swing %s", o ? "OFF (t2r-dodge-commit-ps49-old.txt): the swing follows a dodging victim" : "ON - once the victim's dodge press arrives, our swing goes on toward where it stood (no chasing the dodge)"); v = o; } return v; }
-static uint64_t g_mdu_plain_at[T2R_MAX_PEERS]; static int g_mdu_plain_step[T2R_MAX_PEERS], g_mdu_plain_row[T2R_MAX_PEERS];   // v5-var: the partner's last MDUO_PLAIN (victim side)
-static uint64_t g_mdu_psw_knife_ms[T2R_MAX_PEERS];   // v5-knife: when slot's last duel SWING on us was a knife-set move (victim side; t2r-ext.c fkr_victim_w)
-static int mdu_partner_knife(uint32_t slot) { return slot < T2R_MAX_PEERS && g_mdu_psw_knife_ms[slot] && GetTickCount64() - g_mdu_psw_knife_ms[slot] < 1500; }
-static int mdu_plain_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-no-plain-react.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int mdu_plain_now(uint32_t slot) { return slot < T2R_MAX_PEERS && g_mdu_plain_at[slot] && GetTickCount64() - g_mdu_plain_at[slot] < 500 && !mdu_plain_off(); }
+    int sw_on, sw_row, sw_lethal, sw_done, synthing, eng_contact;
+    uint64_t sw_t0, sw_tc;
+    float sw_D, sw_d0, sw_auth, sw_F[9];
+    struct {
+        uint64_t at, ent, w;
+        int8_t act, set, slot;
+    } q[12];
+    uint64_t mv_id[MDU_MOVES_N];
+    int mv_cd[MDU_MOVES_N], init;
+    uint64_t hold_until, vsw_end[T2R_MAX_PEERS], vsw_at[T2R_MAX_PEERS];
+    int n_dodged;               // beat 2: engaged-hold after a dodge / counter, the victim-side window ends of the partner's duel swings
+} g_mdu = {.pair_row = -1,.slot = -1 };
+
+static uint64_t g_mdu49Vtc[T2R_MAX_PEERS];     // ps49: the partner's swing contact on our clock, as its SWING message said (before the window trims)
+static uint64_t Mdu49VicContact(uint32_t slot)
+{
+    return slot < T2R_MAX_PEERS ? g_mdu49Vtc[slot] : 0;
+}
+
+static uint64_t Mdu49AttContact(uint32_t slot)
+{
+    return g_mdu.sw_on && g_mdu.slot == (int) slot
+        && !g_mdu.sw_done ? g_mdu.sw_tc : 0;
+}
+
+static int Mdu49cOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-dodge-commit-ps49-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: ps49 committed swing %s",
+                 o ?
+                 "OFF (t2r-dodge-commit-ps49-old.txt): the swing follows a dodging victim"
+                 :
+                 "ON - once the victim's dodge press arrives, our swing goes on toward where it stood (no chasing the dodge)");
+        v = o;
+    }
+    return v;
+}
+
+static uint64_t g_mduPlainAt[T2R_MAX_PEERS];
+static int g_mduPlainStep[T2R_MAX_PEERS], g_mdu_plain_row[T2R_MAX_PEERS];     // v5-var: the partner's last MDUO_PLAIN (victim side)
+static uint64_t g_mduPswKnifeMs[T2R_MAX_PEERS];      // v5-knife: when slot's last duel SWING on us was a knife-set move (victim side; t2r-ext.c fkr_victim_w)
+static int MduPartnerKnife(uint32_t slot)
+{
+    return slot < T2R_MAX_PEERS && g_mduPswKnifeMs[slot]
+        && GetTickCount64() - g_mduPswKnifeMs[slot] < 1500;
+}
+
+static int MduPlainOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-no-plain-react.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static int MduPlainNow(uint32_t slot)
+{
+    return slot < T2R_MAX_PEERS && g_mduPlainAt[slot]
+        && GetTickCount64() - g_mduPlainAt[slot] < 500
+        && !MduPlainOff();
+}
+
 // melee_hitreact.c: the strength floor of a plain duel blow's reaction (SP: combo 3 / 4 hit harder), -1 = not a plain duel blow
 // Unarmed melee on armed melee players played wrong generic hit reactions: SP's fist blow on a defender (re/sp-melee-1027 moves.csv, 143 reactions) picks the
 // reaction BY THE MOVE, not by where a hand is: fist-light-attack-1 / -left-1 / -4-punch -> npc-1h-hr-head-front-c, -2 -> chest-front-horizontal-a (6 of 9; downward-c 3), -3 -> rt-ft-chest-front-horizontal-a
 // (2 of 4; head-left-a 2). The victim's wrist pick read the attacker puppet's hand, which is NOT playing the punch on a plain (pair-less) blow = hip-front 'generic' flinches for face punches.
 // Returns the clip suffix (after ellie-1h-hr-) for a FRONT blow, NULL = no SP table for that move (kick etc.: the old pick).
-static const char *mdu_plain_sp_clip(uint32_t slot, const char **mv) {
-    if (!mdu_plain_now(slot)) return NULL;
-    int r = g_mdu_plain_row[slot]; if (r < 0 || r >= (int)MDU_MOVES_N) return NULL;
-    const char *m = MDU_MOVES[r].move; if (mv) *mv = m;
-    if (!strncmp(m, "fist-light-attack-left-1", 24) || !strncmp(m, "fist-light-attack-1", 19) || !strcmp(m, "fist-light-attack-4-punch")) return "head-front-c";
-    if (!strncmp(m, "fist-light-attack-2", 19)) return "chest-front-horizontal-a";
-    if (!strncmp(m, "fist-light-attack-3", 19)) return "rt-ft-chest-front-horizontal-a";
+static const char *MduPlainSpClip(uint32_t slot, const char **mv)
+{
+    if (!MduPlainNow(slot))
+        return NULL;
+    int r = g_mdu_plain_row[slot];
+    if (r < 0 || r >= (int) MDU_MOVES_N)
+        return NULL;
+    const char *m = MDU_MOVES[r].move;
+    if (mv)
+        *mv = m;
+    if (!strncmp(m, "fist-light-attack-left-1", 24)
+        || !strncmp(m, "fist-light-attack-1", 19)
+        || !strcmp(m, "fist-light-attack-4-punch"))
+        return "head-front-c";
+    if (!strncmp(m, "fist-light-attack-2", 19))
+        return "chest-front-horizontal-a";
+    if (!strncmp(m, "fist-light-attack-3", 19))
+        return "rt-ft-chest-front-horizontal-a";
     return NULL;
 }
-static int mdu_plain_str(uint32_t slot) { if (!mdu_plain_now(slot)) return -1; int st = g_mdu_plain_step[slot]; return st >= 4 ? 2 : st == 3 ? 1 : 0; }
-// ps25: melee_hitreact.c mhr_sp_pick - the SP move of the partner's plain blow on us (from any side), NULL = not a plain duel blow / an unknown row
-static const char *mdu_plain_move(uint32_t slot) { if (!mdu_plain_now(slot)) return NULL; int r = g_mdu_plain_row[slot]; return r >= 0 && r < (int)MDU_MOVES_N ? MDU_MOVES[r].move : NULL; }
-// v5-armed: the melee item in slot s's hand (winmm's peer record, peer+0x91, as the disarm pick reads it), 0 = fists / knife / gun / nothing
-static uint64_t cd_dis_peer_weapon(int slot);
-static uint64_t mdu_vic_melee(int s) {
-    uint64_t w = cd_dis_peer_weapon(s);
-    if (!w || w == ~0ULL) return 0;
-    return melee_class_of(base_weapon(w), NULL) >= 0 || melee_class_of(w, NULL) >= 0 ? w : 0;
+
+static int MduPlainStr(uint32_t slot)
+{
+    if (!MduPlainNow(slot))
+        return -1;
+    int st = g_mduPlainStep[slot];
+    return st >= 4 ? 2 : st == 3 ? 1 : 0;
 }
-static int mdu_engaged_now(void) { return g_mdu.on; }   // ctxdown.c cd_vic_gun_tick: no gun draw-back between two blows of an engaged duel
-static int mdu_warp_owns(void) { return g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done; }   // melee_hitreact.c mhg_tick: our duel swing's warp is the one mover of our body (the hit-reaction glide added up to 0.12 m a frame on top, SNAP 0.22 m)
+
+// ps25: melee_hitreact.c mhr_sp_pick - the SP move of the partner's plain blow on us (from any side), NULL = not a plain duel blow / an unknown row
+static const char *MduPlainMove(uint32_t slot)
+{
+    if (!MduPlainNow(slot))
+        return NULL;
+    int r = g_mdu_plain_row[slot];
+    return r >= 0 && r < (int) MDU_MOVES_N ? MDU_MOVES[r].move : NULL;
+}
+
+// v5-armed: the melee item in slot s's hand (winmm's peer record, peer+0x91, as the disarm pick reads it), 0 = fists / knife / gun / nothing
+static uint64_t CdDisPeerWeapon(int slot);
+static uint64_t MduVicMelee(int s)
+{
+    uint64_t w = CdDisPeerWeapon(s);
+    if (!w || w == ~0ULL)
+        return 0;
+    return MeleeClassOf(BaseWeapon(w), NULL) >= 0
+        || MeleeClassOf(w, NULL) >= 0 ? w : 0;
+}
+
+static int MduEngagedNow(void)
+{
+    return g_mdu.on;
+}                               // ctxdown.c cd_vic_gun_tick: no gun draw-back between two blows of an engaged duel
+
+static int MduWarpOwns(void)
+{
+    return g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done;
+}                               // melee_hitreact.c mhg_tick: our duel swing's warp is the one mover of our body (the hit-reaction glide added up to 0.12 m a frame on top, SNAP 0.22 m)
+
 // ps30 (the plain blow on a bat holder gave the wrong hit reactions; hitting a player who does not respond should feel exactly like hitting an NPC in No Return when
 // it does not parry; SP clip 20.9-22.0 s + melee-cur.log F=121948: the
 // armed NPC is the defender of the player's <swing>-hit move, 44 of 49 sampled hits follow the pair half's joint path): the synced -hit pair is the DEFAULT on an armed
 // victim again; t2r-duel-armed-plain-ps29.txt = the plain blow (v5-armed / ps29). The weapon stays gripped through the half: melee_hitreact.c g_p30.
-static int mdu_armed_pairs(void) {
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-duel-armed-plain-ps29.txt") == INVALID_FILE_ATTRIBUTES;
-        if (o != v) xlog("ps30 armed pair: an armed duel victim takes %s", o ? "the synced -hit pair (default; t2r-duel-armed-plain-ps29.txt = the plain blow)" : "the PLAIN blow (t2r-duel-armed-plain-ps29.txt)"); v = o; }
-    return v || mdu_plain_off();
+static int MduArmedPairs(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-duel-armed-plain-ps29.txt") ==
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("ps30 armed pair: an armed duel victim takes %s",
+                 o ?
+                 "the synced -hit pair (default; t2r-duel-armed-plain-ps29.txt = the plain blow)"
+                 : "the PLAIN blow (t2r-duel-armed-plain-ps29.txt)");
+        v = o;
+    }
+    return v || MduPlainOff();
 }
-static int mdu_owns_react(uint32_t slot) { if (mdu_plain_now(slot)) return 0; return g_mdu.on && g_mdu.slot >= 0 && (uint32_t)g_mdu.slot == slot && slot < T2R_MAX_PEERS && g_mdu.vsw_at[slot] && GetTickCount64() - g_mdu.vsw_at[slot] < 1200; }
-static int mdu_owns_punch(uint64_t ent) { return g_mdu.on && g_mdu.slot >= 0 && g_mdu.pair_on && (ent == SID_PLAYER || ent == puppet_handle(g_mdu.slot)); }
-#define DULOG(...) do { if (LOGCAP(g_mdu.nlog, 1500)) xlog(__VA_ARGS__); } while (0)
+
+static int MduOwnsReact(uint32_t slot)
+{
+    if (MduPlainNow(slot))
+        return 0;
+    return g_mdu.on && g_mdu.slot >= 0 && (uint32_t) g_mdu.slot == slot
+        && slot < T2R_MAX_PEERS && g_mdu.vsw_at[slot]
+        && GetTickCount64() - g_mdu.vsw_at[slot] < 1200;
+}
+
+static int MduOwnsPunch(uint64_t ent)
+{
+    return g_mdu.on && g_mdu.slot >= 0 && g_mdu.pair_on
+        && (ent == SID_PLAYER || ent == PuppetHandle(g_mdu.slot));
+}
+
+#define DULOG(...) do { if (LOGCAP(g_mdu.nlog, 1500)) Xlog(__VA_ARGS__); } while (0)
 // v5-finwind: the finisher intro is the dodgeable windup. A duel swing that WOULD down the victim (net hp - blow <= 1) picks its SP finisher at the
 // swing start (cd_fin_pick + its full-path gate, same pool / variety rules as before) and plays that finisher's SP intro (segment 0, attacker-only) on us AS the
 // swing's windup: the engine's light attack is cancelled on its first frame. The victim gets it as a normal SWING (+ the finisher row): its screen plays the intro
@@ -261,28 +544,70 @@ static int mdu_owns_punch(uint64_t ent) { return g_mdu.on && g_mdu.slot >= 0 && 
 // MISSES (the normal duel miss: no finisher, no damage, the dodge counter as for any dodged swing). No dodge = the -sync pair starts at the contact on both bodies
 // (cd_upg_go with the intro passed over: the finisher camera from there) and downs the victim as before. No finisher fits = the normal swing + plain Melee Down.
 // t2r-duel-fin-at-contact.txt (re-read every 2 s) = the old start of the whole finisher on the lethal press (the victim taken at once). Log: 'DUEL: ... finisher windup'.
-#define MDU_FW_LEAD_MS 90          // the finisher's path gate is asked this long before the windup's contact (pg_gate caches the verdict for the contact)
-static struct { int on, fin, im, tce, gate, gate_tries, punch; uint64_t sid, t0, hit_ms; float sp; uint32_t hit_uid; } g_mdfwu = {.fin = -1};
+#define MDU_FW_LEAD_MS 90       // the finisher's path gate is asked this long before the windup's contact (pg_gate caches the verdict for the contact)
+static struct {
+    int on, fin, im, tce, gate, gate_tries, punch;
+    uint64_t sid, t0, hit_ms;
+    float sp;
+    uint32_t hit_uid;
+} g_mdfwu = {.fin = -1 };
+
 // The lethal swing's windup was the finisher's SP
 // intro (467-500 ms vs the punch's 266-386 ms: the downing blow landed 110-230 ms late, log [194570] / [183686]). PUNCH mode (default): the lethal swing is the
 // normal swing at its SP time (dodgeable like any blow, the normal replica on the victim's screen); at its contact the finisher's -sync pair starts from the
 // switch (the intro passed over, cd_upg_go skip_intro). g_mdfwu.punch = 1 there (no intro clip on us: sid 0). t2r-fin-intro-windup.txt = the SP intro windup (old).
-static uint64_t g_mdu_fw_move;   // the engine move of the swing mdu_fw_begin is asked about
+static uint64_t g_mduFwMove;  // the engine move of the swing mdu_fw_begin is asked about
 // ps37 (the hatchet finisher looked wrong; log [19734] 'FINISHER PUNCH ... the lethal swing
 // ellie-1h-blade-light-1 plays at its SP time (contact in 341 ms, the SP intro ... would be 467 ms)' - a slash, then the -sync clip from its raised-weapon frame
 // and a second blow 333 ms later): the punch rule was made for the fists. A lethal swing with a melee WEAPON (every set but the fists) plays SP's finisher
 // as SP does - the finisher's intro is the wind-up in place of the swing (the old t2r-fin-intro-windup.txt path: contact = the intro's end, sent in the SWING
 // message, the victim's screen plays the intro replica), then the -sync pair from its frame 0. Fists keep the punch rule. t2r-fin-weapon-intro-ps36.txt = the
 // punch rule for weapons too.
-static int g_mdu_fw_wpn = -1;   // the weapon set of the running weapon-finisher intro (-1 = none)
-static const char *mdu_set_name(int set) { return set == MDU_1HBLUNT ? "1h blunt" : set == MDU_1HBLADE ? "1h blade" : set == MDU_2H ? "2h" : set == MDU_KNIFE ? "knife" : "fists"; }
-static int mdu_fw_weapon_intro(const mdu_row_t *m) {
-    static int old = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (old < 0 || n - at > 2000) { at = n; old = GetFileAttributesA("t2r-fin-weapon-intro-ps36.txt") != INVALID_FILE_ATTRIBUTES; }
+static int g_mduFwWpn = -1;   // the weapon set of the running weapon-finisher intro (-1 = none)
+static const char *MduSetName(int set)
+{
+    return set == MDU_1HBLUNT ? "1h blunt" : set ==
+        MDU_1HBLADE ? "1h blade" : set == MDU_2H ? "2h" : set ==
+        MDU_KNIFE ? "knife" : "fists";
+}
+
+static int MduFwWeaponIntro(const MduRowT *m)
+{
+    static int old = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (old < 0 || n - at > 2000) {
+        at = n;
+        old =
+            GetFileAttributesA("t2r-fin-weapon-intro-ps36.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
     return !old && m->set != MDU_FIST;
 }
-static int mdu_fwpunch_on(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-fin-intro-windup.txt") == INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: finisher windup mode %s", o ? "PUNCH: the lethal swing lands at its own SP time, the finisher's -sync pair starts at its contact (t2r-fin-intro-windup.txt = the SP intro windup)" : "SP INTRO (t2r-fin-intro-windup.txt): the lethal swing is replaced by the finisher's SP intro"); v = o; } return v; }
-static int g_mdu_fw_ptc[T2R_MAX_PEERS]; static uint64_t g_mdu_fw_rsid[T2R_MAX_PEERS], g_mdu_fw_rend[T2R_MAX_PEERS];   // victim side: the partner's finisher windup (its contact ms on its clock, the replica clip, its end here)
+
+static int MduFwpunchOn(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-fin-intro-windup.txt") ==
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: finisher windup mode %s",
+                 o ?
+                 "PUNCH: the lethal swing lands at its own SP time, the finisher's -sync pair starts at its contact (t2r-fin-intro-windup.txt = the SP intro windup)"
+                 :
+                 "SP INTRO (t2r-fin-intro-windup.txt): the lethal swing is replaced by the finisher's SP intro");
+        v = o;
+    }
+    return v;
+}
+
+static int g_mduFwPtc[T2R_MAX_PEERS];
+static uint64_t g_mduFwRsid[T2R_MAX_PEERS], g_mdu_fw_rend[T2R_MAX_PEERS];     // victim side: the partner's finisher windup (its contact ms on its clock, the replica clip, its end here)
 // v5-dis2 (the wall finisher played with the axe missing; A log 43985-44020): the windup's cancel-melee-action makes the engine's melee script
 // (exe+2c4c8d, the same frame) run player-begin-holster on our armed body -> the PlayerHolsterWeaponAnimAction put-away (43986) -> 31 frames later its finish
 // (PlayerHolsterFinishWeaponAnimAction -> HolsterItemFromAnimActionPhase1 -> PutWeaponInHolster, own-held 2bb2c011 -> 0 at 44017): the 570 ms windup ran to its
@@ -290,81 +615,175 @@ static int g_mdu_fw_ptc[T2R_MAX_PEERS]; static uint64_t g_mdu_fw_rsid[T2R_MAX_PE
 // hand on both screens (B 39292: peer-weapon of A -> 0 one frame before its START). Windups cut short by the next swing (43895 / 43922 / 43954) only hid it.
 // While the windup runs (and the frames right after the cancel) the melee item stays in the hand: hfix_keep_melee (t2r-ext.c) gates the begin-holster and the
 // holster anim actions like for our dodge clips. t2r-no-melee-hold.txt = off (with the other melee holds).
-static uint64_t g_mdfwu_cancel_t60;
-static int g_npcw_keep;   // melee_npcwind.c: an NPC windup tell holds our swing (the melee item stays in the hand)
-static int mdu_fw_keep(void) { return g_mdfwu.on || g_npcw_keep || (g_mdfwu_cancel_t60 && g_t60 >= g_mdfwu_cancel_t60 && g_t60 - g_mdfwu_cancel_t60 < 6); }
-static int mdu_fw_off(void) {
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-duel-fin-at-contact.txt") != INVALID_FILE_ATTRIBUTES;
-        if (o != v) xlog("DUEL: finisher windup %s", o ? "OFF (t2r-duel-fin-at-contact.txt): the whole finisher (SP intro + -sync pair) starts on the lethal press, the victim is taken at once" : "ON: the lethal swing's windup IS the finisher's SP intro (dodgeable like any duel swing), the -sync pair starts at its contact");
-        v = o; }
+static uint64_t g_mdfwuCancelT60;
+static int g_npcwKeep;         // melee_npcwind.c: an NPC windup tell holds our swing (the melee item stays in the hand)
+static int MduFwKeep(void)
+{
+    return g_mdfwu.on || g_npcwKeep || (g_mdfwuCancelT60
+                                         && g_t60 >= g_mdfwuCancelT60
+                                         && g_t60 - g_mdfwuCancelT60 <
+                                         6);
+}
+
+static int MduFwOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-duel-fin-at-contact.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: finisher windup %s",
+                 o ?
+                 "OFF (t2r-duel-fin-at-contact.txt): the whole finisher (SP intro + -sync pair) starts on the lethal press, the victim is taken at once"
+                 :
+                 "ON: the lethal swing's windup IS the finisher's SP intro (dodgeable like any duel swing), the -sync pair starts at its contact");
+        v = o;
+    }
     return v;
 }
-static mdu_row_t mdu_fw_row(const mdu_row_t *m, int im) { mdu_row_t r = *m; r.tc_ms = (uint16_t)im; r.vox_ms = -1; r.swish_ms = -1; return r; }   // the swing cues on the intro (contact = its end)
-static void mdu_fw_end(const char *why, int stop) {
-    if (!g_mdfwu.on) return;
+
+static MduRowT MduFwRow(const MduRowT *m, int im)
+{
+    MduRowT r = *m;
+    r.tc_ms = (uint16_t) im;
+    r.vox_ms = -1;
+    r.swish_ms = -1;
+    return r;
+}                               // the swing cues on the intro (contact = its end)
+
+static void MduFwEnd(const char *why, int stop)
+{
+    if (!g_mdfwu.on)
+        return;
     uint64_t now = GetTickCount64();
-    if (stop && !g_mdfwu.punch) mhr_stop(SID_PLAYER, g_mdfwu.sid, 0.25f);
-    DULOG("DUEL: u%04x finisher windup %s ended at +%d ms of %d (%s)%s", g_mdu.uid, g_mdfwu.fin >= 0 ? CD_PAIRS[g_mdfwu.fin].name + 3 : "?", (int)(now - g_mdfwu.t0), g_mdfwu.tce, why,
-          stop ? " - the intro on us blends out over 0.25 s, no finisher, no damage" : "");
+    if (stop && !g_mdfwu.punch)
+        MhrStop(SID_PLAYER, g_mdfwu.sid, 0.25f);
+    DULOG("DUEL: u%04x finisher windup %s ended at +%d ms of %d (%s)%s",
+          g_mdu.uid,
+          g_mdfwu.fin >= 0 ? CD_PAIRS[g_mdfwu.fin].name + 3 : "?",
+          (int) (now - g_mdfwu.t0), g_mdfwu.tce, why,
+          stop ?
+          " - the intro on us blends out over 0.25 s, no finisher, no damage"
+          : "");
     g_mdfwu.on = 0;
 }
+
 // the finisher's -sync pair started at the windup's contact (mdu_contact): the hit-confirm watch (mdu_tick) follows that pair
-static void mdu_fw_hit(uint64_t now) {
-    if (!g_mdfwu.on) return;
-    DULOG("DUEL: u%04x finisher windup CONNECTS at +%d ms (planned %d, intro %d ms): not dodged - %s -sync pair (u%08x) from its frame 0 on both bodies, the finisher camera from now",
-          g_mdu.uid, (int)(now - g_mdfwu.t0), g_mdfwu.tce, g_mdfwu.im, CD_PAIRS[g_mdfwu.fin].name + 3, g_ps.uid);
-    if (g_mdu_fw_wpn >= 0) {      // ps37 proof line: where both bodies stood against the pair's authored spots when the -sync pair took them
-        DULOG("DUEL: u%04x WEAPON finisher %s (%s): intro %s, contact at +%d ms; at the -sync start attacker %.2f m / %.0f deg, victim %.2f m / %.0f deg off their authored spots%s (ps37)",
-              g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3, mdu_set_name(g_mdu_fw_wpn), CD_PAIRS[g_mdfwu.fin].seg[0].att, (int)(now - g_mdfwu.t0), (double)g_ps_off_d[0], (double)g_ps_off_y[0], (double)g_ps_off_d[1], (double)g_ps_off_y[1],
-              g_ps_off_d[0] > 0.10f || g_ps_off_d[1] > 0.10f ? " - WARNING: over 0.10 m" : "");
-        g_mdu_fw_wpn = -1;
+static void MduFwHit(uint64_t now)
+{
+    if (!g_mdfwu.on)
+        return;
+    DULOG
+        ("DUEL: u%04x finisher windup CONNECTS at +%d ms (planned %d, intro %d ms): not dodged - %s -sync pair (u%08x) from its frame 0 on both bodies, the finisher camera from now",
+         g_mdu.uid, (int) (now - g_mdfwu.t0), g_mdfwu.tce, g_mdfwu.im,
+         CD_PAIRS[g_mdfwu.fin].name + 3, g_ps.uid);
+    if (g_mduFwWpn >= 0) {    // ps37 proof line: where both bodies stood against the pair's authored spots when the -sync pair took them
+        DULOG
+            ("DUEL: u%04x WEAPON finisher %s (%s): intro %s, contact at +%d ms; at the -sync start attacker %.2f m / %.0f deg, victim %.2f m / %.0f deg off their authored spots%s (ps37)",
+             g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3,
+             MduSetName(g_mduFwWpn), CD_PAIRS[g_mdfwu.fin].seg[0].att,
+             (int) (now - g_mdfwu.t0), (double) g_psOffD[0],
+             (double) g_ps_off_y[0], (double) g_psOffD[1],
+             (double) g_ps_off_y[1], g_psOffD[0] > 0.10f
+             || g_psOffD[1] > 0.10f ? " - WARNING: over 0.10 m" : "");
+        g_mduFwWpn = -1;
     }
-    g_mdfwu.hit_uid = g_ps.uid; g_mdfwu.hit_ms = now; g_mdfwu.on = 0;
+    g_mdfwu.hit_uid = g_ps.uid;
+    g_mdfwu.hit_ms = now;
+    g_mdfwu.on = 0;
 }
+
 // the windup contact of our running swing (ms from its start, real): the finisher intro's, else the row's (parry gate, attacker side)
-static int mdu_my_tc(int row) { return g_mdfwu.on && g_mdu.sw_on && row == g_mdu.sw_row ? g_mdfwu.tce : row >= 0 && row < (int)MDU_MOVES_N ? MDU_MOVES[row].tc_ms : 0; }
+static int MduMyTc(int row)
+{
+    return g_mdfwu.on && g_mdu.sw_on
+        && row == g_mdu.sw_row ? g_mdfwu.tce : row >= 0
+        && row < (int) MDU_MOVES_N ? MDU_MOVES[row].tc_ms : 0;
+}
+
 // the partner's running swing contact (ms after its start, its clock) for the parry gate (victim side): its finisher windup's, else the row's
-static int mdu_partner_tc(int s, int row) { return s >= 0 && s < T2R_MAX_PEERS && g_mdu_fw_ptc[s] > 0 ? g_mdu_fw_ptc[s] : row >= 0 && row < (int)MDU_MOVES_N ? MDU_MOVES[row].tc_ms : 0; }
+static int MduPartnerTc(int s, int row)
+{
+    return s >= 0 && s < T2R_MAX_PEERS
+        && g_mduFwPtc[s] > 0 ? g_mduFwPtc[s] : row >= 0
+        && row < (int) MDU_MOVES_N ? MDU_MOVES[row].tc_ms : 0;
+}
+
 // victim side: the partner's finisher windup replica is stopped when the duel ends / breaks before its START took the puppet
-static void mdu_fw_vic_clear(const char *why) {
+static void MduFwVicClear(const char *why)
+{
     uint64_t now = GetTickCount64();
     for (uint32_t s = 0; s < T2R_MAX_PEERS; s++) {
-        if (g_mdu_fw_rsid[s] && now < g_mdu_fw_rend[s] && !(g_ps.role && g_ps.att == (int)s)) {
-            uint64_t ph = puppet_handle(s);
-            if (ph) mhr_stop(ph, g_mdu_fw_rsid[s], 0.20f);
-            DULOG("DUEL: slot %u's finisher windup replica on its puppet stopped (%s)", s, why);
+        if (g_mduFwRsid[s] && now < g_mdu_fw_rend[s]
+            && !(g_ps.role && g_ps.att == (int) s)) {
+            uint64_t ph = PuppetHandle(s);
+            if (ph)
+                MhrStop(ph, g_mduFwRsid[s], 0.20f);
+            DULOG
+                ("DUEL: slot %u's finisher windup replica on its puppet stopped (%s)",
+                 s, why);
         }
-        g_mdu_fw_rsid[s] = 0; g_mdu_fw_rend[s] = 0; g_mdu_fw_ptc[s] = 0;
+        g_mduFwRsid[s] = 0;
+        g_mdu_fw_rend[s] = 0;
+        g_mduFwPtc[s] = 0;
     }
 }
-static int mdu_on(void) {
+
+static int MduOn(void)
+{
     uint64_t now = GetTickCount64();
     if (!g_mdu.cfg_at || now - g_mdu.cfg_at >= 2000) {
         g_mdu.cfg_at = now ? now : 1;
-        FILE *f = exe_side_open("t2r-melee-duel.txt", "r"); int o = f != NULL; if (f) fclose(f);
-        if (o != g_mdu.on || !g_mdu.cfg_logged) { if (o || g_mdu.cfg_logged) xlog("DUEL: %s", o ? "ON (t2r-melee-duel.txt) - SP-style 1v1 melee duel, beat 1: connecting hits as synced -hit pairs" : "off"); g_mdu.cfg_logged = 1; }
+        FILE *f = ExeSideOpen("t2r-melee-duel.txt", "r");
+        int o = f != NULL;
+        if (f)
+            fclose(f);
+        if (o != g_mdu.on || !g_mdu.cfg_logged) {
+            if (o || g_mdu.cfg_logged)
+                Xlog("DUEL: %s",
+                     o ?
+                     "ON (t2r-melee-duel.txt) - SP-style 1v1 melee duel, beat 1: connecting hits as synced -hit pairs"
+                     : "off");
+            g_mdu.cfg_logged = 1;
+        }
         g_mdu.on = o;
     }
     return g_mdu.on;
 }
-static void mdu_init(void) {
-    if (g_mdu.init) return;
+
+static void MduInit(void)
+{
+    if (g_mdu.init)
+        return;
     g_mdu.init = 1;
-    for (size_t i = 0; i < MDU_MOVES_N; i++) { g_mdu.mv_id[i] = fnv64_rt(MDU_MOVES[i].move); g_mdu.mv_cd[i] = cd_pair_of_move(fnv64_rt(MDU_MOVES[i].pair)); }
+    for (size_t i = 0; i < MDU_MOVES_N; i++) {
+        g_mdu.mv_id[i] = Fnv64Rt(MDU_MOVES[i].move);
+        g_mdu.mv_cd[i] = CdPairOfMove(Fnv64Rt(MDU_MOVES[i].pair));
+    }
 }
-static int g_npcw_tgt_slot = -1; static uint64_t g_npcw_tgt_ms;   // melee_npcwind.c: the tell's target when its held swing starts
+
+static int g_npcwTgtSlot = -1;
+static uint64_t g_npcwTgtMs;  // melee_npcwind.c: the tell's target when its held swing starts
 // The wind ups cut into the swings with no blending (a windup from the left and the swing from the right, very jumpy), so the swing's own
 // wind-up is used: no NPC tell clip and no held swing any more. The engine's swing plays from its first frame; its own clip runs a speed PROFILE over the extra
 // time the tell had (NPCW_TELL_MS / NPCW_TELL_COMBO_MS): the raise (clip 0 .. WUP_RAISE x tc) slower, a near-still hold at the top, then the strike at x1.0
 // into the contact. The contact moves by the same extra ms through the ping-windup stretch path (g_mdu_sw_xtra: the SWING message carries tce, the victim's
 // replica + dodge window use it; sptl cancels the engine's early SP-time -hit). The victim's replica follows the same profile (melee_duel_contact.c).
 // TUNING (not measured): WUP_RAISE 0.55 tc, the hold advances 0.10 tc, 55 % of the slack to the raise. t2r-npc-windup-tell.txt = the old NPC tell clip.
-#define WUP_RAISE 0.30f   // Frames (machete slash-1, 63.36-64.06 s): 0.55 sat past the swing - the strike showed, froze, then the contact; 0.30 = the raised pose
+#define WUP_RAISE 0.30f         // Frames (machete slash-1, 63.36-64.06 s): 0.55 sat past the swing - the strike showed, froze, then the contact; 0.30 = the raised pose
 #define WUP_HOLD_ADV 0.06f
 #define WUP_RAISE_SHARE 0.60f
-static int g_npcw_x; static uint64_t g_npcw_x_move;   // melee_npcwind.c npcw_note -> mdu_swing_note: the wind-up extra ms for this move
-static struct { int on, n; uint64_t clip, t0; float tc, x, rate, k; } g_wup;
+static int g_npcwX;
+static uint64_t g_npcwXMove;  // melee_npcwind.c npcw_note -> mdu_swing_note: the wind-up extra ms for this move
+static struct {
+    int on, n;
+    uint64_t clip, t0;
+    float tc, x, rate, k;
+} g_wup;
 // ps43 N1 (rec42a A 50.20 / 53.90 / 82.27, sheets s095 / s102 / s155: our own body pops from the low 2h swing into the -hit pose in one frame; A [11239] / [11462] /
 // [13144] 'attacker half on US: the drawn body stands 95 / 113 / 95 deg off the half's first frame (hips -128 vs -67, shoulders -162 vs -67)', 'CONTACT
 // ellie-2h-blunt-attack-1 at 390 ms (planned 264)', 'wind-up readback +328 ms: clip wants 212 ms'). Offline decode (scratchpad ps42body/pose.py): the swing clip
@@ -375,17 +794,30 @@ static struct { int on, n; uint64_t clip, t0; float tc, x, rate, k; } g_wup;
 // drove the clip to tc_ms (264) at the contact = a pose 100 ms short of the switch pose. Rows whose SP switch time lies before the clip's hit window get the clip
 // ms the swing has at the switch; the profile's clip time (and the victim's replica, melee_duel_contact.c) is scaled by clip-ms / tc_ms. The duel's clock (contact
 // time, travel model, dodge window, cues) stays on tc_ms. t2r-2h-swing-phase-old.txt = the clip at tc_ms (re-read every 2 s).
-static float mdu_clip_k(const mdu_row_t *m) {
-    static int old = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (old < 0 || n - at > 2000) { at = n; old = GetFileAttributesA("t2r-2h-swing-phase-old.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (old || !m || m < MDU_MOVES || m >= MDU_MOVES + MDU_MOVES_N || !m->move || m->tc_ms <= 0 || m->tc_ms >= m->hw0) return 1.0f;      // (a table row - not a finisher windup's copy, its clip is the intro - whose SP switch comes before its clip's own hit window)
+static float MduClipK(const MduRowT *m)
+{
+    static int old = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (old < 0 || n - at > 2000) {
+        at = n;
+        old =
+            GetFileAttributesA("t2r-2h-swing-phase-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (old || !m || m < MDU_MOVES || m >= MDU_MOVES + MDU_MOVES_N
+        || !m->move || m->tc_ms <= 0 || m->tc_ms >= m->hw0)
+        return 1.0f;            // (a table row - not a finisher windup's copy, its clip is the intro - whose SP switch comes before its clip's own hit window)
     // (all-rows pose match, scratchpad ps43body2/match.py - 13 joints, swing frame nearest the -hit attacker half's frame 0: every other measured row matches at
     //  its tc_ms within one frame; these two do not: attack-1 best frame 11 = 366 ms (rms 0.078 m, 0.330 m at 264), sprint frame 19 = 633 ms (rms 0.000 m = the same
     //  pose, 0.461 m at 435). The clip data decides the numbers, the x1.41 above only says why SP gets there in 264 / 433 ms.)
-    if (!strcmp(m->move, "ellie-2h-blunt-attack-1")) return 366.0f / (float)m->tc_ms;
-    if (!strcmp(m->move, "ellie-2h-blunt-sprinting-attack-1")) return 633.0f / (float)m->tc_ms;
+    if (!strcmp(m->move, "ellie-2h-blunt-attack-1"))
+        return 366.0f / (float) m->tc_ms;
+    if (!strcmp(m->move, "ellie-2h-blunt-sprinting-attack-1"))
+        return 633.0f / (float) m->tc_ms;
     return 1.0f;
 }
+
 // clip ms the profile wants at real ms el (tc = the clip's contact ms at x1, x = the extra real ms); past tc + x: x1.0 from the contact on
 // ps22 (SP melee-only run, 119 contacts: every swing plays at rate 1.0 with no hold; ~80 % of a swing is the cocked arm while the body lunges in, the
 // arm extends in the last 4-5 frames. frames 3.717-3.967: our raise + hold stood still for 250 ms, then the strike cut in): no hold any more. The
@@ -393,54 +825,168 @@ static float mdu_clip_k(const mdu_row_t *m) {
 // t2r-wup-hold-old.txt = the ps20 raise / hold / strike profile.
 #define WUP_TAIL_MS 50.0f
 #define WUP_RAMP_MS 100.0f
-static int wup_hold_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-wup-hold-old.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static float wup_ct(float el, float tc, float x) {
-    if (el <= 0.0f) return 0.0f;
-    if (wup_hold_old()) {
-        float pre = WUP_RAISE * tc + WUP_HOLD_ADV * tc + x;          // real ms before the strike starts (the strike = the clip's last (1 - raise - hold) part at x1)
-        float A = WUP_RAISE_SHARE * pre, H = pre - A, R = WUP_RAISE * tc, Rh = R + WUP_HOLD_ADV * tc;
-        if (el < A) return R * el / A;
-        if (el < A + H) return R + (Rh - R) * (el - A) / H;
+static int WupHoldOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-wup-hold-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static float WupCt(float el, float tc, float x)
+{
+    if (el <= 0.0f)
+        return 0.0f;
+    if (WupHoldOld()) {
+        float pre = WUP_RAISE * tc + WUP_HOLD_ADV * tc + x;     // real ms before the strike starts (the strike = the clip's last (1 - raise - hold) part at x1)
+        float A = WUP_RAISE_SHARE * pre, H = pre - A, R =
+            WUP_RAISE * tc, Rh = R + WUP_HOLD_ADV * tc;
+        if (el < A)
+            return R * el / A;
+        if (el < A + H)
+            return R + (Rh - R) * (el - A) / H;
         return Rh + (el - A - H);
     }
     float T = tc + x, tail = WUP_TAIL_MS, W = WUP_RAMP_MS;
-    if (x <= 1.0f || tc < 60.0f) return el;
-    if (tail + W > 0.8f * tc) { float k = 0.8f * tc / (tail + W); tail *= k; W *= k; }
-    float Ta = T - tail - W, lo = (tc - tail - 0.5f * W) / (Ta + 0.5f * W);      // the cocked part's rate: the whole profile integrates to tc at T
-    if (el < Ta) return lo * el;
-    if (el < Ta + W) { float u = (el - Ta) / W; return lo * Ta + lo * W * u + (1.0f - lo) * W * (u * u * u - 0.5f * u * u * u * u); }
+    if (x <= 1.0f || tc < 60.0f)
+        return el;
+    if (tail + W > 0.8f * tc) {
+        float k = 0.8f * tc / (tail + W);
+        tail *= k;
+        W *= k;
+    }
+    float Ta = T - tail - W, lo = (tc - tail - 0.5f * W) / (Ta + 0.5f * W);     // the cocked part's rate: the whole profile integrates to tc at T
+    if (el < Ta)
+        return lo * el;
+    if (el < Ta + W) {
+        float u = (el - Ta) / W;
+        return lo * Ta + lo * W * u + (1.0f - lo) * W * (u * u * u -
+                                                         0.5f * u * u * u *
+                                                         u);
+    }
     return tc - tail + (el - Ta - W);
 }
-static float wup_rate(float el, float tc, float x) { float d = 16.0f; float r = (wup_ct(el + d, tc, x) - wup_ct(el, tc, x)) / d; return r < 0.02f ? 0.02f : r > 1.0f ? 1.0f : r; }
-static void wup_arm(uint64_t clip, float tc, float x, uint64_t now) { g_wup.on = 1; g_wup.n = 0; g_wup.clip = clip; g_wup.t0 = now; g_wup.tc = tc; g_wup.x = x; g_wup.rate = -1.0f; g_wup.k = 1.0f; }
-static void wup_tick(void) {
-    if (!g_wup.on) return;
-    uint64_t now = GetTickCount64(); float el = (float)(now - g_wup.t0);
+
+static float WupRate(float el, float tc, float x)
+{
+    float d = 16.0f;
+    float r = (WupCt(el + d, tc, x) - WupCt(el, tc, x)) / d;
+    return r < 0.02f ? 0.02f : r > 1.0f ? 1.0f : r;
+}
+
+static void WupArm(uint64_t clip, float tc, float x, uint64_t now)
+{
+    g_wup.on = 1;
+    g_wup.n = 0;
+    g_wup.clip = clip;
+    g_wup.t0 = now;
+    g_wup.tc = tc;
+    g_wup.x = x;
+    g_wup.rate = -1.0f;
+    g_wup.k = 1.0f;
+}
+
+static void WupTick(void)
+{
+    if (!g_wup.on)
+        return;
+    uint64_t now = GetTickCount64();
+    float el = (float) (now - g_wup.t0);
     if (!g_mdu.sw_on || g_mdu.sw_done || el >= g_wup.tc + g_wup.x + 30.0f) {
-        mstag_speed(g_wup.clip, 1.0f); g_wup.on = 0;
-        static int nl; if (LOGCAP(nl, 60)) DULOG("DUEL: wind-up profile over after %.0f ms (%s) - swing clip back to x1.00", (double)el, !g_mdu.sw_on || g_mdu.sw_done ? "the swing ended / connected" : "contact reached");
-        return; }
-    {   // The longer animation was not applying in the animation but was on the technical side, so hit reactions were late: read the clip's
+        mstag_speed(g_wup.clip, 1.0f);
+        g_wup.on = 0;
+        static int nl;
+        if (LOGCAP(nl, 60))
+            DULOG
+                ("DUEL: wind-up profile over after %.0f ms (%s) - swing clip back to x1.00",
+                 (double) el, !g_mdu.sw_on
+                 || g_mdu.
+                 sw_done ? "the swing ended / connected" :
+                 "contact reached");
+        return;
+    }
+    {                           // The longer animation was not applying in the animation but was on the technical side, so hit reactions were late: read the clip's
         // real time back every 4th frame - wanted (profile) vs played - on every layer that holds it
-        static uint64_t lf; if (g_frame - lf >= 4) { lf = g_frame;
-            const char *sw = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].swing : NULL; float len = sw && *sw ? anim_len(SID_PLAYER, sw) : 0.0f;
-            float ph = psync_phase(SID_PLAYER, g_wup.clip);
-            static int nl; if (LOGCAP(nl, 1500)) DULOG("DUEL: wind-up readback +%.0f ms: clip wants %.0f ms, plays %.0f ms (phase %.3f of %.0f ms), rate set x%.2f%s", (double)el, (double)(wup_ct(el, g_wup.tc, g_wup.x) * g_wup.k),
-                (double)(ph >= 0.0f ? ph * len * 1000.0f : -1.0f), (double)ph, (double)(len * 1000.0f), (double)g_wup.rate, ph < 0.0f ? " - the clip is not on our layers" : ""); } }
-    float r = wup_rate(el, g_wup.tc, g_wup.x);
+        static uint64_t lf;
+        if (g_frame - lf >= 4) {
+            lf = g_frame;
+            const char *sw = g_mdu.sw_row >= 0
+                && g_mdu.sw_row <
+                (int) MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].swing : NULL;
+            float len = sw && *sw ? AnimLen(SID_PLAYER, sw) : 0.0f;
+            float ph = PsyncPhase(SID_PLAYER, g_wup.clip);
+            static int nl;
+            if (LOGCAP(nl, 1500))
+                DULOG
+                    ("DUEL: wind-up readback +%.0f ms: clip wants %.0f ms, plays %.0f ms (phase %.3f of %.0f ms), rate set x%.2f%s",
+                     (double) el,
+                     (double) (WupCt(el, g_wup.tc, g_wup.x) * g_wup.k),
+                     (double) (ph >= 0.0f ? ph * len * 1000.0f : -1.0f),
+                     (double) ph, (double) (len * 1000.0f),
+                     (double) g_wup.rate,
+                     ph < 0.0f ? " - the clip is not on our layers" : "");
+        }
+    }
+    float r = WupRate(el, g_wup.tc, g_wup.x);
     // ps20 readback (log [13232]-[13268]: rate x0.30 / x0.09 set, the fist swing still played 337 ms of clip at +328 ms): the engine's melee action runs its
     // swing on its own clock - a speed does not reach it. The profile's clip time is written as the PHASE every frame on the layers that hold the clip.
     // t2r-wup-speed-only.txt = the speed only.
-    if (GetFileAttributesA("t2r-wup-speed-only.txt") == INVALID_FILE_ATTRIBUTES) {
-        const char *sw = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].swing : NULL; static float len; static uint64_t lclip;
-        if (lclip != g_wup.clip) { lclip = g_wup.clip; len = sw && *sw ? anim_len(SID_PLAYER, sw) : 0.0f; }
-        if (len > 0.1f) { float ph = wup_ct(el, g_wup.tc, g_wup.x) * g_wup.k / (len * 1000.0f); if (ph > 0.98f) ph = 0.98f;   // (ps43 N1: k = clip ms at the switch / tc_ms)
-            for (int ly = 0; ly < 4; ly++) { uint64_t b_[4] = {SID_PLAYER, 0, (uint64_t)ly, g_wup.clip}; memcpy(&b_[1], &ph, 4); dc_call(fnv64("set-animation-phase"), 4, b_); } }
+    if (GetFileAttributesA("t2r-wup-speed-only.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        const char *sw = g_mdu.sw_row >= 0
+            && g_mdu.sw_row <
+            (int) MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].swing : NULL;
+        static float len;
+        static uint64_t lclip;
+        if (lclip != g_wup.clip) {
+            lclip = g_wup.clip;
+            len = sw && *sw ? AnimLen(SID_PLAYER, sw) : 0.0f;
+        }
+        if (len > 0.1f) {
+            float ph =
+                WupCt(el, g_wup.tc, g_wup.x) * g_wup.k / (len * 1000.0f);
+            if (ph > 0.98f)
+                ph = 0.98f;     // (ps43 N1: k = clip ms at the switch / tc_ms)
+            for (int ly = 0; ly < 4; ly++) {
+                uint64_t b_[4] =
+                    { SID_PLAYER, 0, (uint64_t) ly, g_wup.clip };
+                memcpy(&b_[1], &ph, 4);
+                DcCall(FNV64("set-animation-phase"), 4, b_);
+        }}
     }
-    if (g_wup.n < 4 || __builtin_fabsf(r - g_wup.rate) > 0.02f || (g_frame & 7) == 0) { if (__builtin_fabsf(r - g_wup.rate) > 0.05f) { static int nl; if (LOGCAP(nl, 400)) DULOG("DUEL: wind-up profile +%.0f ms: clip x%.2f (%s)", (double)el, (double)r, r < 0.9f ? "cocked, closing in" : "strike"); } g_wup.rate = r; g_wup.n++; }
+    if (g_wup.n < 4 || __builtin_fabsf(r - g_wup.rate) > 0.02f
+        || (g_frame & 7) == 0) {
+        if (__builtin_fabsf(r - g_wup.rate) > 0.05f) {
+            static int nl;
+            if (LOGCAP(nl, 400))
+                DULOG("DUEL: wind-up profile +%.0f ms: clip x%.2f (%s)",
+                      (double) el, (double) r,
+                      r < 0.9f ? "cocked, closing in" : "strike");
+        }
+        g_wup.rate = r;
+        g_wup.n++;
+    }
 }
-static int mdu_row_of(uint64_t move) { mdu_init(); for (size_t i = 0; i < MDU_MOVES_N; i++) if (g_mdu.mv_id[i] == move) return (int)i; return -1; }
-static int mdu_row_named(const char *n) { return n ? mdu_row_of(fnv64_rt(n)) : -1; }
+
+static int MduRowOf(uint64_t move)
+{
+    MduInit();
+    for (size_t i = 0; i < MDU_MOVES_N; i++)
+        if (g_mdu.mv_id[i] == move)
+            return (int) i;
+    return -1;
+}
+
+static int MduRowNamed(const char *n)
+{
+    return n ? MduRowOf(Fnv64Rt(n)) : -1;
+}
+
 // ps32 (SP clip at 1:24-1:30: the 5th move is a left backhand, a move MP never showed while it alternated between
 // about 4 punches constantly; log of that stretch: sprint 84.77, light-2 85.54, light-3 86.21, 4-punch 86.92 (hit 87.36), fists-stun-combo-1 88.36 (hit 88.79),
 // fists-stun-combo-2 89.12 (hit 89.56); frames: blow 5 = a left-arm backhand across the head (abby-fist-stun-hammerfist-1), blow 6 = a right overhead hammerfist):
@@ -454,402 +1000,897 @@ static int mdu_row_named(const char *n) { return n ? mdu_row_of(fnv64_rt(n)) : -
 // fists-stun-combo-1 in place of a new opener (through the ps31 opener rule: decided in the move search, nothing cancelled); a press in its window (333-833 ms after
 // hit-1, SP: 332 ms 3 of 4) chains fists-stun-combo-2; then the chain is over (the gap again, then the opener rule with the ender memory of the 4th hit kept).
 // One stun combo per ender. t2r-duel-stun-strikes-ps31.txt = off (the rows stay, never chosen).
-static int mdu_p32_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-duel-stun-strikes-ps31.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: fist blows 5 / 6 (SP's stun-combo strikes, no stun state) %s (ps32)", o ? "OFF (t2r-duel-stun-strikes-ps31.txt)" : "ON: after a landed 4th-hit ender the next press on the same partner starts fists-stun-combo-1, then -2"); v = o; } return v; }
-static int g_p32_done;   // this ender's stun combo was started (or the last blow was its blow 6): the next neutral press is an opener again
+static int MduP32Old(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-duel-stun-strikes-ps31.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: fist blows 5 / 6 (SP's stun-combo strikes, no stun state) %s (ps32)", o ? "OFF (t2r-duel-stun-strikes-ps31.txt)" : "ON: after a landed 4th-hit ender the next press on the same partner starts fists-stun-combo-1, then -2");
+        v = o;
+    }
+    return v;
+}
+
+static int g_p32Done;          // this ender's stun combo was started (or the last blow was its blow 6): the next neutral press is an opener again
 // meleeenv.c me_cand_hook: the ENGINE's own -hit moves of the two strikes (fists-stun-combo-hit-1 / fists-stun-combo-2-hit; the latter carries SP's stun state: its
 // only link is combo-grab -> player-meat-shield-grab-attacks = the "Grab / Strike" prompt). The duel's contact plays both halves as a psync pair and drops the
 // engine's contact, so the engine never needs them; refused in every search / auto transition while the duel feature is on, so no engine-side stun state, prompt or
 // grab can start on a player puppet. 1 = refuse. (Not behind the ps32 opt-out: the rows exist either way.)
 // ps33: the same for the 1h blunt strikes' engine moves - their -hit pairs (hit-1 chains to the knee-state swing -2-stun, -2-stun-hit carries the grab link,
 // -2-breaker-hit auto-starts the knee-state kill 1hblunt-stab-stun-finisher) and the knee-state swing itself.
-static int mdu_p32_engine_hit(uint64_t aname) {
+static int MduP32EngineHit(uint64_t aname)
+{
     static uint64_t h[7];
-    if (!h[0]) { h[0] = fnv64("fists-stun-combo-hit-1"); h[1] = fnv64("fists-stun-combo-2-hit"); h[2] = fnv64("1hblunt-stun-breaker-combo-hit-1"); h[3] = fnv64("1hblunt-stun-breaker-combo-left-hit-1");
-                 h[4] = fnv64("1hblunt-stun-breaker-combo-2-stun"); h[5] = fnv64("1hblunt-stun-breaker-combo-2-stun-hit"); h[6] = fnv64("1hblunt-stun-breaker-combo-2-breaker-hit"); }
-    if (!g_mdu.on) return 0;
-    for (int i = 0; i < 7; i++) if (aname == h[i]) return 1;
+    if (!h[0]) {
+        h[0] = FNV64("fists-stun-combo-hit-1");
+        h[1] = FNV64("fists-stun-combo-2-hit");
+        h[2] = FNV64("1hblunt-stun-breaker-combo-hit-1");
+        h[3] = FNV64("1hblunt-stun-breaker-combo-left-hit-1");
+        h[4] = FNV64("1hblunt-stun-breaker-combo-2-stun");
+        h[5] = FNV64("1hblunt-stun-breaker-combo-2-stun-hit");
+        h[6] = FNV64("1hblunt-stun-breaker-combo-2-breaker-hit");
+    }
+    if (!g_mdu.on)
+        return 0;
+    for (int i = 0; i < 7; i++)
+        if (aname == h[i])
+            return 1;
     return 0;
 }
+
 // ps33 (variety that does not change functionality): the 1h blunt chain gets the same two extra blows by the same rule -
 // blow 5 = the left backhand to the head 1hblunt-stun-breaker-combo-left-1 (ellie-1hblunt-knee-bash-1-left; SP clip 16-23-29 @64.1 s: the enemy doubles over, stays on
 // its feet) or its right-hand twin 1hblunt-stun-breaker-combo-1, taken in turn (ours; the game data lists the left one after light-1 / -3 and the right one after
 // light-2 / the sprint / dodge attacks, none after light-4); blow 6 = 1hblunt-stun-breaker-combo-2-breaker, the knee-free variant of SP's second strike (victim half
 // ellie-1hblunt-knee-bash-2-hit^breaker--npc-f, 1.7 s). NOBODY HAS SEEN THAT CLIP PLAY (no combo list of the game data references the move) - its own switch,
 // re-read every 2 s in the running game: t2r-duel-1hb-blow6-off.txt = blow 5 ends the chain. t2r-duel-1hb-strikes-ps32.txt = neither blow. Weapon damage as every blow.
-static int mdu_p33_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-duel-1hb-strikes-ps32.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: 1h blunt blows 5 / 6 (SP's breaker strikes, no knee state) %s (ps33)", o ? "OFF (t2r-duel-1hb-strikes-ps32.txt)" : "ON: after a landed light-4 the next press on the same partner starts the left backhand / its right twin, then the knee-free second strike (t2r-duel-1hb-blow6-off.txt = without it)"); v = o; } return v; }
-static int mdu_p33_b6_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-1hb-blow6-off.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static uint64_t g_p33_ender_ms; static int g_p33_done, g_p33_hand;   // the landed 1h blunt light-4, its strikes used, which hand the next blow 5 takes (0 left, 1 right)
+static int MduP33Old(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-duel-1hb-strikes-ps32.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: 1h blunt blows 5 / 6 (SP's breaker strikes, no knee state) %s (ps33)", o ? "OFF (t2r-duel-1hb-strikes-ps32.txt)" : "ON: after a landed light-4 the next press on the same partner starts the left backhand / its right twin, then the knee-free second strike (t2r-duel-1hb-blow6-off.txt = without it)");
+        v = o;
+    }
+    return v;
+}
+
+static int MduP33B6Off(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-1hb-blow6-off.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static uint64_t g_p33EnderMs;
+static int g_p33_done, g_p33_hand;      // the landed 1h blunt light-4, its strikes used, which hand the next blow 5 takes (0 left, 1 right)
 // 1 = fists-stun-combo-1 (fist blow 5), 2 = fists-stun-combo-2 (fist blow 6), 3 = a 1h blunt blow 5 (either hand), 4 = the 1h blunt blow 6, 0 = another row
-static int mdu_p32_row(int row) {
+static int MduP32Row(int row)
+{
     static int r1 = -2, r2 = -2, r3, r4, r5;
-    if (r1 == -2) { r1 = mdu_row_named("fists-stun-combo-1"); r2 = mdu_row_named("fists-stun-combo-2");
-                    r3 = mdu_row_named("1hblunt-stun-breaker-combo-left-1"); r4 = mdu_row_named("1hblunt-stun-breaker-combo-1"); r5 = mdu_row_named("1hblunt-stun-breaker-combo-2-breaker"); }
-    return row < 0 ? 0 : row == r1 ? 1 : row == r2 ? 2 : row == r3 || row == r4 ? 3 : row == r5 ? 4 : 0;
+    if (r1 == -2) {
+        r1 = MduRowNamed("fists-stun-combo-1");
+        r2 = MduRowNamed("fists-stun-combo-2");
+        r3 = MduRowNamed("1hblunt-stun-breaker-combo-left-1");
+        r4 = MduRowNamed("1hblunt-stun-breaker-combo-1");
+        r5 = MduRowNamed("1hblunt-stun-breaker-combo-2-breaker");
+    }
+    return row < 0 ? 0 : row == r1 ? 1 : row == r2 ? 2 : row == r3
+        || row == r4 ? 3 : row == r5 ? 4 : 0;
 }
-static int mdu_engaged(void) { return g_mdu.on && g_mdu.slot >= 0; }
-static int mdu_partner_slot(void) { return g_mdu.on ? g_mdu.slot : -1; }
-static int mdu_in_pair(void) { return g_mdu.on && g_mdu.pair_on && g_ps.role && g_ps.uid == g_mdu.ps_uid; }
+
+static int MduEngaged(void)
+{
+    return g_mdu.on && g_mdu.slot >= 0;
+}
+
+static int MduPartnerSlot(void)
+{
+    return g_mdu.on ? g_mdu.slot : -1;
+}
+
+static int MduInPair(void)
+{
+    return g_mdu.on && g_mdu.pair_on && g_ps.role
+        && g_ps.uid == g_mdu.ps_uid;
+}
+
 // melee_dodge.c mdg_busy (ps36): our body is the attacker half of our own duel -hit pair = the follow-through of a landed blow (no pin, parry / clash, finisher)
-static int mdu_att_hit_pair(void) {
-    static int old = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (old < 0 || n - at > 3000) { at = n; old = GetFileAttributesA("t2r-dodge-follow-ps35.txt") != INVALID_FILE_ATTRIBUTES; }
-    return !old && g_mdu.on && g_mdu.pair_on && g_mdu.pair_role == 1 && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid && g_ps.ent_att == SID_PLAYER && g_ps.kind == PS_CTXDOWN && g_ps.nseg <= 1
-           && mdu_move(g_ps.move) && !mdp_is_pair(g_mdu.pair_row) && !mpn_hold_att();
+static int MduAttHitPair(void)
+{
+    static int old = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (old < 0 || n - at > 3000) {
+        at = n;
+        old =
+            GetFileAttributesA("t2r-dodge-follow-ps35.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return !old && g_mdu.on && g_mdu.pair_on && g_mdu.pair_role == 1
+        && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid
+        && g_ps.ent_att == SID_PLAYER && g_ps.kind == PS_CTXDOWN
+        && g_ps.nseg <= 1 && MduMove(g_ps.move)
+        && !MdpIsPair(g_mdu.pair_row) && !MpnHoldAtt();
 }
+
 // Melee matrix case (1 hit, then aim somewhere else right away): the duel's camera lock (t2r-ext.c, force-melee-camera-target on the partner,
 // renewed EVERY frame from engage until the duel ends - up to MDU_IDLE_MS 2.5 s after the last blow) kept pulling the view onto the partner while the
 // player aimed elsewhere. Aiming is gunplay (the same rule as melee_spcam.c / cam2's aim gate): the first aim press of an engage drops the lock for the
 // rest of that engage (no re-lock snap back onto the partner when the aim is let go). t2r-duel-camlock-aim-old.txt = the old lock through aiming.
-static uint16_t g_mdu_camoff_uid;
-static int mdu_camlock_slot(void) {
-    int s = mdu_partner_slot();
-    if (s < 0) return -1;
-    if (g_mdu_camoff_uid && g_mdu_camoff_uid == g_mdu.uid) return -1;
-    static int old = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (old < 0 || n - at > 3000) { at = n; old = GetFileAttributesA("t2r-duel-camlock-aim-old.txt") != INVALID_FILE_ATTRIBUTES; }
+static uint16_t g_mduCamoffUid;
+static int MduCamlockSlot(void)
+{
+    int s = MduPartnerSlot();
+    if (s < 0)
+        return -1;
+    if (g_mduCamoffUid && g_mduCamoffUid == g_mdu.uid)
+        return -1;
+    static int old = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (old < 0 || n - at > 3000) {
+        at = n;
+        old =
+            GetFileAttributesA("t2r-duel-camlock-aim-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
     // (sprint too: a duel that ends by running away keeps the partner more than 3 m off for 300 ms first - the lock swung the camera round onto
     //  the partner behind us for that whole run-off. A sprint press is a disengage: the gameplay camera is ours from that frame.)
-    int aim = pad_cmd_on("aim"), spr = !aim && !g_mdu.sw_on && !g_mdu.pair_on && pad_cmd_on("sprint");
+    int aim = PadCmdOn("aim"), spr = !aim && !g_mdu.sw_on
+        && !g_mdu.pair_on && PadCmdOn("sprint");
     if (!old && (aim || spr)) {
-        g_mdu_camoff_uid = g_mdu.uid;
-        DULOG("DUEL: u%04x we %s - the duel camera lock on slot %d is dropped for the rest of this engage (%s owns the camera)", g_mdu.uid,
-              aim ? "aim" : "sprint", s, aim ? "gunplay" : "the run-off");
+        g_mduCamoffUid = g_mdu.uid;
+        DULOG
+            ("DUEL: u%04x we %s - the duel camera lock on slot %d is dropped for the rest of this engage (%s owns the camera)",
+             g_mdu.uid, aim ? "aim" : "sprint", s,
+             aim ? "gunplay" : "the run-off");
         return -1;
     }
     return s;
 }
-static void mdu_early_take(uint64_t now);   // (below: a windup press buffered at the contact)
-static int mdu_swinging(void) { return g_mdu.on && g_mdu.sw_on; }
-static uint64_t mdu_swing_t0(void) { return g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done ? g_mdu.sw_t0 : 0; }
-static int mdu_weapon_set(int set) { return set != MDU_FIST; }
-static int mdu_sharp(int set) { return set == MDU_1HBLADE || set == MDU_KNIFE; }
-static void dtl_dodge_cut(uint32_t slot);   // melee_duel_tl.c
-static void mdu_send(int op, const uint8_t *p, int n) {
-    if (!g_send_tramp || g_mdu.slot < 0) return;
-    uint8_t b[16] = {5, (uint8_t)op, (uint8_t)g_mdu.uid, (uint8_t)(g_mdu.uid >> 8)};
-    if (n > 12) n = 12;
-    if (n > 0) memcpy(b + 4, p, (size_t)n);
-    g_send_tramp(MSG_MEX, b, (uint64_t)(4 + n), (uint64_t)g_mdu.slot);
+
+static void MduEarlyTake(uint64_t now);       // (below: a windup press buffered at the contact)
+static int MduSwinging(void)
+{
+    return g_mdu.on && g_mdu.sw_on;
 }
+
+static uint64_t MduSwingT0(void)
+{
+    return g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done ? g_mdu.sw_t0 : 0;
+}
+
+static int MduWeaponSet(int set)
+{
+    return set != MDU_FIST;
+}
+
+static int MduSharp(int set)
+{
+    return set == MDU_1HBLADE || set == MDU_KNIFE;
+}
+
+static void DtlDodgeCut(uint32_t slot);       // melee_duel_tl.c
+static void MduSend(int op, const uint8_t *p, int n)
+{
+    if (!g_sendTramp || g_mdu.slot < 0)
+        return;
+    uint8_t b[16] =
+        { 5, (uint8_t) op, (uint8_t) g_mdu.uid,
+(uint8_t) (g_mdu.uid >> 8) };
+    if (n > 12)
+        n = 12;
+    if (n > 0)
+        memcpy(b + 4, p, (size_t) n);
+    g_sendTramp(MSG_MEX, b, (uint64_t) (4 + n), (uint64_t) g_mdu.slot);
+}
+
 // ---- the sound schedule (both screens)
 // SP plays the cloth swish of the swinging arm on EVERY melee swing (round3: sfx-gear-swish-cotton player x28 at r_elbow, from the clips' own
 // gear-effect-upper(gear-swish) events; the knife runs: x8 / x15) - in MP the puppets' / our duel swing clips do not fire it. Bank fol-cloth-upper is in the
 // global `hud` level (re/sp-parity.md). One per body per 300 ms. t2r-no-gear-swish.txt = off.
-static void mdu_gear_swish(uint64_t ent) {
-    static uint64_t last_ent, last_ms; static int nl, off = -1; static uint64_t chk;
+static void MduGearSwish(uint64_t ent)
+{
+    static uint64_t last_ent, last_ms;
+    static int nl, off = -1;
+    static uint64_t chk;
     uint64_t now = GetTickCount64();
-    if (off < 0 || now - chk > 2000) { chk = now; off = GetFileAttributesA("t2r-no-gear-swish.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off || !ent || ent == ~0ULL || (ent == last_ent && now - last_ms < 300)) return;
-    last_ent = ent; last_ms = now;
-    uint64_t a[5] = {fnv64("sfx-gear-swish-cotton"), ent, fnv64("r_elbow"), 0, 0};
-    uint64_t r = dc_call(fnv64("play-sound-at-joint"), 5, a);
-    if (LOGCAP(nl, 400)) xlog("DUEL: gear swish sfx-gear-swish-cotton on %s r_elbow -> %llx", ent == SID_PLAYER ? "us" : "the puppet", (unsigned long long)r);
+    if (off < 0 || now - chk > 2000) {
+        chk = now;
+        off =
+            GetFileAttributesA("t2r-no-gear-swish.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off || !ent || ent == ~0ULL
+        || (ent == last_ent && now - last_ms < 300))
+        return;
+    last_ent = ent;
+    last_ms = now;
+    uint64_t a[5] =
+        { FNV64("sfx-gear-swish-cotton"), ent, FNV64("r_elbow"), 0, 0 };
+    uint64_t r = DcCall(FNV64("play-sound-at-joint"), 5, a);
+    if (LOGCAP(nl, 400))
+        Xlog("DUEL: gear swish sfx-gear-swish-cotton on %s r_elbow -> %llx", ent == SID_PLAYER ? "us" : "the puppet", (unsigned long long) r);
 }
-static void mdu_cue(uint64_t at, int act, uint64_t ent, uint64_t w, int set, int slot) {
-    for (int i = 0; i < 12; i++) if (!g_mdu.q[i].at) { g_mdu.q[i].at = at ? at : 1; g_mdu.q[i].act = (int8_t)act; g_mdu.q[i].ent = ent; g_mdu.q[i].w = w; g_mdu.q[i].set = (int8_t)set; g_mdu.q[i].slot = (int8_t)slot; return; }
+
+static void MduCue(uint64_t at, int act, uint64_t ent, uint64_t w,
+                    int set, int slot)
+{
+    for (int i = 0; i < 12; i++)
+        if (!g_mdu.q[i].at) {
+            g_mdu.q[i].at = at ? at : 1;
+            g_mdu.q[i].act = (int8_t) act;
+            g_mdu.q[i].ent = ent;
+            g_mdu.q[i].w = w;
+            g_mdu.q[i].set = (int8_t) set;
+            g_mdu.q[i].slot = (int8_t) slot;
+            return;
+        }
 }
-static void mdu_cue_clear(void) { memset(g_mdu.q, 0, sizeof g_mdu.q); }
-static void mdu_fire(int i, uint64_t now) {
-    int act = g_mdu.q[i].act, set = g_mdu.q[i].set; uint64_t ent = g_mdu.q[i].ent, w = g_mdu.q[i].w; int late = (int)(now - g_mdu.q[i].at);
+
+static void MduCueClear(void)
+{
+    memset(g_mdu.q, 0, sizeof g_mdu.q);
+}
+
+static void MduFire(int i, uint64_t now)
+{
+    int act = g_mdu.q[i].act, set = g_mdu.q[i].set;
+    uint64_t ent = g_mdu.q[i].ent, w = g_mdu.q[i].w;
+    int late = (int) (now - g_mdu.q[i].at);
     g_mdu.q[i].at = 0;
-    if (!ent || ent == ~0ULL) return;
-    if (act != MDUA_IMPACT && late > 140) {   // (was 60: every remote pain vox arrived 79-110 ms late at ~80 ms one-way and was dropped)
-         DULOG("DUEL: sound %s dropped (%d ms late)", MDUA_NAME[act], late); return; }
+    if (!ent || ent == ~0ULL)
+        return;
+    if (act != MDUA_IMPACT && late > 140) {     // (was 60: every remote pain vox arrived 79-110 ms late at ~80 ms one-way and was dropped)
+        DULOG("DUEL: sound %s dropped (%d ms late)", MDUA_NAME[act], late);
+        return;
+    }
     switch (act) {
-    // ps32 (SP run: the attacker's vox on the stun strikes is vox-eff-gen-fight-give-lrg-short at +153 ms): our own blow 5 / 6 says it (a partner's replica cue does not know its row: give-med)
-    case MDUA_VOX: dm_say(ent, mdu_weapon_set(set) ? "vox-eff-gen-fight-give-wpn-med" : g_mdu.q[i].slot < 0 && g_mdu.sw_on && mdu_p32_row(g_mdu.sw_row) && mdu_p32_row(g_mdu.sw_row) <= 2 ? "vox-eff-gen-fight-give-lrg-short" : "vox-eff-gen-fight-give-med", VXE_GIVE); break;
+        // ps32 (SP run: the attacker's vox on the stun strikes is vox-eff-gen-fight-give-lrg-short at +153 ms): our own blow 5 / 6 says it (a partner's replica cue does not know its row: give-med)
+    case MDUA_VOX:
+        DmSay(ent,
+               MduWeaponSet(set) ? "vox-eff-gen-fight-give-wpn-med" :
+               g_mdu.q[i].slot < 0 && g_mdu.sw_on
+               && MduP32Row(g_mdu.sw_row)
+               && MduP32Row(g_mdu.sw_row) <=
+               2 ? "vox-eff-gen-fight-give-lrg-short" :
+               "vox-eff-gen-fight-give-med", VXE_GIVE);
+        break;
     case MDUA_SWISH:
         // (swings had no slash sounds; clip audio: 14 of 28 knife swings and 11 of 30 fist swings had no high-band transient at the swish time):
         // the knife duel rows passed the held weapon id (not a knife_weapon_id) and played sfx-unarmed-finisher-whoosh - SP's switchblade swing is
         // sfx-weapon-switchblade-whoosh at r_wrist (re/sp-sandbox-runs/2026-10-12-round3-abby-ellie.md: player x14). The knife set forces that event.
         // (the kick row's own whoosh: our running swing's row; a partner's kick comes through the replica cue with its row unknown here = the fist whoosh)
-        g_mdg_whoosh_kick = set == MDU_FIST && g_mdu.sw_on && g_mdu.q[i].slot < 0 && g_mdu.sw_row >= 0 && strstr(MDU_MOVES[g_mdu.sw_row].move, "kick") != NULL;
-        mdg_whiff_whoosh(ent, set == MDU_KNIFE ? fnv64("knife-survival-mel-player") : w, g_mdu.q[i].slot);
-        g_mdg_whoosh_kick = 0;
-        mdu_gear_swish(ent);
+        g_mdgWhooshKick = set == MDU_FIST && g_mdu.sw_on
+            && g_mdu.q[i].slot < 0 && g_mdu.sw_row >= 0
+            && strstr(MDU_MOVES[g_mdu.sw_row].move, "kick") != NULL;
+        MdgWhiffWhoosh(ent,
+                         set ==
+                         MDU_KNIFE ? FNV64("knife-survival-mel-player") :
+                         w, g_mdu.q[i].slot);
+        g_mdgWhooshKick = 0;
+        MduGearSwish(ent);
         break;
-    // ps32 (SP run, blows 5 / 6: victim take-med-blnt at the contact, take-face +35 ms; blow 6: take-lrg-blnt): the cue's slot carries 64 (blow 5) / 96 (blow 6), mdu_row_hz
-    case MDUA_PAIN1: dm_say(ent, set == MDU_FIST && g_mdu.q[i].slot >= 64 ? "vox-eff-gen-fight-take-med-blnt" : set == MDU_FIST ? "vox-eff-gen-fight-take-face" : mdu_sharp(set) ? "vox-eff-gen-fight-take-med-shrp" : "vox-eff-gen-fight-take-med-blnt", VXE_PAIN); break;
-    case MDUA_PAIN2: dm_say(ent, set == MDU_FIST && g_mdu.q[i].slot >= 96 ? "vox-eff-gen-fight-take-lrg-blnt" : set == MDU_FIST && g_mdu.q[i].slot >= 64 ? "vox-eff-gen-fight-take-face" : mdu_sharp(set) ? "vox-eff-gen-fight-take-med-shrp" : "vox-eff-gen-fight-take-med-blnt-gut", VXE_PAIN); break;
+        // ps32 (SP run, blows 5 / 6: victim take-med-blnt at the contact, take-face +35 ms; blow 6: take-lrg-blnt): the cue's slot carries 64 (blow 5) / 96 (blow 6), mdu_row_hz
+    case MDUA_PAIN1:
+        DmSay(ent, set == MDU_FIST
+               && g_mdu.q[i].slot >=
+               64 ? "vox-eff-gen-fight-take-med-blnt" : set ==
+               MDU_FIST ? "vox-eff-gen-fight-take-face" : MduSharp(set) ?
+               "vox-eff-gen-fight-take-med-shrp" :
+               "vox-eff-gen-fight-take-med-blnt", VXE_PAIN);
+        break;
+    case MDUA_PAIN2:
+        DmSay(ent, set == MDU_FIST
+               && g_mdu.q[i].slot >=
+               96 ? "vox-eff-gen-fight-take-lrg-blnt" : set == MDU_FIST
+               && g_mdu.q[i].slot >=
+               64 ? "vox-eff-gen-fight-take-face" : MduSharp(set) ?
+               "vox-eff-gen-fight-take-med-shrp" :
+               "vox-eff-gen-fight-take-med-blnt-gut", VXE_PAIN);
+        break;
     case MDUA_IMPACT:
         // ps32: SP plays sfx-unarmed-breaker-face-skin @headb at +33 ms on blows 5 / 6. The native sfx-unarmed-* events are silent in MP (melee_hitreact.c
         // mhr_punch_at: handle returned, no sound, although the level lists bank wpn-melee-unarmed), so every duel fist impact is a ripped TLOU2 punch
         // wave through the PCM mixer; blows 5 / 6 take the HEAVY waves (str 2 = the punch-face-finisher set) instead of the jab thuds. [TUNING ps32: which wave set]
-        if (set == MDU_FIST) { g_mhr_punch_thud = 1; mhr_punch_at(ent, g_mdu.q[i].slot >= 64 ? 2 : 1, g_mdu.q[i].slot >= 64 ? "duel contact, blow 5 / 6 (ps32)" : "duel contact"); g_mhr_punch_thud = 0; }
-        else if (set == MDU_KNIFE || knife_weapon_id(w)) knife_hit_native(ent, 0);
-        else {   // v5-sfx: the weapon's SP event (ctxdown.c mws_native) by the blow's tier / zone (mdu_contact_cues: slot carries 16 + tier * 4 + zone)
+        if (set == MDU_FIST) {
+            g_mhrPunchThud = 1;
+            MhrPunchAt(ent, g_mdu.q[i].slot >= 64 ? 2 : 1,
+                         g_mdu.q[i].slot >=
+                         64 ? "duel contact, blow 5 / 6 (ps32)" :
+                         "duel contact");
+            g_mhrPunchThud = 0;
+        } else if (set == MDU_KNIFE || KnifeWeaponId(w))
+            KnifeHitNative(ent, 0);
+        else {                  // v5-sfx: the weapon's SP event (ctxdown.c mws_native) by the blow's tier / zone (mdu_contact_cues: slot carries 16 + tier * 4 + zone)
             int hz = g_mdu.q[i].slot >= 16 ? g_mdu.q[i].slot - 16 : 0;
-            g_mws_tier = hz / 4; g_mws_zone = hz % 4;
-            melee_hit_fx(ent, w);
-            g_mws_tier = MWS_HIT; g_mws_zone = MWS_GUT;
+            g_mwsTier = hz / 4;
+            g_mws_zone = hz % 4;
+            MeleeHitFx(ent, w);
+            g_mwsTier = MWS_HIT;
+            g_mws_zone = MWS_GUT;
         }
         break;
     }
-    DULOG("DUEL: sound %s on %s fired (%+d ms vs its time)", MDUA_NAME[act], ent == SID_PLAYER ? "us" : "the puppet", late);
+    DULOG("DUEL: sound %s on %s fired (%+d ms vs its time)",
+          MDUA_NAME[act], ent == SID_PLAYER ? "us" : "the puppet", late);
 }
-static void mdu_sound_tick(uint64_t now) { for (int i = 0; i < 12; i++) if (g_mdu.q[i].at && now >= g_mdu.q[i].at) mdu_fire(i, now); }
+
+static void MduSoundTick(uint64_t now)
+{
+    for (int i = 0; i < 12; i++)
+        if (g_mdu.q[i].at && now >= g_mdu.q[i].at)
+            MduFire(i, now);
+}
+
 // the swing's effort vox + swish on `ent`, from the swing start t0: the clip's own event frames, clamped into SP's windows before the contact
-static void mdu_swing_cues(const mdu_row_t *m, uint64_t t0, uint64_t ent, uint64_t w, int slot) {
-    int tc = m->tc_ms, v = m->vox_ms >= 0 ? m->vox_ms : tc - 220, s = m->swish_ms >= 0 ? m->swish_ms : tc - 110;
+static void MduSwingCues(const MduRowT *m, uint64_t t0, uint64_t ent,
+                           uint64_t w, int slot)
+{
+    int tc = m->tc_ms, v = m->vox_ms >= 0 ? m->vox_ms : tc - 220, s =
+        m->swish_ms >= 0 ? m->swish_ms : tc - 110;
     v = v < tc - 290 ? tc - 290 : v > tc - 155 ? tc - 155 : v;
     s = s < tc - 170 ? tc - 170 : s > tc - 44 ? tc - 44 : s;
-    if (v < 0) v = 0;
-    if (s < 0) s = 0;
-    if (g_mdu_cue_k > 1.001f) { v = (int)((float)v * g_mdu_cue_k + 0.5f); s = (int)((float)s * g_mdu_cue_k + 0.5f); }   // (sptl: on the slowed clip's own frames)
-    mdu_cue(t0 + (uint64_t)v, MDUA_VOX, ent, w, m->set, slot);
-    mdu_cue(t0 + (uint64_t)s, MDUA_SWISH, ent, w, m->set, slot);
-    DULOG("DUEL: swing cues on %s: effort vox at +%d ms, swish at +%d ms (contact +%d; clip events vox %d / swish %d)", ent == SID_PLAYER ? "us" : "the puppet", v, s, tc, m->vox_ms, m->swish_ms);
+    if (v < 0)
+        v = 0;
+    if (s < 0)
+        s = 0;
+    if (g_mduCueK > 1.001f) {
+        v = (int) ((float) v * g_mduCueK + 0.5f);
+        s = (int) ((float) s * g_mduCueK + 0.5f);
+    }                           // (sptl: on the slowed clip's own frames)
+    MduCue(t0 + (uint64_t) v, MDUA_VOX, ent, w, m->set, slot);
+    MduCue(t0 + (uint64_t) s, MDUA_SWISH, ent, w, m->set, slot);
+    DULOG
+        ("DUEL: swing cues on %s: effort vox at +%d ms, swish at +%d ms (contact +%d; clip events vox %d / swish %d)",
+         ent == SID_PLAYER ? "us" : "the puppet", v, s, tc, m->vox_ms,
+         m->swish_ms);
 }
+
 // the contact's victim sounds on `vent` from the local contact time c
 // v5-sfx: the SP hit sound of a duel row (SP: re/melee-duel-sp-spec.md audio table + re/sp-sandbox-runs): light swings = -hit-gut (sfx-hammer-hit-gut,
 // sfx-club-1h-hit-gut, sfx-club-2h-hit-gut, sfx-hatchet-hit-gut), the combo's last swing = -breaker-face-skin (SP round2 F25588 sfx-hammer-breaker-face-skin-inf after
 // two -hit-face-skin), dodge / counter attacks = -hit-face-skin (gold standard 46.530 sfx-club-1h-hit-face-skin), the sprint opener = -hit-gut (43.175)
-static int g_mdu_hz = -1;     // the next mdu_contact_cues' hint: 16 + tier * 4 + zone (-1 = by nothing: hit-gut)
-static int mdu_row_hz(int row) {
-    if (row < 0 || row >= (int)MDU_MOVES_N) return 16 + MWS_HIT * 4 + MWS_GUT;
-    { int sr = mdu_p32_row(row); if (sr == 1 || sr == 2) return sr == 1 ? 64 : 96;   // ps32: fist blows 5 / 6 - their own pain / impact cues (mdu_fire); fists use no tier / zone
-      if (sr) return 16 + MWS_BREAKER * 4 + MWS_FACE; }                                // ps33: the 1h blunt strikes hit the head - the weapon's SP -breaker-face-skin event
-    const mdu_row_t *m = &MDU_MOVES[row];
-    if (m->kind == MDUK_DODGE_BACK || m->kind == MDUK_DODGE_FW) return 16 + MWS_HIT * 4 + MWS_FACE;
-    if (m->kind == MDUK_LIGHT && !m->next && m->step >= 3) return 16 + MWS_BREAKER * 4 + MWS_FACE;
+static int g_mduHz = -1;       // the next mdu_contact_cues' hint: 16 + tier * 4 + zone (-1 = by nothing: hit-gut)
+static int MduRowHz(int row)
+{
+    if (row < 0 || row >= (int) MDU_MOVES_N)
+        return 16 + MWS_HIT * 4 + MWS_GUT;
+    {
+        int sr = MduP32Row(row);
+        if (sr == 1 || sr == 2)
+            return sr == 1 ? 64 : 96;   // ps32: fist blows 5 / 6 - their own pain / impact cues (mdu_fire); fists use no tier / zone
+        if (sr)
+            return 16 + MWS_BREAKER * 4 + MWS_FACE;
+    }                           // ps33: the 1h blunt strikes hit the head - the weapon's SP -breaker-face-skin event
+    const MduRowT *m = &MDU_MOVES[row];
+    if (m->kind == MDUK_DODGE_BACK || m->kind == MDUK_DODGE_FW)
+        return 16 + MWS_HIT * 4 + MWS_FACE;
+    if (m->kind == MDUK_LIGHT && !m->next && m->step >= 3)
+        return 16 + MWS_BREAKER * 4 + MWS_FACE;
     return 16 + MWS_HIT * 4 + MWS_GUT;
 }
-static int mdu_row_of_cd(int pr) {   // the duel row whose -hit pair is CD_PAIRS[pr] ("md-<move>-hit")
-    if (pr < 0) return -1;
-    for (int i = 0; i < (int)MDU_MOVES_N; i++) if (g_mdu.mv_cd[i] == pr) return i;
+
+static int MduRowOfCd(int pr)
+{                               // the duel row whose -hit pair is CD_PAIRS[pr] ("md-<move>-hit")
+    if (pr < 0)
+        return -1;
+    for (int i = 0; i < (int) MDU_MOVES_N; i++)
+        if (g_mdu.mv_cd[i] == pr)
+            return i;
     return -1;
 }
-static void mdu_contact_cues(uint64_t c, uint64_t vent, uint64_t w, int set, int impact) {
-    int hz = g_mdu_hz >= 16 ? g_mdu_hz : 16 + MWS_HIT * 4 + MWS_GUT; g_mdu_hz = -1;
-    mdu_cue(c + 4, MDUA_PAIN1, vent, w, set, hz >= 64 ? hz : -1);   // (ps32: 64 / 96 = fist blow 5 / 6)
-    if (impact) mdu_cue(c + 35, MDUA_IMPACT, vent, w, set, hz);
-    mdu_cue(c + 40, MDUA_PAIN2, vent, w, set, hz >= 64 ? hz : -1);
+
+static void MduContactCues(uint64_t c, uint64_t vent, uint64_t w,
+                             int set, int impact)
+{
+    int hz = g_mduHz >= 16 ? g_mduHz : 16 + MWS_HIT * 4 + MWS_GUT;
+    g_mduHz = -1;
+    MduCue(c + 4, MDUA_PAIN1, vent, w, set, hz >= 64 ? hz : -1);       // (ps32: 64 / 96 = fist blow 5 / 6)
+    if (impact)
+        MduCue(c + 35, MDUA_IMPACT, vent, w, set, hz);
+    MduCue(c + 40, MDUA_PAIN2, vent, w, set, hz >= 64 ? hz : -1);
 }
+
 // ---- engagement
-static void mdu_reset(void) {
-    mdu_fw_end("the duel ended / broke", 1); mdu_fw_vic_clear("the duel ended / broke");   // (v5-finwind)
-    if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until) padinj_block("melee-attack", 0);
-    g_mdu_init_until = 0;                     // ps28: the initiative lock belongs to the duel
-    g_p31.gap_buf = 0; g_p31.gap_lock = 0;    // ps31: the 4th-hit gap's buffered press
-    g_mdu.sw_lethal = 0; g_mdu.sw_done = 0;   // A stale lethal flag of our own last swing ended every later duel as the hit player 15 ms in
-    g_mdu.slot = -1; g_mdu.step = 0; g_mdu.sw_on = 0; g_mdu.buf_at = 0; g_mdu.win_end = 0; g_mdu.lock_until = 0; g_mdu.next_move = 0; g_mdu.far_since = 0; g_mdu.pair_on = 0; g_mdu.n_blows = 0; g_mdu.hold_until = 0;
+static void MduReset(void)
+{
+    MduFwEnd("the duel ended / broke", 1);
+    MduFwVicClear("the duel ended / broke"); // (v5-finwind)
+    if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until)
+        PadinjBlock("melee-attack", 0);
+    g_mduInitUntil = 0;       // ps28: the initiative lock belongs to the duel
+    g_p31.gap_buf = 0;
+    g_p31.gap_lock = 0;         // ps31: the 4th-hit gap's buffered press
+    g_mdu.sw_lethal = 0;
+    g_mdu.sw_done = 0;          // A stale lethal flag of our own last swing ended every later duel as the hit player 15 ms in
+    g_mdu.slot = -1;
+    g_mdu.step = 0;
+    g_mdu.sw_on = 0;
+    g_mdu.buf_at = 0;
+    g_mdu.win_end = 0;
+    g_mdu.lock_until = 0;
+    g_mdu.next_move = 0;
+    g_mdu.far_since = 0;
+    g_mdu.pair_on = 0;
+    g_mdu.n_blows = 0;
+    g_mdu.hold_until = 0;
 }
-static void mdu_end(const char *why, int notify, int op) {
-    if (g_mdu.slot < 0) return;
-    uint64_t now = GetTickCount64(); int s = g_mdu.slot;
-    if (notify) mdu_send(op, NULL, 0);
-    if (op == MDUO_BREAK && g_mdu.pair_on && g_ps.role && g_ps.uid == g_mdu.ps_uid) psync_abort("duel broken", 1);
+
+static void MduEnd(const char *why, int notify, int op)
+{
+    if (g_mdu.slot < 0)
+        return;
+    uint64_t now = GetTickCount64();
+    int s = g_mdu.slot;
+    if (notify)
+        MduSend(op, NULL, 0);
+    if (op == MDUO_BREAK && g_mdu.pair_on && g_ps.role
+        && g_ps.uid == g_mdu.ps_uid)
+        PsyncAbort("duel broken", 1);
     // B 23953-23987: the partner ended a duel 15-60 ms in with no blow (it was down / dying: "we are down / dead") and our next press engaged
     // again at once - six lethal finisher windups in 1 s, each cut after 31 ms (the intro twitching on us). A refused engage like that cools down too.
-    int refused_engage = op != MDUO_BREAK && g_mdu.n_blows == 0 && now - g_mdu.eng_ms < 400 && strstr(why, "partner ended");
-    g_mdu.cool_until[s] = op == MDUO_BREAK ? now + MDU_COOL_MS : refused_engage ? now + 1500 : 0;   // an idle END + cooldown made the next swings (and the downing blow) plain free swings
-    DULOG("DUEL: u%04x %s with slot %d (%s) after %llu ms, %d blow(s); cooldown %d ms on this pair", g_mdu.uid, op == MDUO_BREAK ? "BROKEN" : "END", s, why, (unsigned long long)(now - g_mdu.eng_ms), g_mdu.n_blows, MDU_COOL_MS);
-    mdu_reset();
+    int refused_engage = op != MDUO_BREAK && g_mdu.n_blows == 0
+        && now - g_mdu.eng_ms < 400 && strstr(why, "partner ended");
+    g_mdu.cool_until[s] = op == MDUO_BREAK ? now + MDU_COOL_MS : refused_engage ? now + 1500 : 0;       // an idle END + cooldown made the next swings (and the downing blow) plain free swings
+    DULOG
+        ("DUEL: u%04x %s with slot %d (%s) after %llu ms, %d blow(s); cooldown %d ms on this pair",
+         g_mdu.uid, op == MDUO_BREAK ? "BROKEN" : "END", s, why,
+         (unsigned long long) (now - g_mdu.eng_ms), g_mdu.n_blows,
+         MDU_COOL_MS);
+    MduReset();
 }
-static int mdu_partner_ok(int s) { return s >= 0 && s < T2R_MAX_PEERS && mex_peer_ok((uint32_t)s); }
-static int mdu_cooling(int s, uint64_t now) { return s >= 0 && s < T2R_MAX_PEERS && now < g_mdu.cool_until[s]; }
-static void mdu_engage(int s, const char *how, uint16_t uid) {
+
+static int MduPartnerOk(int s)
+{
+    return s >= 0 && s < T2R_MAX_PEERS && MexPeerOk((uint32_t) s);
+}
+
+static int MduCooling(int s, uint64_t now)
+{
+    return s >= 0 && s < T2R_MAX_PEERS && now < g_mdu.cool_until[s];
+}
+
+static void MduEngage(int s, const char *how, uint16_t uid)
+{
     uint64_t now = GetTickCount64();
-    g_mdu.slot = s; g_mdu.uid = uid ? uid : (uint16_t)((now & 0x7fff) | 1); g_mdu.eng_ms = now; g_mdu.act_ms = now; g_mdu.step = 0; g_mdu.n_blows = 0;
-    bq_note_engage(s, !strcmp(how, "our swing"), g_mdu.uid, now);   // melee_beat.c: the first engage of the pair makes the beat duel record (owner = the engager); later ones keep it
-    DULOG("DUEL: u%04x ENGAGE with slot %d (%s): SP melee camera + fov on, third-party hit breaks it, %d ms re-engage cooldown after", g_mdu.uid, s, how, MDU_COOL_MS);
+    g_mdu.slot = s;
+    g_mdu.uid = uid ? uid : (uint16_t) ((now & 0x7fff) | 1);
+    g_mdu.eng_ms = now;
+    g_mdu.act_ms = now;
+    g_mdu.step = 0;
+    g_mdu.n_blows = 0;
+    BqNoteEngage(s, !strcmp(how, "our swing"), g_mdu.uid, now);       // melee_beat.c: the first engage of the pair makes the beat duel record (owner = the engager); later ones keep it
+    DULOG
+        ("DUEL: u%04x ENGAGE with slot %d (%s): SP melee camera + fov on, third-party hit breaks it, %d ms re-engage cooldown after",
+         g_mdu.uid, s, how, MDU_COOL_MS);
 }
+
 // the nearest standing enemy within MDU_REACH inside the soft-lock arc (or the partner, any angle, while engaged); reach > that = a lethal swing's lunge reach
-static int mdu_cand_r(float *dist, float reach) {
-    float mb[16]; const float *ml = uc4_my_loc(mb);
-    if (!ml || !__builtin_isfinite(ml[0])) return -1;
-    float fx = 2.0f * (ml[4] * ml[6] + ml[7] * ml[5]), fz = 1.0f - 2.0f * (ml[4] * ml[4] + ml[5] * ml[5]), fl = __builtin_sqrtf(fx * fx + fz * fz);
-    if (!(fl > 1e-3f)) return -1;
-    uint64_t now = GetTickCount64(); int best = -1; float bd = 1e9f;
+static int MduCandR(float *dist, float reach)
+{
+    float mb[16];
+    const float *ml = Uc4MyLoc(mb);
+    if (!ml || !__builtin_isfinite(ml[0]))
+        return -1;
+    float fx = 2.0f * (ml[4] * ml[6] + ml[7] * ml[5]), fz =
+        1.0f - 2.0f * (ml[4] * ml[4] + ml[5] * ml[5]), fl =
+        __builtin_sqrtf(fx * fx + fz * fz);
+    if (!(fl > 1e-3f))
+        return -1;
+    uint64_t now = GetTickCount64();
+    int best = -1;
+    float bd = 1e9f;
     for (uint32_t s = 0; s < T2R_MAX_PEERS; s++) {
-        if (g_mdu.slot >= 0 && (int)s != g_mdu.slot) continue;
+        if (g_mdu.slot >= 0 && (int) s != g_mdu.slot)
+            continue;
         // Spamming melee made every second hit work only: the next combo step starts ~340 ms into our own -hit pair, which still
         // runs on the partner (953 ms) - psync_busy_slot refused every second blow as "not in reach" and it played as an unpaired swing.
         // Our own duel pair on the partner is replaced by the next blow's ABORT + START, so it does not count as busy.
-        int own = g_mdu.slot == (int)s && g_mdu.pair_on;
-        if (!mdu_partner_ok((int)s) || (g_mdu.slot < 0 && mdu_cooling((int)s, now)) || (!own && (psync_busy_slot(s) || gx_busy_slot(s)))) continue;
-        uint64_t h = puppet_handle(s); float pb[16]; const float *pl = h ? puppet_locator(h, pb) : NULL;
-        if (!pl || !__builtin_isfinite(pl[0])) continue;
-        float dx = pl[0] - ml[0], dz = pl[2] - ml[2], d = __builtin_sqrtf(dx * dx + dz * dz);
-        float lim = g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH; if (reach > lim) lim = reach;
-        if (d > lim || d < 0.05f || __builtin_fabsf(pl[1] - ml[1]) > 1.0f) continue;   // engaged: up to the break distance
+        int own = g_mdu.slot == (int) s && g_mdu.pair_on;
+        if (!MduPartnerOk((int) s)
+            || (g_mdu.slot < 0 && MduCooling((int) s, now)) || (!own
+                                                                 &&
+                                                                 (PsyncBusySlot
+                                                                  (s)
+                                                                  ||
+                                                                  GxBusySlot
+                                                                  (s))))
+            continue;
+        uint64_t h = PuppetHandle(s);
+        float pb[16];
+        const float *pl = h ? PuppetLocator(h, pb) : NULL;
+        if (!pl || !__builtin_isfinite(pl[0]))
+            continue;
+        float dx = pl[0] - ml[0], dz = pl[2] - ml[2], d =
+            __builtin_sqrtf(dx * dx + dz * dz);
+        float lim = g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH;
+        if (reach > lim)
+            lim = reach;
+        if (d > lim || d < 0.05f || __builtin_fabsf(pl[1] - ml[1]) > 1.0f)
+            continue;           // engaged: up to the break distance
         // (20 of 27 held bat / machete swings found the enemy 'behind' (cos -0.87..-1.00) - the NPC tell's own align turned the body - and
         // went the plain engine path, hitting from behind with no dodge rule): the held swing right after its tell engages the tell's target whatever the facing
         // (the duel swing's turn faces it within 100 ms). t2r-duel-tell-cone.txt = old.
-        int tell_tgt = g_npcw_tgt_slot == (int)s && g_npcw_tgt_ms && now - g_npcw_tgt_ms < 400 && GetFileAttributesA("t2r-duel-tell-cone.txt") == INVALID_FILE_ATTRIBUTES;
-        if (g_mdu.slot < 0 && !tell_tgt && (fx * dx + fz * dz) / (fl * d) < MDU_CONE_COS) continue;
-        if (d < bd) { bd = d; best = (int)s; }
+        int tell_tgt = g_npcwTgtSlot == (int) s && g_npcwTgtMs
+            && now - g_npcwTgtMs < 400
+            && GetFileAttributesA("t2r-duel-tell-cone.txt") ==
+            INVALID_FILE_ATTRIBUTES;
+        if (g_mdu.slot < 0 && !tell_tgt
+            && (fx * dx + fz * dz) / (fl * d) < MDU_CONE_COS)
+            continue;
+        if (d < bd) {
+            bd = d;
+            best = (int) s;
+        }
     }
-    if (best >= 0 && dist) *dist = bd;
+    if (best >= 0 && dist)
+        *dist = bd;
     return best;
 }
-static int mdu_cand(float *dist) { return mdu_cand_r(dist, 0.0f); }
+
+static int MduCand(float *dist)
+{
+    return MduCandR(dist, 0.0f);
+}
+
 // our swing's blow downs slot s (the victim's NET hp decides, the puppet's own hp stays 100)
 // ps47 (no finisher played out despite there being space for one; log [15831]-[15878]): the victim's NET hp (peer +0xa5) lags
 // one blow - at the 6th fist swing it still read 32 (4 blows) after 5 landed blows, so the lethal swing was not flagged: no finisher pick, the blow downed them
 // plainly. A ledger of the damage WE sent that the net hp does not show yet: pending = sent - (seen drop since the send), cleared after 1.5 s or when the
 // net hp catches up. Effective hp = net hp - pending. t2r-hp-ledger-ps47-old.txt = old (net hp only).
-static struct { float seen, pend; uint64_t ms; } g_mled47[T2R_MAX_PEERS];
-static int mled47_off(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-hp-ledger-ps47-old.txt") != INVALID_FILE_ATTRIBUTES; } return off; }
-static float mled47_eff(int s, float nh) {
-    if (s < 0 || s >= T2R_MAX_PEERS || nh <= 0.0f || mled47_off()) return nh;
+static struct {
+    float seen, pend;
+    uint64_t ms;
+} g_mled47[T2R_MAX_PEERS];
+static int Mled47Off(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-hp-ledger-ps47-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return off;
+}
+
+static float Mled47Eff(int s, float nh)
+{
+    if (s < 0 || s >= T2R_MAX_PEERS || nh <= 0.0f || Mled47Off())
+        return nh;
     uint64_t now = GetTickCount64();
     if (g_mled47[s].pend > 0.0f) {
-        if (now - g_mled47[s].ms > 1500 || nh > g_mled47[s].seen + 0.5f) g_mled47[s].pend = 0.0f;   // stale / healed / respawned
-        else if (nh < g_mled47[s].seen - 0.5f) { g_mled47[s].pend -= g_mled47[s].seen - nh; if (g_mled47[s].pend < 0.0f) g_mled47[s].pend = 0.0f; }
+        if (now - g_mled47[s].ms > 1500 || nh > g_mled47[s].seen + 0.5f)
+            g_mled47[s].pend = 0.0f;    // stale / healed / respawned
+        else if (nh < g_mled47[s].seen - 0.5f) {
+            g_mled47[s].pend -= g_mled47[s].seen - nh;
+            if (g_mled47[s].pend < 0.0f)
+                g_mled47[s].pend = 0.0f;
+        }
     }
     g_mled47[s].seen = nh;
     return g_mled47[s].pend > 0.0f ? nh - g_mled47[s].pend : nh;
 }
-static void mled47_sent(int s, float nh, float dmg) {
-    if (s < 0 || s >= T2R_MAX_PEERS || nh <= 0.0f || dmg <= 0.0f) return;
-    mled47_eff(s, nh);
-    g_mled47[s].pend += dmg; g_mled47[s].ms = GetTickCount64();
+
+static void Mled47Sent(int s, float nh, float dmg)
+{
+    if (s < 0 || s >= T2R_MAX_PEERS || nh <= 0.0f || dmg <= 0.0f)
+        return;
+    Mled47Eff(s, nh);
+    g_mled47[s].pend += dmg;
+    g_mled47[s].ms = GetTickCount64();
 }
+
 // The dodge counter inside a duel (mdu_dc_route: SP's dodge attack as a duel hit) deals DC_COUNTER_DMG (20), not the weapon's blow, and its
 // lethal check uses that value - a counter that would down the victim is a LETHAL swing, so the duel's SP finisher plays instead of the -hit pair.
-static struct { uint64_t ms; int row; } g_mdu_dc;
-static int mdu_dc_swing(void) { return g_mdu_dc.ms && GetTickCount64() - g_mdu_dc.ms < 1500 && GetFileAttributesA("t2r-dc-weapon-dmg.txt") == INVALID_FILE_ATTRIBUTES; }
-static int mdu_blow_lethal(int s, uint64_t h) {
-    uint8_t *vp = mdg_peer((uint32_t)s); float nh = vp && !IsBadReadPtr(vp + 0xa5, 4) ? *(float *)(vp + 0xa5) : -1.0f;
-    { float e = mled47_eff(s, nh); if (e != nh) { static int nl; if (LOGCAP(nl, 200)) DULOG("DUEL: ps47 slot %d hp ledger: net hp %.0f, our blows not on it yet %.0f -> %.0f for the lethal check", s, (double)nh, (double)(nh - e), (double)e); nh = e; } }
-    float vhp = nh > 0.0f ? nh : puppet_hp((uint32_t)s, h), dmg = dc_weapon() == fnv64("abby-unarmed") ? FIST_DAMAGE : melee_dmg_now();
-    if (mdu_dc_swing()) dmg = DC_COUNTER_DMG;
+static struct {
+    uint64_t ms;
+    int row;
+} g_mduDc;
+static int MduDcSwing(void)
+{
+    return g_mduDc.ms && GetTickCount64() - g_mduDc.ms < 1500
+        && GetFileAttributesA("t2r-dc-weapon-dmg.txt") ==
+        INVALID_FILE_ATTRIBUTES;
+}
+
+static int MduBlowLethal(int s, uint64_t h)
+{
+    uint8_t *vp = MdgPeer((uint32_t) s);
+    float nh = vp
+        && !IsBadReadPtr(vp + 0xa5, 4) ? *(float *) (vp + 0xa5) : -1.0f;
+    {
+        float e = Mled47Eff(s, nh);
+        if (e != nh) {
+            static int nl;
+            if (LOGCAP(nl, 200))
+                DULOG
+                    ("DUEL: ps47 slot %d hp ledger: net hp %.0f, our blows not on it yet %.0f -> %.0f for the lethal check",
+                     s, (double) nh, (double) (nh - e), (double) e);
+            nh = e;
+        }
+    }
+    float vhp = nh > 0.0f ? nh : PuppetHp((uint32_t) s, h), dmg =
+        DcWeapon() ==
+        FNV64("abby-unarmed") ? FIST_DAMAGE : MeleeDmgNow();
+    if (MduDcSwing())
+        dmg = DC_COUNTER_DMG;
     return vhp > 0.0f && vhp - dmg <= 1.0f;
 }
+
 // ---- the swing (attacker)
 // the pair's authored root distance at its first frame (the contact): the clips' own align
-static float mdu_auth_dist(int cd, uint64_t vh) {
+static float MduAuthDist(int cd, uint64_t vh)
+{
     float cv[8], ca[8];
-    if (cd < 0 || !cd_offset_at(vh, CD_VIC0(cd), 0.0f, cv) || !cd_offset_at(SID_PLAYER, CD_ATT0(cd), 0.0f, ca)) return 0.0f;
-    return __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) + (ca[2] - cv[2]) * (ca[2] - cv[2]));
+    if (cd < 0 || !CdOffsetAt(vh, CD_VIC0(cd), 0.0f, cv)
+        || !CdOffsetAt(SID_PLAYER, CD_ATT0(cd), 0.0f, ca))
+        return 0.0f;
+    return __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) +
+                           (ca[2] - cv[2]) * (ca[2] - cv[2]));
 }
+
 // the swing clip's own root travel from its start to t (8 samples up to the contact, xz)
-static void mdu_sample_travel(const mdu_row_t *m) {
-    float c0[8], c[8]; memset(g_mdu.sw_F, 0, sizeof g_mdu.sw_F);
-    if (cd_offset_at(SID_PLAYER, m->swing, 0.0f, c0))
+static void MduSampleTravel(const MduRowT *m)
+{
+    float c0[8], c[8];
+    memset(g_mdu.sw_F, 0, sizeof g_mdu.sw_F);
+    if (CdOffsetAt(SID_PLAYER, m->swing, 0.0f, c0))
         for (int k = 1; k <= 8; k++) {
-            float p = (float)m->tc_ms * (float)k / 8000.0f;
-            if (!cd_offset_at(SID_PLAYER, m->swing, p, c)) { g_mdu.sw_F[k] = g_mdu.sw_F[k - 1]; continue; }
-            g_mdu.sw_F[k] = __builtin_sqrtf((c[0] - c0[0]) * (c[0] - c0[0]) + (c[2] - c0[2]) * (c[2] - c0[2]));
+            float p = (float) m->tc_ms * (float) k / 8000.0f;
+            if (!CdOffsetAt(SID_PLAYER, m->swing, p, c)) {
+                g_mdu.sw_F[k] = g_mdu.sw_F[k - 1];
+                continue;
+            }
+            g_mdu.sw_F[k] =
+                __builtin_sqrtf((c[0] - c0[0]) * (c[0] - c0[0]) +
+                                (c[2] - c0[2]) * (c[2] - c0[2]));
         }
     // v5-feel3: the runtime sample above reads 1.98 / 1.93 / 2.67 m of root travel to the contact for the fist jabs 1 / 2 / 3 on every
     // swing (A 'clip root travel to contact 1.98 m', 7-10 m/s), while the same clips' align channel decoded offline (tools/mv3/gen_moves.py,
     // mv3_moves.h MV3_MOVES_RM: abby-fist-combo-punch-1--abby 0.39 m at 100 ms, ~0.87 m at the 267 ms contact, 0.74 m over the whole clip) is under
     // half of that. The warp's curve D(t) is the clip's own travel SHAPE (x = travel(t) / travel(contact)): with the wrong curve the body's approach
     // did not follow the legs' steps. The authored curve is used where the table has the clip. Opt-out t2r-duel-travel-runtime.txt (re-read every 2 s).
-    static uint64_t cfg; static int rt = -1;
+    static uint64_t cfg;
+    static int rt = -1;
     uint64_t now = GetTickCount64();
-    if (rt < 0 || now - cfg >= 2000) { cfg = now; int o = GetFileAttributesA("t2r-duel-travel-runtime.txt") != INVALID_FILE_ATTRIBUTES; if (o != rt) xlog("DUEL: swing travel curve %s", o ? "= the runtime align sample (t2r-duel-travel-runtime.txt)" : "= the clip's authored root motion (mv3_moves.h) where the table has the clip"); rt = o; }
-    if (rt || !m->swing) return;
+    if (rt < 0 || now - cfg >= 2000) {
+        cfg = now;
+        int o =
+            GetFileAttributesA("t2r-duel-travel-runtime.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != rt)
+            Xlog("DUEL: swing travel curve %s",
+                 o ?
+                 "= the runtime align sample (t2r-duel-travel-runtime.txt)"
+                 :
+                 "= the clip's authored root motion (mv3_moves.h) where the table has the clip");
+        rt = o;
+    }
+    if (rt || !m->swing)
+        return;
     int mi = -1;
-    for (int i = 0; i < MV3_MOVES_COUNT; i++) if (MV3_MOVES[i].name && !strcmp(MV3_MOVES[i].name, m->swing)) { mi = i; break; }
-    if (mi < 0 || MV3_MOVES[mi].dur_f <= 0) { static int nl; if (LOGCAP(nl, 20)) xlog("DUEL: swing travel of %s: not in the authored table - the runtime sample (%.2f m to the contact) stays", m->swing, (double)g_mdu.sw_F[8]); return; }
-    float run8 = g_mdu.sw_F[8], dur = (float)MV3_MOVES[mi].dur_f, F[9] = {0};
+    for (int i = 0; i < MV3_MOVES_COUNT; i++)
+        if (MV3_MOVES[i].name && !strcmp(MV3_MOVES[i].name, m->swing)) {
+            mi = i;
+            break;
+        }
+    if (mi < 0 || MV3_MOVES[mi].dur_f <= 0) {
+        static int nl;
+        if (LOGCAP(nl, 20))
+            Xlog("DUEL: swing travel of %s: not in the authored table - the runtime sample (%.2f m to the contact) stays", m->swing, (double) g_mdu.sw_F[8]);
+        return;
+    }
+    float run8 = g_mdu.sw_F[8], dur = (float) MV3_MOVES[mi].dur_f, F[9] =
+        { 0 };
     for (int k = 1; k <= 8; k++) {
-        float mf = (float)m->tc_ms * (float)k / 8.0f * 0.06f;                 // sim frames (60 Hz)
-        float p = mf * (float)MV3_RM_N / dur; if (p > (float)MV3_RM_N) p = (float)MV3_RM_N;
-        int j = (int)p; float fr = p - (float)j;                             // (sample j - 1 sits at frame j * dur / N, as mv3_move_rm_at)
-        float f0 = j ? MV3_MOVES_RM[mi][j - 1][0] : 0.0f, s0 = j ? MV3_MOVES_RM[mi][j - 1][1] : 0.0f;
-        float f1 = j < MV3_RM_N ? MV3_MOVES_RM[mi][j][0] : f0, s1 = j < MV3_RM_N ? MV3_MOVES_RM[mi][j][1] : s0;
+        float mf = (float) m->tc_ms * (float) k / 8.0f * 0.06f; // sim frames (60 Hz)
+        float p = mf * (float) MV3_RM_N / dur;
+        if (p > (float) MV3_RM_N)
+            p = (float) MV3_RM_N;
+        int j = (int) p;
+        float fr = p - (float) j;       // (sample j - 1 sits at frame j * dur / N, as mv3_move_rm_at)
+        float f0 = j ? MV3_MOVES_RM[mi][j - 1][0] : 0.0f, s0 =
+            j ? MV3_MOVES_RM[mi][j - 1][1] : 0.0f;
+        float f1 = j < MV3_RM_N ? MV3_MOVES_RM[mi][j][0] : f0, s1 =
+            j < MV3_RM_N ? MV3_MOVES_RM[mi][j][1] : s0;
         float fw = (f0 + (f1 - f0) * fr) * 0.01f, sd = (s0 + (s1 - s0) * fr) * 0.01f;   // (the table is in cm)
         F[k] = __builtin_sqrtf(fw * fw + sd * sd);
-        if (F[k] < F[k - 1]) F[k] = F[k - 1];                                // (progress only: a clip settling back does not pull the body away)
+        if (F[k] < F[k - 1])
+            F[k] = F[k - 1];    // (progress only: a clip settling back does not pull the body away)
     }
-    if (!(F[8] > 0.05f)) return;
+    if (!(F[8] > 0.05f))
+        return;
     memcpy(g_mdu.sw_F, F, sizeof F);
-    static uint64_t logged[8]; static int nlog; uint64_t key = fnv64(m->swing); int seen = 0;
-    for (int i = 0; i < 8; i++) if (logged[i] == key) seen = 1;
-    if (!seen) { logged[nlog++ & 7] = key;
-        xlog("DUEL: swing travel of %s: authored root motion %.2f m to the contact at %d ms (%.2f m at 1/4, %.2f m at 1/2), the runtime align sample read %.2f m - the authored curve drives the approach", m->swing,
-             (double)F[8], m->tc_ms, (double)F[2], (double)F[4], (double)run8); }
+    static uint64_t logged[8];
+    static int nlog;
+    uint64_t key = FNV64(m->swing);
+    int seen = 0;
+    for (int i = 0; i < 8; i++)
+        if (logged[i] == key)
+            seen = 1;
+    if (!seen) {
+        logged[nlog++ & 7] = key;
+        Xlog("DUEL: swing travel of %s: authored root motion %.2f m to the contact at %d ms (%.2f m at 1/4, %.2f m at 1/2), the runtime align sample read %.2f m - the authored curve drives the approach", m->swing, (double) F[8], m->tc_ms, (double) F[2], (double) F[4], (double) run8);
+    }
 }
-static float mdu_travel_at(float ms, int tc) {
-    float x = tc > 0 ? ms * 8.0f / (float)tc : 8.0f;
-    if (x <= 0.0f) return 0.0f;
-    if (x >= 8.0f) return g_mdu.sw_F[8];
-    int i = (int)x; float f = x - (float)i; return g_mdu.sw_F[i] + (g_mdu.sw_F[i + 1] - g_mdu.sw_F[i]) * f;
+
+static float MduTravelAt(float ms, int tc)
+{
+    float x = tc > 0 ? ms * 8.0f / (float) tc : 8.0f;
+    if (x <= 0.0f)
+        return 0.0f;
+    if (x >= 8.0f)
+        return g_mdu.sw_F[8];
+    int i = (int) x;
+    float f = x - (float) i;
+    return g_mdu.sw_F[i] + (g_mdu.sw_F[i + 1] - g_mdu.sw_F[i]) * f;
 }
+
 // ---- beat 4: the lethal blow is an SP finisher (tools/mv3/gen_duel_fin.py rows "mf-<SP move>", ctxdown.c cd_fin_pick / cd_upg_go; final blows were silent and lacked
 // the weight of SP final blows, so both Ellie and Abby use the SP final-blow anims). Picked at the swing start (needs the victim's side and our weapon), played at the contact.
-static int g_mdu_fin = -1, g_mdu_fin_try;      // the picked finisher's CD_PAIRS row (-1 = none: the engine contact + the normal Melee Down take the blow); pg_gate retries at the contact
+static int g_mduFin = -1, g_mdu_fin_try;       // the picked finisher's CD_PAIRS row (-1 = none: the engine contact + the normal Melee Down take the blow); pg_gate retries at the contact
 // The engine probe (dc_probe) answers only for NPC-class objects - never for a player puppet (ctxdown: "the puppet is not an NPC class object"),
 // so the steer never fired. Our own fan: 12 static-world rays (every 30 deg, 1.8 m) round the duel opponent at knee
 // height (0.45 m: walls AND half walls / low cover), kicked every 4th frame, read the next; the last answer is kept with the spot it was cast from.
 #define MDW_N 12
-#define MDW_LEN 3.6f        // (the finisher pre-check: a haymaker victim travels 2.6 m + the lying body)
-static struct { uint64_t j[MDW_N]; float o[3], d[MDW_N]; int slot, pend; uint64_t f, ms; } g_mdwf = {.slot = -1};
-static void mdu_wallfan_tick(void) {
+#define MDW_LEN 3.6f            // (the finisher pre-check: a haymaker victim travels 2.6 m + the lying body)
+static struct {
+    uint64_t j[MDW_N];
+    float o[3], d[MDW_N];
+    int slot, pend;
+    uint64_t f, ms;
+} g_mdwf = {.slot = -1 };
+
+static void MduWallfanTick(void)
+{
     if (g_mdwf.pend) {
-        if (g_frame <= g_mdwf.f) return;
-        float bb[16]; const float *ml = player_locator(bb);
+        if (g_frame <= g_mdwf.f)
+            return;
+        float bb[16];
+        const float *ml = PlayerLocator(bb);
         for (int k = 0; k < MDW_N; k++) {
-            float rt = ray_t(g_mdwf.j[k]); g_mdwf.j[k] = 0;
-            float a = (float)k * (6.2831853f / MDW_N), d = rt >= 0.0f && rt <= 1.0f ? rt * MDW_LEN : 9.0f;
-            if (d < 9.0f && ml) {      // our own capsule is no wall
-                float hx = g_mdwf.o[0] + __builtin_sinf(a) * d - ml[0], hz = g_mdwf.o[2] + __builtin_cosf(a) * d - ml[2];
-                if (hx * hx + hz * hz < 0.45f * 0.45f) d = 9.0f;
+            float rt = RayT(g_mdwf.j[k]);
+            g_mdwf.j[k] = 0;
+            float a = (float) k * (6.2831853f / MDW_N), d = rt >= 0.0f
+                && rt <= 1.0f ? rt * MDW_LEN : 9.0f;
+            if (d < 9.0f && ml) {       // our own capsule is no wall
+                float hx =
+                    g_mdwf.o[0] + __builtin_sinf(a) * d - ml[0], hz =
+                    g_mdwf.o[2] + __builtin_cosf(a) * d - ml[2];
+                if (hx * hx + hz * hz < 0.45f * 0.45f)
+                    d = 9.0f;
             }
-            if (d < 0.40f) d = 9.0f;     // (0.27 m hits = inside the victim's own body / its carried props - every finisher was refused)
+            if (d < 0.40f)
+                d = 9.0f;       // (0.27 m hits = inside the victim's own body / its carried props - every finisher was refused)
             g_mdwf.d[k] = d;
         }
-        g_mdwf.pend = 0; g_mdwf.ms = GetTickCount64();
+        g_mdwf.pend = 0;
+        g_mdwf.ms = GetTickCount64();
         return;
     }
-    if (g_frame & 3) return;
+    if (g_frame & 3)
+        return;
     // the duel opponent, else the nearest enemy within 4 m (a lethal swing outside a duel picks its finisher too)
-    int sl = g_mdu.on && g_mdu.slot >= 0 ? g_mdu.slot : -1; float vb[16]; const float *vl = NULL;
+    int sl = g_mdu.on && g_mdu.slot >= 0 ? g_mdu.slot : -1;
+    float vb[16];
+    const float *vl = NULL;
     if (sl < 0) {
-        float mb[16], bd = 16.0f; const float *ml = player_locator(mb); uint32_t me = *(uint32_t *)VMA(0x180138090);
+        float mb[16], bd = 16.0f;
+        const float *ml = PlayerLocator(mb);
+        uint32_t me = *(uint32_t *) T2R_SYM(kMySlot);
         for (int i = 0; ml && i < T2R_MAX_PEERS; i++) {
-            if ((uint32_t)i == me || is_teammate((uint32_t)i)) continue;
-            uint64_t hh = puppet_handle((uint32_t)i); float tb[16];
-            const float *tl = hh && hh != ~0ULL ? puppet_locator(hh, tb) : NULL;
-            if (!tl || !ps_loc_ok(tl)) continue;
-            float d2 = (tl[0] - ml[0]) * (tl[0] - ml[0]) + (tl[2] - ml[2]) * (tl[2] - ml[2]);
-            if (d2 < bd) { bd = d2; sl = i; }
+            if ((uint32_t) i == me || IsTeammate((uint32_t) i))
+                continue;
+            uint64_t hh = PuppetHandle((uint32_t) i);
+            float tb[16];
+            const float *tl = hh
+                && hh != ~0ULL ? PuppetLocator(hh, tb) : NULL;
+            if (!tl || !PsLocOk(tl))
+                continue;
+            float d2 =
+                (tl[0] - ml[0]) * (tl[0] - ml[0]) + (tl[2] -
+                                                     ml[2]) * (tl[2] -
+                                                               ml[2]);
+            if (d2 < bd) {
+                bd = d2;
+                sl = i;
+            }
         }
     }
-    if (sl < 0) return;
-    uint64_t h = puppet_handle((uint32_t)sl);
-    vl = h && h != ~0ULL ? puppet_locator(h, vb) : NULL;
-    if (!vl || !ps_loc_ok(vl)) return;
-    float a0[3] = {vl[0], vl[1] + 0.45f, vl[2]};
+    if (sl < 0)
+        return;
+    uint64_t h = PuppetHandle((uint32_t) sl);
+    vl = h && h != ~0ULL ? PuppetLocator(h, vb) : NULL;
+    if (!vl || !PsLocOk(vl))
+        return;
+    float a0[3] = { vl[0], vl[1] + 0.45f, vl[2] };
     for (int k = 0; k < MDW_N; k++) {
-        float a = (float)k * (6.2831853f / MDW_N), b[3] = {a0[0] + __builtin_sinf(a) * MDW_LEN, a0[1], a0[2] + __builtin_cosf(a) * MDW_LEN};
-        g_mdwf.j[k] = world_ray_kick(a0, b);
+        float a = (float) k * (6.2831853f / MDW_N), b[3] =
+            { a0[0] + __builtin_sinf(a) * MDW_LEN, a0[1],
+a0[2] + __builtin_cosf(a) * MDW_LEN };
+        g_mdwf.j[k] = WorldRayKick(a0, b);
     }
-    memcpy(g_mdwf.o, vl, 12); g_mdwf.slot = sl; g_mdwf.f = g_frame; g_mdwf.pend = 1;
+    memcpy(g_mdwf.o, vl, 12);
+    g_mdwf.slot = sl;
+    g_mdwf.f = g_frame;
+    g_mdwf.pend = 1;
 }
-static int mdu_fin_fan_blocked(int s, int fin, float *far_o, float *wall_o) {
+
+static int MduFinFanBlocked(int s, int fin, float *far_o, float *wall_o)
+{
     // A finisher played half of a different finisher first: the haymaker's victim travels 2.62 m back, into the truck; its path
     // gate is asked 90 ms before the windup's contact, after its SP intro already played, so the contact swapped in the throat punch (half one kill,
     // then another). The pick now checks the kill's victim path against the ray fan BEFORE the intro starts: blocked = the next finisher of the pool.
-    uint64_t h = puppet_handle((uint32_t)s); float vb[16], mb[16];
-    const float *vl = h && h != ~0ULL ? puppet_locator(h, vb) : NULL, *me = player_locator(mb);
+    uint64_t h = PuppetHandle((uint32_t) s);
+    float vb[16], mb[16];
+    const float *vl = h
+        && h != ~0ULL ? PuppetLocator(h, vb) : NULL, *me =
+        PlayerLocator(mb);
     float fx, fz;
-    if (!vl || !me || g_mdwf.slot != s || !g_mdwf.ms || GetTickCount64() - g_mdwf.ms > 400) return 0;
-    fx = vl[0] - g_mdwf.o[0]; fz = vl[2] - g_mdwf.o[2];
-    if (fx * fx + fz * fz > 0.4f * 0.4f) return 0;
+    if (!vl || !me || g_mdwf.slot != s || !g_mdwf.ms
+        || GetTickCount64() - g_mdwf.ms > 400)
+        return 0;
+    fx = vl[0] - g_mdwf.o[0];
+    fz = vl[2] - g_mdwf.o[2];
+    if (fx * fx + fz * fz > 0.4f * 0.4f)
+        return 0;
     float ap[7], da, en[2][8], best = 0.0f, bx = 0.0f, bz = 0.0f;
-    if (!dc_anchor(fin, h, vl, me, 0.0f, ap, &da)) return 0;
+    if (!DcAnchor(fin, h, vl, me, 0.0f, ap, &da))
+        return 0;
     const char *vc = CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].vic;
     for (int k = 1; k <= 10; k++) {
-        if (psync_pair_end(ap, fnv64(CD_ATT0(fin)), fnv64(vc), (float)k / 10.0f, 0, en) != 3) continue;
-        float dx = en[1][0] - vl[0], dz = en[1][2] - vl[2], d2 = dx * dx + dz * dz;
-        if (d2 > best) { best = d2; bx = dx; bz = dz; }
+        if (PsyncPairEnd
+            (ap, FNV64(CD_ATT0(fin)), FNV64(vc), (float) k / 10.0f, 0,
+             en) != 3)
+            continue;
+        float dx = en[1][0] - vl[0], dz = en[1][2] - vl[2], d2 =
+            dx * dx + dz * dz;
+        if (d2 > best) {
+            best = d2;
+            bx = dx;
+            bz = dz;
+        }
     }
-    float fr = __builtin_sqrtf(best) + 0.9f;          // + the lying body (PG_LIE_EXT)
-    *far_o = fr; *wall_o = 9.0f;
-    if (fr < 0.5f) return 0;
+    float fr = __builtin_sqrtf(best) + 0.9f;    // + the lying body (PG_LIE_EXT)
+    *far_o = fr;
+    *wall_o = 9.0f;
+    if (fr < 0.5f)
+        return 0;
     float r0 = __builtin_atan2f(bx, bz);
     for (int k = 0; k < MDW_N; k++) {
-        float a = (float)k * (6.2831853f / MDW_N), off = cd_wrap180((a - r0) * 57.29578f);
-        if (__builtin_fabsf(off) > 20.0f) continue;
-        if (g_mdwf.d[k] < *wall_o) *wall_o = g_mdwf.d[k];
+        float a = (float) k * (6.2831853f / MDW_N), off =
+            CdWrap180((a - r0) * 57.29578f);
+        if (__builtin_fabsf(off) > 20.0f)
+            continue;
+        if (g_mdwf.d[k] < *wall_o)
+            *wall_o = g_mdwf.d[k];
     }
     return *wall_o < fr;
 }
+
 // perf (reports: mdu_tick spikes 7-44 ms, 6275 game natives in one tick = the pick's fan checks, up to 7 candidates x ~10 psync_pair_end at the lethal swing's start).
 // The fan check of every loaded finisher row is precomputed in the background once the opponent is one hit from down (mdu_blow_lethal: net hp - blow <= 1, the
 // same test that makes the next swing lethal): one row per frame, round robin, timestamped with where both players stood. mdu_fin_arm keeps cd_fin_pick's
@@ -857,54 +1898,133 @@ static int mdu_fin_fan_blocked(int s, int fin, float *far_o, float *wall_o) {
 // the bearing between them turned < 20 deg), and the pick that wins is re-validated by ONE synchronous fan check. Stale / no data = the old synchronous check.
 // t2r-no-fin-precompute.txt = off (old behaviour).
 #define MFP_N 8
-static struct { int row[MFP_N], blocked[MFP_N], n, cur, slot; uint64_t t[MFP_N], list_ms; float vx[MFP_N], vz[MFP_N], mx[MFP_N], mz[MFP_N], br[MFP_N], fr[MFP_N], wall[MFP_N]; } g_mfp = {.slot = -1};
-static struct { unsigned hit, miss, vfail, evals; } g_mfp_st;
-static int mfp_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-no-fin-precompute.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static void mfp_tick(void) {
-    int s = g_mdwf.slot;
-    if (s < 0 || !g_mdu.on || mfp_off() || !g_mdwf.ms || GetTickCount64() - g_mdwf.ms > 300) return;
-    uint64_t h = puppet_handle((uint32_t)s);
-    if (!h || h == ~0ULL || !mdu_blow_lethal(s, h)) { g_mfp.n = 0; g_mfp.slot = -1; return; }       // not one hit from down: nothing to prepare
-    uint64_t now = GetTickCount64();
-    if (g_mfp.slot != s || now - g_mfp.list_ms > 500) {                                               // the candidate list (cd_fin_pick's filters, spacing-fit order); entries of the rows that stay are kept
-        int rows[16]; float gp[16];
-        int n = cd_fin_all((uint32_t)s, rows, gp, 16); if (n > MFP_N) n = MFP_N;
-        typeof(g_mfp) o = g_mfp; int old_n = g_mfp.slot == s ? g_mfp.n : 0;
-        for (int i = 0; i < n; i++) {
-            g_mfp.row[i] = rows[i]; g_mfp.t[i] = 0; g_mfp.blocked[i] = 0; g_mfp.fr[i] = g_mfp.wall[i] = g_mfp.vx[i] = g_mfp.vz[i] = g_mfp.mx[i] = g_mfp.mz[i] = g_mfp.br[i] = 0.0f;
-            for (int j = 0; j < old_n; j++) if (o.row[j] == rows[i]) {
-                g_mfp.t[i] = o.t[j]; g_mfp.fr[i] = o.fr[j]; g_mfp.wall[i] = o.wall[j]; g_mfp.vx[i] = o.vx[j]; g_mfp.vz[i] = o.vz[j]; g_mfp.mx[i] = o.mx[j]; g_mfp.mz[i] = o.mz[j]; g_mfp.br[i] = o.br[j]; g_mfp.blocked[i] = o.blocked[j]; break; }
-        }
-        g_mfp.n = n; g_mfp.slot = s; g_mfp.list_ms = now; if (g_mfp.cur >= n) g_mfp.cur = 0;
+static struct {
+    int row[MFP_N], blocked[MFP_N], n, cur, slot;
+    uint64_t t[MFP_N], list_ms;
+    float vx[MFP_N], vz[MFP_N], mx[MFP_N], mz[MFP_N], br[MFP_N], fr[MFP_N],
+        wall[MFP_N];
+} g_mfp = {.slot = -1 };
+
+static struct {
+    unsigned hit, miss, vfail, evals;
+} g_mfpSt;
+static int MfpOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-no-fin-precompute.txt") !=
+            INVALID_FILE_ATTRIBUTES;
     }
-    if (g_mfp.n <= 0) return;
-    float vb[16], mb[16]; const float *vl = puppet_locator(h, vb), *me = player_locator(mb);
-    if (!vl || !me) return;
-    int i = g_mfp.cur; g_mfp.cur = (g_mfp.cur + 1) % g_mfp.n;
-    float fr = 0.0f, wall = 9.0f;
-    int b = mdu_fin_fan_blocked(s, g_mfp.row[i], &fr, &wall);
-    g_mfp.blocked[i] = b; g_mfp.fr[i] = fr; g_mfp.wall[i] = wall; g_mfp.t[i] = GetTickCount64();
-    g_mfp.vx[i] = vl[0]; g_mfp.vz[i] = vl[2]; g_mfp.mx[i] = me[0]; g_mfp.mz[i] = me[2]; g_mfp.br[i] = __builtin_atan2f(me[0] - vl[0], me[2] - vl[2]);
-    g_mfp_st.evals++;
+    return v;
 }
+
+static void MfpTick(void)
+{
+    int s = g_mdwf.slot;
+    if (s < 0 || !g_mdu.on || MfpOff() || !g_mdwf.ms
+        || GetTickCount64() - g_mdwf.ms > 300)
+        return;
+    uint64_t h = PuppetHandle((uint32_t) s);
+    if (!h || h == ~0ULL || !MduBlowLethal(s, h)) {
+        g_mfp.n = 0;
+        g_mfp.slot = -1;
+        return;
+    }                           // not one hit from down: nothing to prepare
+    uint64_t now = GetTickCount64();
+    if (g_mfp.slot != s || now - g_mfp.list_ms > 500) { // the candidate list (cd_fin_pick's filters, spacing-fit order); entries of the rows that stay are kept
+        int rows[16];
+        float gp[16];
+        int n = CdFinAll((uint32_t) s, rows, gp, 16);
+        if (n > MFP_N)
+            n = MFP_N;
+        typeof(g_mfp) o = g_mfp;
+        int old_n = g_mfp.slot == s ? g_mfp.n : 0;
+        for (int i = 0; i < n; i++) {
+            g_mfp.row[i] = rows[i];
+            g_mfp.t[i] = 0;
+            g_mfp.blocked[i] = 0;
+            g_mfp.fr[i] = g_mfp.wall[i] = g_mfp.vx[i] = g_mfp.vz[i] =
+                g_mfp.mx[i] = g_mfp.mz[i] = g_mfp.br[i] = 0.0f;
+            for (int j = 0; j < old_n; j++)
+                if (o.row[j] == rows[i]) {
+                    g_mfp.t[i] = o.t[j];
+                    g_mfp.fr[i] = o.fr[j];
+                    g_mfp.wall[i] = o.wall[j];
+                    g_mfp.vx[i] = o.vx[j];
+                    g_mfp.vz[i] = o.vz[j];
+                    g_mfp.mx[i] = o.mx[j];
+                    g_mfp.mz[i] = o.mz[j];
+                    g_mfp.br[i] = o.br[j];
+                    g_mfp.blocked[i] = o.blocked[j];
+                    break;
+                }
+        }
+        g_mfp.n = n;
+        g_mfp.slot = s;
+        g_mfp.list_ms = now;
+        if (g_mfp.cur >= n)
+            g_mfp.cur = 0;
+    }
+    if (g_mfp.n <= 0)
+        return;
+    float vb[16], mb[16];
+    const float *vl = PuppetLocator(h, vb), *me = PlayerLocator(mb);
+    if (!vl || !me)
+        return;
+    int i = g_mfp.cur;
+    g_mfp.cur = (g_mfp.cur + 1) % g_mfp.n;
+    float fr = 0.0f, wall = 9.0f;
+    int b = MduFinFanBlocked(s, g_mfp.row[i], &fr, &wall);
+    g_mfp.blocked[i] = b;
+    g_mfp.fr[i] = fr;
+    g_mfp.wall[i] = wall;
+    g_mfp.t[i] = GetTickCount64();
+    g_mfp.vx[i] = vl[0];
+    g_mfp.vz[i] = vl[2];
+    g_mfp.mx[i] = me[0];
+    g_mfp.mz[i] = me[2];
+    g_mfp.br[i] = __builtin_atan2f(me[0] - vl[0], me[2] - vl[2]);
+    g_mfpSt.evals++;
+}
+
 // the cached answer for a finisher row when fresh and both players are where they were; returns 1 = usable
-static int mfp_lookup(int s, int fin, int *blocked, float *fr_o, float *wall_o) {
-    if (mfp_off() || g_mfp.slot != s) return 0;
-    uint64_t h = puppet_handle((uint32_t)s); float vb[16], mb[16];
-    const float *vl = h && h != ~0ULL ? puppet_locator(h, vb) : NULL, *me = player_locator(mb);
-    if (!vl || !me) return 0;
+static int MfpLookup(int s, int fin, int *blocked, float *fr_o,
+                      float *wall_o)
+{
+    if (MfpOff() || g_mfp.slot != s)
+        return 0;
+    uint64_t h = PuppetHandle((uint32_t) s);
+    float vb[16], mb[16];
+    const float *vl = h
+        && h != ~0ULL ? PuppetLocator(h, vb) : NULL, *me =
+        PlayerLocator(mb);
+    if (!vl || !me)
+        return 0;
     for (int i = 0; i < g_mfp.n; i++) {
-        if (g_mfp.row[i] != fin || !g_mfp.t[i] || GetTickCount64() - g_mfp.t[i] > 250) continue;
-        float dvx = vl[0] - g_mfp.vx[i], dvz = vl[2] - g_mfp.vz[i], dmx = me[0] - g_mfp.mx[i], dmz = me[2] - g_mfp.mz[i];
-        if (dvx * dvx + dvz * dvz > 0.25f || dmx * dmx + dmz * dmz > 0.25f) return 0;
+        if (g_mfp.row[i] != fin || !g_mfp.t[i]
+            || GetTickCount64() - g_mfp.t[i] > 250)
+            continue;
+        float dvx = vl[0] - g_mfp.vx[i], dvz = vl[2] - g_mfp.vz[i], dmx =
+            me[0] - g_mfp.mx[i], dmz = me[2] - g_mfp.mz[i];
+        if (dvx * dvx + dvz * dvz > 0.25f || dmx * dmx + dmz * dmz > 0.25f)
+            return 0;
         float tb = __builtin_atan2f(me[0] - vl[0], me[2] - vl[2]);
-        if (__builtin_fabsf(cd_wrap180((tb - g_mfp.br[i]) * 57.29578f)) > 20.0f) return 0;
-        *blocked = g_mfp.blocked[i]; *fr_o = g_mfp.fr[i]; *wall_o = g_mfp.wall[i]; return 1;
+        if (__builtin_fabsf(CdWrap180((tb - g_mfp.br[i]) * 57.29578f)) >
+            20.0f)
+            return 0;
+        *blocked = g_mfp.blocked[i];
+        *fr_o = g_mfp.fr[i];
+        *wall_o = g_mfp.wall[i];
+        return 1;
     }
     return 0;
 }
+
 // ps41 GATE FIRST (the block is above mdu_fw_probe): a finisher's SP intro only starts on a fresh path gate YES
-static int mfg_off(void);
+static int MfgOff(void);
 // ps46k (knife vs baton did not play the disarm; log [112577]: the pool picked switchblade-1h-blunt-disarm-left-overhead (the only row in
 // light-attack-3's SP list), then mfg_pick (ps41 gate first) found its background gate YES 220 ms old and stale (the victim had moved) and switched to the first
 // OTHER row with a fresh YES - quick-left-ice-pick, no disarm: [114530] 'PREDICTED finisher windup switchblade-quick-left-ice-pick' from the SWING message, the
@@ -915,71 +2035,169 @@ static int mfg_off(void);
 // row. The surface-takedown-first rule (a wall plan ready at the lethal contact) is unchanged. t2r-disarm-keep-ps46-old.txt = old (re-read every 2 s).
 // Proof lines 'DUEL: ps46k' (own log cap: the duel's DULOG cap of 1500 is spent within ~50k frames of a long session).
 static int mdk_nlog;
-#define MDKLOG(...) do { if (LOGCAP(mdk_nlog, 400)) xlog(__VA_ARGS__); } while (0)
-static int mdk_off(void) {
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-disarm-keep-ps46-old.txt") != INVALID_FILE_ATTRIBUTES;
-        if (o != v) xlog("DUEL: ps46k disarm plan rule %s", o ? "OFF (t2r-disarm-keep-ps46-old.txt): gate first may switch a disarm pick to any row with a fresh YES, the fallback chain by intro / spacing only" : "ON: an armed victim's disarm pick lands as itself or as another disarm row of the weapon pair before any non-disarm kill (gate first, background gate, fallback chain, D3)");
-        v = o; }
+#define MDKLOG(...) do { if (LOGCAP(mdk_nlog, 400)) Xlog(__VA_ARGS__); } while (0)
+static int MdkOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-disarm-keep-ps46-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: ps46k disarm plan rule %s",
+                 o ?
+                 "OFF (t2r-disarm-keep-ps46-old.txt): gate first may switch a disarm pick to any row with a fresh YES, the fallback chain by intro / spacing only"
+                 :
+                 "ON: an armed victim's disarm pick lands as itself or as another disarm row of the weapon pair before any non-disarm kill (gate first, background gate, fallback chain, D3)");
+        v = o;
+    }
     return v;
 }
-static uint64_t mdk_vm(int s) { return mdk_off() || cd_dis_off() ? 0 : cd_dis_class(cd_dis_peer_weapon(s), NULL); }   // the victim's disarm class bits (0 = unarmed / not disarmable / rule off)
-static int mdk_is_dis(int row, uint64_t vm) { return vm && row >= 0 && row < (int)CD_N && (cd_mf_dmask(row) & vm) != 0; }
-static void mfg_pick(int s);
-static int mfg_intro_ok(int s, int fin, const mdu_row_t *m);
-static void mdu_fin_arm(int s) {
+
+static uint64_t MdkVm(int s)
+{
+    return MdkOff()
+        || CdDisOff()? 0 : CdDisClass(CdDisPeerWeapon(s), NULL);
+}                               // the victim's disarm class bits (0 = unarmed / not disarmable / rule off)
+
+static int MdkIsDis(int row, uint64_t vm)
+{
+    return vm && row >= 0 && row < (int) CD_N
+        && (CdMfDmask(row) & vm) != 0;
+}
+
+static void MfgPick(int s);
+static int MfgIntroOk(int s, int fin, const MduRowT * m);
+static void MduFinArm(int s)
+{
     char why[240];
-    LARGE_INTEGER q0, q1, qf; QueryPerformanceCounter(&q0);
-    g_mdu_fin = cd_fin_pick((uint32_t)s, MDU_MOVES[g_mdu.sw_row].move, 0, why, sizeof why); g_mdu_fin_try = 0;      // (SP's list of THIS swing, mduel_fin.h MDF_SWING_DATA)
+    LARGE_INTEGER q0, q1, qf;
+    QueryPerformanceCounter(&q0);
+    g_mduFin =
+        CdFinPick((uint32_t) s, MDU_MOVES[g_mdu.sw_row].move, 0, why,
+                    sizeof why);
+    g_mdu_fin_try = 0;          // (SP's list of THIS swing, mduel_fin.h MDF_SWING_DATA)
     unsigned hits = 0, miss = 0, vfail = 0;
-    if (g_mdu_fin >= 0 && GetFileAttributesA("t2r-duel-fin-fan-off.txt") == INVALID_FILE_ATTRIBUTES) {
-        float fr = 0.0f, wall = 9.0f; int first = g_mdu_fin, use_cache = !mfp_off();
-        for (int alt = 1; alt <= 6 && g_mdu_fin >= 0; alt++) {
+    if (g_mduFin >= 0
+        && GetFileAttributesA("t2r-duel-fin-fan-off.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        float fr = 0.0f, wall = 9.0f;
+        int first = g_mduFin, use_cache = !MfpOff();
+        for (int alt = 1; alt <= 6 && g_mduFin >= 0; alt++) {
             int bl = 0, cached = 0;
-            if (use_cache && mfp_lookup(s, g_mdu_fin, &bl, &fr, &wall)) cached = 1; else bl = mdu_fin_fan_blocked(s, g_mdu_fin, &fr, &wall);
-            if (cached) hits++; else miss++;
-            if (cached && !bl) { bl = mdu_fin_fan_blocked(s, g_mdu_fin, &fr, &wall); if (bl) { vfail++; use_cache = 0; } }   // the winner: one synchronous check; a disagreement = the exact old path from here
-            if (!bl) break;
-            DULOG("DUEL: u%04x finisher %s: its victim path (%.2f m with the lying body) meets a wall at %.2f m (ray fan) - the next one of the pool", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, (double)fr, (double)wall);
-            char w2[240]; int nx = cd_fin_pick((uint32_t)s, MDU_MOVES[g_mdu.sw_row].move, alt, w2, sizeof w2);
-            if (nx < 0 || nx == first) { g_mdu_fin = first; snprintf(why, sizeof why, "every finisher's victim path meets a wall (ray fan) - the first pick kept (never no finisher)"); break; }
-            g_mdu_fin = nx; memcpy(why, w2, sizeof why);
+            if (use_cache && MfpLookup(s, g_mduFin, &bl, &fr, &wall))
+                cached = 1;
+            else
+                bl = MduFinFanBlocked(s, g_mduFin, &fr, &wall);
+            if (cached)
+                hits++;
+            else
+                miss++;
+            if (cached && !bl) {
+                bl = MduFinFanBlocked(s, g_mduFin, &fr, &wall);
+                if (bl) {
+                    vfail++;
+                    use_cache = 0;
+                }
+            }                   // the winner: one synchronous check; a disagreement = the exact old path from here
+            if (!bl)
+                break;
+            DULOG
+                ("DUEL: u%04x finisher %s: its victim path (%.2f m with the lying body) meets a wall at %.2f m (ray fan) - the next one of the pool",
+                 g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, (double) fr,
+                 (double) wall);
+            char w2[240];
+            int nx =
+                CdFinPick((uint32_t) s, MDU_MOVES[g_mdu.sw_row].move,
+                            alt, w2, sizeof w2);
+            if (nx < 0 || nx == first) {
+                g_mduFin = first;
+                snprintf(why, sizeof why,
+                         "every finisher's victim path meets a wall (ray fan) - the first pick kept (never no finisher)");
+                break;
+            }
+            g_mduFin = nx;
+            memcpy(why, w2, sizeof why);
         }
     }
-    QueryPerformanceCounter(&q1); QueryPerformanceFrequency(&qf);
-    g_mfp_st.hit += hits; g_mfp_st.miss += miss; g_mfp_st.vfail += vfail;
-    DULOG("DUEL: u%04x finisher pick took %.2f ms (fan checks: %u precomputed, %u synchronous, %u revalidation mismatches; precompute %s, %u background evaluations so far; totals %u hit / %u miss)", g_mdu.uid,
-          (double)(q1.QuadPart - q0.QuadPart) * 1000.0 / (double)qf.QuadPart, hits, miss, vfail, mfp_off() ? "OFF" : "on", g_mfp_st.evals, g_mfp_st.hit, g_mfp_st.miss);
-    DULOG("DUEL: u%04x LETHAL swing on slot %d: %s %s", g_mdu.uid, s, g_mdu_fin >= 0 ? "SP finisher" : "no finisher, the engine contact + Melee Down take it:", why);
-    if (g_mdu_fin >= 0 && !mfg_off()) mfg_pick(s);   // ps41: the precomputed path gate answers - a row with a fresh YES is preferred
+    QueryPerformanceCounter(&q1);
+    QueryPerformanceFrequency(&qf);
+    g_mfpSt.hit += hits;
+    g_mfpSt.miss += miss;
+    g_mfpSt.vfail += vfail;
+    DULOG
+        ("DUEL: u%04x finisher pick took %.2f ms (fan checks: %u precomputed, %u synchronous, %u revalidation mismatches; precompute %s, %u background evaluations so far; totals %u hit / %u miss)",
+         g_mdu.uid,
+         (double) (q1.QuadPart -
+                   q0.QuadPart) * 1000.0 / (double) qf.QuadPart, hits,
+         miss, vfail, MfpOff()? "OFF" : "on", g_mfpSt.evals,
+         g_mfpSt.hit, g_mfpSt.miss);
+    DULOG("DUEL: u%04x LETHAL swing on slot %d: %s %s", g_mdu.uid, s,
+          g_mduFin >=
+          0 ? "SP finisher" :
+          "no finisher, the engine contact + Melee Down take it:", why);
+    if (g_mduFin >= 0 && !MfgOff())
+        MfgPick(s);            // ps41: the precomputed path gate answers - a row with a fresh YES is preferred
 }
+
 // feature_early_finisher: our melee move this frame (started = a new one). Runs before the lock-on glide / dodge swing note.
-static int mpn_fin_restore(int slot);   // melee_duel_pin.c
-static int mpn_hold_att(void);           // melee_duel_pin.c
-static uint64_t g_mdu_next_ms;   // v5-var: when mdu_next started the next combo step (that swing is no opener)
+static int MpnFinRestore(int slot);   // melee_duel_pin.c
+static int MpnHoldAtt(void);  // melee_duel_pin.c
+static uint64_t g_mduNextMs;  // v5-var: when mdu_next started the next combo step (that swing is no opener)
 // v5-var pin rate: SP's combo lists put the wall / low-cover enters AFTER the next light step (fist-light-attack-2: light-3, 1-far, the wall enters, ...), and the
 // first candidate whose start-func passes wins (re/melee-dc/melee-dc.md "How SP picks a move") - so SP pins only from an OPENER (neutral / sprint / dodge
 // attack: the NR trace F70398 picked fist-wall-attack-enter-right as the opener), never from blow 2-4 of a running combo. Our pin took ANY landed blow
 // with a wall plan. Now only a swing that opened the exchange (step 1, not started by a combo press) pins. t2r-duel-pin-any-blow.txt = the old rule.
-static int g_mdu_sw_opener;
+static int g_mduSwOpener;
 // A pin starts from ANY blow of a combo with a wall / car / cover behind the victim (was: openers only, "mid-combo blow (SP pins only from an opener)").
 // t2r-duel-pin-opener-only.txt = the old opener-only rule
-static int mdu_pin_ok(void) { return g_mdu_sw_opener || GetFileAttributesA("t2r-duel-pin-opener-only.txt") == INVALID_FILE_ATTRIBUTES; }
-static float g_mdu_sw_sp = 1.0f; static int g_mdu_sw_xtra; static uint64_t g_mdu_sw_clip;
+static int MduPinOk(void)
+{
+    return g_mduSwOpener
+        || GetFileAttributesA("t2r-duel-pin-opener-only.txt") ==
+        INVALID_FILE_ATTRIBUTES;
+}
+
+static float g_mduSwSp = 1.0f;
+static int g_mduSwXtra;
+static uint64_t g_mduSwClip;
 // ps22: clip ms our swing has played at real ms el - the wind-up profile when it runs (the travel model sat at 197 ms of clip while the clip was at 96), else the constant stretch
-static float mdu_sw_clip_ms(float el) { return g_wup.on ? wup_ct(el, g_wup.tc, g_wup.x) : el * g_mdu_sw_sp; }
-static uint64_t g_mdu_warp_yaw_f;   // (ps40, see mdu_yaw_adelta)
-static float g_mdu_yaw_prev, g_mdu_sw_yaw0; static uint64_t g_mdu_yaw_prev_f; static int g_mdu_sw_yaw0_ok;   // our facing (rad) on the last frame / before this swing
+static float MduSwClipMs(float el)
+{
+    return g_wup.on ? WupCt(el, g_wup.tc, g_wup.x) : el * g_mduSwSp;
+}
+
+static uint64_t g_mduWarpYawF;       // (ps40, see mdu_yaw_adelta)
+static float g_mduYawPrev, g_mdu_sw_yaw0;
+static uint64_t g_mduYawPrevF;
+static int g_mduSwYaw0Ok;    // our facing (rad) on the last frame / before this swing
 //   // the ping windup (see mdu_swing_note)
-static uint64_t g_mdu_sw_move;   // the swing's move id (melee_beat.c smooth:windup finds its clip)
+static uint64_t g_mduSwMove;  // the swing's move id (melee_beat.c smooth:windup finds its clip)
 // v5-finwind: the lethal swing's windup = its finisher's SP intro on us (see g_mdfwu). 1 = running (sw_tc / sw_D / the travel curve are the intro's), 0 = the old start
-static int mdu_fw_begin(int s, uint64_t h, const mdu_row_t *m, uint64_t now) {
-    int fin = g_mdu_fin;
-    if (fin < 0 || mdu_fw_off()) return 0;
-    if (!cd_mf_intro(fin)) { DULOG("DUEL: u%04x finisher %s has no SP intro - it starts on the press as before (no dodgeable windup)", g_mdu.uid, CD_PAIRS[fin].name + 3); return 0; }
-    const char *ic = CD_PAIRS[fin].seg[0].att; uint64_t sid = fnv64(ic);
-    float imf = cd_seg_len(fin, 0) * 1000.0f;
-    if (!(imf >= 100.0f && imf <= 1500.0f)) { DULOG("DUEL: u%04x finisher %s: its SP intro %s is %.0f ms (not loaded / unusable) - it starts on the press as before", g_mdu.uid, CD_PAIRS[fin].name + 3, ic, (double)imf); return 0; }
+static int MduFwBegin(int s, uint64_t h, const MduRowT *m,
+                        uint64_t now)
+{
+    int fin = g_mduFin;
+    if (fin < 0 || MduFwOff())
+        return 0;
+    if (!CdMfIntro(fin)) {
+        DULOG
+            ("DUEL: u%04x finisher %s has no SP intro - it starts on the press as before (no dodgeable windup)",
+             g_mdu.uid, CD_PAIRS[fin].name + 3);
+        return 0;
+    }
+    const char *ic = CD_PAIRS[fin].seg[0].att;
+    uint64_t sid = FNV64(ic);
+    float imf = CdSegLen(fin, 0) * 1000.0f;
+    if (!(imf >= 100.0f && imf <= 1500.0f)) {
+        DULOG
+            ("DUEL: u%04x finisher %s: its SP intro %s is %.0f ms (not loaded / unusable) - it starts on the press as before",
+             g_mdu.uid, CD_PAIRS[fin].name + 3, ic, (double) imf);
+        return 0;
+    }
     // ps41 gate first: the intro (the windup that replaces the swing) starts only when the finisher's path gate has ALREADY answered YES for where the two bodies
     // stand; otherwise the plain swing plays and its contact decides as before (the FINISHER PUNCH below plays the swing itself - nothing to cut - and is not gated here)
     // (nor an engine KILL move standing in for the row: with no intro that one-sided kill move would play on - the intro replaces it as before, gated at its end)
@@ -989,106 +2207,210 @@ static int mdu_fw_begin(int s, uint64_t h, const mdu_row_t *m, uint64_t now) {
     // A swing whose intro the gate did not let start is the FINISHER PUNCH below (the swing itself at its SP time, at ITS contact the -sync pair / the fallbacks).
     // t2r-fin-gate-plain-press-old.txt = the ps41 behaviour (contact at the press).
     int gfp = 0;
-    if (!mfg_off() && g_mdu_fw_move == fnv64_rt(m->move) && !(mdu_fwpunch_on() && !(g_p31.force_intro_until > now) && !mdu_fw_weapon_intro(m)) && !mfg_intro_ok(s, fin, m)) {
-        if (GetFileAttributesA("t2r-fin-gate-plain-press-old.txt") != INVALID_FILE_ATTRIBUTES) return 0;
+    if (!MfgOff() && g_mduFwMove == Fnv64Rt(m->move)
+        && !(MduFwpunchOn() && !(g_p31.force_intro_until > now)
+             && !MduFwWeaponIntro(m)) && !MfgIntroOk(s, fin, m)) {
+        if (GetFileAttributesA("t2r-fin-gate-plain-press-old.txt") !=
+            INVALID_FILE_ATTRIBUTES)
+            return 0;
         gfp = 1;
-        DULOG("DUEL: u%04x fin gate first: no intro for %s - the swing %s keeps its own contact time (%d ms): the finisher / the fallbacks / the blow are decided there, not on the press (ps42; t2r-fin-gate-plain-press-old.txt = old)",
-              g_mdu.uid, CD_PAIRS[fin].name + 3, m->move, m->tc_ms + g_mdu_sw_xtra);
+        DULOG
+            ("DUEL: u%04x fin gate first: no intro for %s - the swing %s keeps its own contact time (%d ms): the finisher / the fallbacks / the blow are decided there, not on the press (ps42; t2r-fin-gate-plain-press-old.txt = old)",
+             g_mdu.uid, CD_PAIRS[fin].name + 3, m->move,
+             m->tc_ms + g_mduSwXtra);
     }
-    g_mdu_fw_wpn = -1;
-    if (!gfp && mdu_fwpunch_on() && g_mdu_fw_move == fnv64_rt(m->move) && !(g_p31.force_intro_until > now) && mdu_fw_weapon_intro(m)) {
-        g_mdu_fw_wpn = m->set;
-        DULOG("DUEL: u%04x WEAPON finisher (%s): SP's intro %s of %s is the wind-up in place of the swing %s - contact at +%d ms (the swing's own %d ms), then the -sync pair from its frame 0 (ps37)",
-              g_mdu.uid, mdu_set_name(m->set), ic, CD_PAIRS[fin].name + 3, m->move, (int)(imf + 0.5f), m->tc_ms);
+    g_mduFwWpn = -1;
+    if (!gfp && MduFwpunchOn() && g_mduFwMove == Fnv64Rt(m->move)
+        && !(g_p31.force_intro_until > now) && MduFwWeaponIntro(m)) {
+        g_mduFwWpn = m->set;
+        DULOG
+            ("DUEL: u%04x WEAPON finisher (%s): SP's intro %s of %s is the wind-up in place of the swing %s - contact at +%d ms (the swing's own %d ms), then the -sync pair from its frame 0 (ps37)",
+             g_mdu.uid, MduSetName(m->set), ic, CD_PAIRS[fin].name + 3,
+             m->move, (int) (imf + 0.5f), m->tc_ms);
     }
-    if (gfp || (mdu_fwpunch_on() && g_mdu_fw_move == fnv64_rt(m->move) && !(g_p31.force_intro_until > now) && !mdu_fw_weapon_intro(m))) {   // (an engine KILL move standing in for the row = not the row's own swing clip: the SP intro windup as before; ps31: nor after the far run-in - SP plays the finisher's intro there)
-        int tc = m->tc_ms + g_mdu_sw_xtra;
+    if (gfp || (MduFwpunchOn() && g_mduFwMove == Fnv64Rt(m->move) && !(g_p31.force_intro_until > now) && !MduFwWeaponIntro(m))) {       // (an engine KILL move standing in for the row = not the row's own swing clip: the SP intro windup as before; ps31: nor after the far run-in - SP plays the finisher's intro there)
+        int tc = m->tc_ms + g_mduSwXtra;
         memset(&g_mdfwu, 0, sizeof g_mdfwu);
-        g_mdfwu.on = 1; g_mdfwu.punch = 1; g_mdfwu.fin = fin; g_mdfwu.im = m->tc_ms; g_mdfwu.tce = tc; g_mdfwu.sid = 0; g_mdfwu.t0 = now; g_mdfwu.sp = 1.0f; g_mdfwu.gate = -1;
-        g_mdu.sw_tc = now + (uint64_t)tc;
+        g_mdfwu.on = 1;
+        g_mdfwu.punch = 1;
+        g_mdfwu.fin = fin;
+        g_mdfwu.im = m->tc_ms;
+        g_mdfwu.tce = tc;
+        g_mdfwu.sid = 0;
+        g_mdfwu.t0 = now;
+        g_mdfwu.sp = 1.0f;
+        g_mdfwu.gate = -1;
+        g_mdu.sw_tc = now + (uint64_t) tc;
         // the contact distance = the -sync attacker half's frame-0 spot from the victim's first -sync frame (where the pair starts us), the approach = the swing's own
         float cv[8], cs[8], D = g_mdu.sw_D;
-        if (h && CD_PAIRS[fin].nseg > 1 && cd_offset_at(h, CD_VIC0(fin), cd_fin_vic_t(fin), cv) && cd_offset_at(SID_PLAYER, CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].att, 0.0f, cs))   // (ps37: the victim's spot at the -sync switch)
-            D = __builtin_sqrtf((cs[0] - cv[0]) * (cs[0] - cv[0]) + (cs[2] - cv[2]) * (cs[2] - cv[2]));
-        if (D < MDU_MIN_D) D = MDU_MIN_D;
-        if (D > MDU_REACH) D = MDU_REACH;
-        DULOG("DUEL: u%04x FINISHER PUNCH on slot %d: the lethal swing %s plays at its SP time (contact in %d ms, the SP intro %s of %s would be %d ms) - at its contact the -sync pair starts from the switch; contact distance %.2f m (the -sync attacker start, swing's own %.2f m)",
-              g_mdu.uid, s, m->move, tc, ic, CD_PAIRS[fin].name + 3, (int)(imf + 0.5f), (double)D, (double)g_mdu.sw_D);
+        if (h && CD_PAIRS[fin].nseg > 1 && CdOffsetAt(h, CD_VIC0(fin), CdFinVicT(fin), cv) && CdOffsetAt(SID_PLAYER, CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].att, 0.0f, cs))   // (ps37: the victim's spot at the -sync switch)
+            D = __builtin_sqrtf((cs[0] - cv[0]) * (cs[0] - cv[0]) +
+                                (cs[2] - cv[2]) * (cs[2] - cv[2]));
+        if (D < MDU_MIN_D)
+            D = MDU_MIN_D;
+        if (D > MDU_REACH)
+            D = MDU_REACH;
+        DULOG
+            ("DUEL: u%04x FINISHER PUNCH on slot %d: the lethal swing %s plays at its SP time (contact in %d ms, the SP intro %s of %s would be %d ms) - at its contact the -sync pair starts from the switch; contact distance %.2f m (the -sync attacker start, swing's own %.2f m)",
+             g_mdu.uid, s, m->move, tc, ic, CD_PAIRS[fin].name + 3,
+             (int) (imf + 0.5f), (double) D, (double) g_mdu.sw_D);
         g_mdu.sw_D = D;
         return 1;
     }
-    int im = (int)(imf + 0.5f), ow = (int)psync_oneway(s);
-    if (ow > 70) ow = 70;                                                   // (the duel's windup cap: past ~70 ms one-way the victim sees a slightly shorter windup)
-    if (ow < 15 || GetFileAttributesA("t2r-duel-ping-windup.txt") == INVALID_FILE_ATTRIBUTES) ow = 0;   // (SP intro at x1.00 by default, as the swing)
+    int im = (int) (imf + 0.5f), ow = (int) PsyncOneway(s);
+    if (ow > 70)
+        ow = 70;                // (the duel's windup cap: past ~70 ms one-way the victim sees a slightly shorter windup)
+    if (ow < 15
+        || GetFileAttributesA("t2r-duel-ping-windup.txt") ==
+        INVALID_FILE_ATTRIBUTES)
+        ow = 0;                 // (SP intro at x1.00 by default, as the swing)
     // v5-fwpair (the attacker stood still through the finisher's SP intro, then popped into the -sync clip; B 23750-23756 +
     // fwtrace: the lethal press is buffered in the previous blow's combo window, so the windup starts while that blow's -hit pair still runs on our body
     // (psync role 1) - its hand-off abort 100 ms later (ctxdown "both halves blend out") took our body back from the intro's layer). The running -hit pair now
     // ends here, before the intro starts. t2r-fw-keep-pair.txt = old.
-    if (psync_own() && g_ps.role == 1 && g_ps.kind == PS_CTXDOWN && GetFileAttributesA("t2r-fw-keep-pair.txt") == INVALID_FILE_ATTRIBUTES) {
-        DULOG("DUEL: u%04x finisher windup: the previous blow's pair u%08x still runs on us - ended now, the SP intro takes our body", g_mdu.uid, g_ps.uid);
-        psync_abort("finisher windup takes our body", 1);
+    if (PsyncOwn() && g_ps.role == 1 && g_ps.kind == PS_CTXDOWN
+        && GetFileAttributesA("t2r-fw-keep-pair.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        DULOG
+            ("DUEL: u%04x finisher windup: the previous blow's pair u%08x still runs on us - ended now, the SP intro takes our body",
+             g_mdu.uid, g_ps.uid);
+        PsyncAbort("finisher windup takes our body", 1);
     }
-    g_mdfwu_cancel_t60 = g_t60 ? g_t60 : 1;                                 // (v5-dis2: the cancel's begin-holster must not stow our melee item, mdu_fw_keep)
-    uint64_t me0 = SID_PLAYER, cr = dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
-    uint64_t r = mhr_animate(SID_PLAYER, sid, 0.0f, 0.10f);
-    if (!r || r == ~0ULL) { DULOG("DUEL: u%04x finisher windup: the SP intro %s was refused by animate_ (%llx) - the finisher starts on the press as before", g_mdu.uid, ic, (unsigned long long)r); return 0; }
-    if (g_mdu_sw_clip) { mstag_speed(g_mdu_sw_clip, 1.0f); g_mdu_sw_clip = 0; }  // (the engine swing's own ping windup: that clip is cancelled)
-    float sp = (float)im / (float)(im + ow);
-    if (ow) dtl_speed(SID_PLAYER, sid, sp);
+    g_mdfwuCancelT60 = g_t60 ? g_t60 : 1;     // (v5-dis2: the cancel's begin-holster must not stow our melee item, mdu_fw_keep)
+    uint64_t me0 = SID_PLAYER, cr =
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
+    uint64_t r = MhrAnimate(SID_PLAYER, sid, 0.0f, 0.10f);
+    if (!r || r == ~0ULL) {
+        DULOG
+            ("DUEL: u%04x finisher windup: the SP intro %s was refused by animate_ (%llx) - the finisher starts on the press as before",
+             g_mdu.uid, ic, (unsigned long long) r);
+        return 0;
+    }
+    if (g_mduSwClip) {
+        mstag_speed(g_mduSwClip, 1.0f);
+        g_mduSwClip = 0;
+    }                           // (the engine swing's own ping windup: that clip is cancelled)
+    float sp = (float) im / (float) (im + ow);
+    if (ow)
+        DTL_SPEED(SID_PLAYER, sid, sp);
     memset(&g_mdfwu, 0, sizeof g_mdfwu);
-    g_mdfwu.on = 1; g_mdfwu.fin = fin; g_mdfwu.im = im; g_mdfwu.tce = im + ow; g_mdfwu.sid = sid; g_mdfwu.t0 = now; g_mdfwu.sp = sp; g_mdfwu.gate = -1;
-    if (h) eb_fin_gasp(h, (uint32_t)s, g_mdu.uid, "the finisher intro's first frame, attacker's screen");   // ps31 D (SP: ai-enemy-melee-pre-strike-shock within 16 ms of the intro start, 59 of 59)
-    g_mdu.sw_tc = now + (uint64_t)(im + ow); g_mdu_sw_sp = sp; g_mdu_sw_xtra = ow;
+    g_mdfwu.on = 1;
+    g_mdfwu.fin = fin;
+    g_mdfwu.im = im;
+    g_mdfwu.tce = im + ow;
+    g_mdfwu.sid = sid;
+    g_mdfwu.t0 = now;
+    g_mdfwu.sp = sp;
+    g_mdfwu.gate = -1;
+    if (h)
+        EbFinGasp(h, (uint32_t) s, g_mdu.uid, "the finisher intro's first frame, attacker's screen"); // ps31 D (SP: ai-enemy-melee-pre-strike-shock within 16 ms of the intro start, 59 of 59)
+    g_mdu.sw_tc = now + (uint64_t) (im + ow);
+    g_mduSwSp = sp;
+    g_mduSwXtra = ow;
     // the contact distance = the authored intro end spot (the -sync pair's attacker start) from the victim's first -sync frame; the approach curve = the intro's own
     // authored closing on the victim (progress only), so the one-owner placement (mdu_warp) follows the intro's steps onto that spot
-    float cv[8], ca[8], A[9] = {0}, F[9] = {0}, D = g_mdu.sw_D; int ok = h && cd_offset_at(h, CD_VIC0(fin), 0.0f, cv);
+    float cv[8], ca[8], A[9] = { 0 }, F[9] = { 0 }, D = g_mdu.sw_D;
+    int ok = h && CdOffsetAt(h, CD_VIC0(fin), 0.0f, cv);
     for (int k = 0; ok && k <= 8; k++) {
-        float t = (float)im * (float)k / 8000.0f; if (k == 8) t *= 0.999f;
-        if (!cd_offset_at(SID_PLAYER, ic, t, ca)) { ok = 0; break; }
-        A[k] = __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) + (ca[2] - cv[2]) * (ca[2] - cv[2]));
-        if (k) { F[k] = A[0] - A[k]; if (F[k] < F[k - 1]) F[k] = F[k - 1]; }
+        float t = (float) im * (float) k / 8000.0f;
+        if (k == 8)
+            t *= 0.999f;
+        if (!CdOffsetAt(SID_PLAYER, ic, t, ca)) {
+            ok = 0;
+            break;
+        }
+        A[k] =
+            __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) +
+                            (ca[2] - cv[2]) * (ca[2] - cv[2]));
+        if (k) {
+            F[k] = A[0] - A[k];
+            if (F[k] < F[k - 1])
+                F[k] = F[k - 1];
+        }
     }
     memset(g_mdu.sw_F, 0, sizeof g_mdu.sw_F);
-    if (ok) { D = A[8]; if (F[8] > 0.05f) memcpy(g_mdu.sw_F, F, sizeof F); }       // (no authored run-in: the time smoothstep of mdu_warp)
+    if (ok) {
+        D = A[8];
+        if (F[8] > 0.05f)
+            memcpy(g_mdu.sw_F, F, sizeof F);
+    }                           // (no authored run-in: the time smoothstep of mdu_warp)
     // v5-sfx: the contact distance is the -sync attacker half's frame-0 spot (where cd_upg_go now turns the pair and psync places us), not the intro's end in the
     // -sync frame (hammer 0.87 m vs 1.13 m: the 0.85 m / 66 deg one-frame snap of A [27215]). t2r-fin-intro-end-spot.txt = the old distance.
-    if (ok && CD_PAIRS[fin].nseg > 1 && GetFileAttributesA("t2r-fin-intro-end-spot.txt") == INVALID_FILE_ATTRIBUTES) {
+    if (ok && CD_PAIRS[fin].nseg > 1
+        && GetFileAttributesA("t2r-fin-intro-end-spot.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
         float cs[8], cv2[8];
-        const float *cvp = h && cd_fin_vic_t(fin) > 0.0f && cd_offset_at(h, CD_VIC0(fin), cd_fin_vic_t(fin), cv2) ? cv2 : cv;   // ps37: against the victim's spot at the -sync switch
-        if (cd_offset_at(SID_PLAYER, CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].att, 0.0f, cs)) {
-            float d1 = __builtin_sqrtf((cs[0] - cvp[0]) * (cs[0] - cvp[0]) + (cs[2] - cvp[2]) * (cs[2] - cvp[2]));
-            DULOG("DUEL: u%04x finisher windup %s: contact distance %.2f m = the -sync attacker start (the intro's own end read %.2f m)", g_mdu.uid, CD_PAIRS[fin].name + 3, (double)d1, (double)D);
+        const float *cvp = h && CdFinVicT(fin) > 0.0f && CdOffsetAt(h, CD_VIC0(fin), CdFinVicT(fin), cv2) ? cv2 : cv;   // ps37: against the victim's spot at the -sync switch
+        if (CdOffsetAt
+            (SID_PLAYER, CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].att,
+             0.0f, cs)) {
+            float d1 =
+                __builtin_sqrtf((cs[0] - cvp[0]) * (cs[0] - cvp[0]) +
+                                (cs[2] - cvp[2]) * (cs[2] - cvp[2]));
+            DULOG
+                ("DUEL: u%04x finisher windup %s: contact distance %.2f m = the -sync attacker start (the intro's own end read %.2f m)",
+                 g_mdu.uid, CD_PAIRS[fin].name + 3, (double) d1,
+                 (double) D);
             D = d1;
         }
     }
-    if (D < MDU_MIN_D) D = MDU_MIN_D;
-    if (D > MDU_REACH) D = MDU_REACH;
+    if (D < MDU_MIN_D)
+        D = MDU_MIN_D;
+    if (D > MDU_REACH)
+        D = MDU_REACH;
     g_mdu.sw_D = D;
-    padinj_block("melee-attack", g_mdu.sw_tc + 40);                         // (a press during the intro must not start an engine swing over it)
-    DULOG("DUEL: u%04x FINISHER WINDUP on slot %d: the lethal swing %s is replaced on its first frame (cancel %llx) by the SP intro %s of %s (%d ms) -> animate_ %llx; contact = the -sync pair's start in %d ms (+%d ms one-way windup, clip x%.2f) at %.2f m (authored intro end%s; we start %.2f m off, the intro closes %.2f m); the victim's body stays free - its dodge window is this windup",
-          g_mdu.uid, s, m->move, (unsigned long long)cr, ic, CD_PAIRS[fin].name + 3, im, (unsigned long long)r, im + ow, ow, (double)sp, (double)D, ok ? "" : " UNREADABLE - the swing's own contact distance", (double)g_mdu.sw_d0, (double)(ok ? A[0] - A[8] : 0.0f));
+    PadinjBlock("melee-attack", g_mdu.sw_tc + 40);     // (a press during the intro must not start an engine swing over it)
+    DULOG
+        ("DUEL: u%04x FINISHER WINDUP on slot %d: the lethal swing %s is replaced on its first frame (cancel %llx) by the SP intro %s of %s (%d ms) -> animate_ %llx; contact = the -sync pair's start in %d ms (+%d ms one-way windup, clip x%.2f) at %.2f m (authored intro end%s; we start %.2f m off, the intro closes %.2f m); the victim's body stays free - its dodge window is this windup",
+         g_mdu.uid, s, m->move, (unsigned long long) cr, ic,
+         CD_PAIRS[fin].name + 3, im, (unsigned long long) r, im + ow, ow,
+         (double) sp, (double) D,
+         ok ? "" : " UNREADABLE - the swing's own contact distance",
+         (double) g_mdu.sw_d0, (double) (ok ? A[0] - A[8] : 0.0f));
     return 1;
 }
+
 // v5-sfx press latch (the finisher windup restarted when F was spammed; A [45227]-[45304]: mpace's buffered press "lock over after 953 ms -
 // replaying the buffered press" + the bot's / the player's re-presses started engine swings over the SP intro, each one re-ran the lethal-swing pick = 4 picks,
 // 4 intro restarts for one kill, B the same through the replica). Once a lethal swing is a FINISHER WINDUP, and while our attacker half of a finisher / dodge
 // counter / disarm pair runs, every melee press is swallowed: the engine's melee is off each frame (player-disable-melee, the pace lock's own call - keyboard F
 // included, which the pad block never hid), melee_pace.c drops its buffer and replays nothing. Pins and the duel's -hit pairs keep their presses (the pin's
 // QTE blows and the combo's next step read them). Ends at the hand-over / the attacker release / any abort. t2r-duel-no-fin-latch.txt = off.
-static int mad_drawing(void);   // melee_autodraw.c
-static int wb_pending(void);   // wpnbreak.c (v5-wbreak): our weapon broke, its drop-broken gesture has not reached the drop frame yet
-static const char *mdu_press_latched(void) {
-    static int off = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-duel-no-fin-latch.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off) return NULL;
+static int MadDrawing(void);   // melee_autodraw.c
+static int WbPending(void);    // wpnbreak.c (v5-wbreak): our weapon broke, its drop-broken gesture has not reached the drop frame yet
+static const char *MduPressLatched(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-duel-no-fin-latch.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off)
+        return NULL;
     // v5-wbreak (a press while the 2h weapon was breaking started the engine's 2h kill move (knee-face-bash) that the drop frame cut in half, then a fist
     // kill stitched on): SP's player is in the drop-broken-weapon gesture (0.83 s) after the breaking blow - no melee press, no buffered combo press, until the weapon has left the hand
-    if (wb_pending()) return "the weapon is breaking (drop-broken gesture)";
-    if (g_mdp_tl_until) { if (n < g_mdp_tl_until && g_mdu.slot >= 0 && !g_mdu.pair_on && mdu_turnlock_on()) return "the partner's swing is on us: their turn until its contact (ps41 turn lock; dodge is open)"; g_mdp_tl_until = 0; }
-    if (mad_drawing()) return "the melee weapon is being drawn";   // (melee_autodraw.c)
-    if (g_p31r.on) return "far finisher run-in (ps31): the finisher intro follows it";
-    if (g_mdfwu.on && !g_mdfwu.punch) return "finisher windup";   // (punch rule: our lethal swing is a normal engine swing - player-disable-melee would cut it)
-    if (g_mdu_init_until > n) return "our swing was parried / clashed: the pair to its hand-off, then the parrier's initiative (ps28)";
+    if (WbPending())
+        return "the weapon is breaking (drop-broken gesture)";
+    if (g_mdpTlUntil) {
+        if (n < g_mdpTlUntil && g_mdu.slot >= 0 && !g_mdu.pair_on
+            && MduTurnlockOn())
+            return
+                "the partner's swing is on us: their turn until its contact (ps41 turn lock; dodge is open)";
+        g_mdpTlUntil = 0;
+    }
+    if (MadDrawing())
+        return "the melee weapon is being drawn";       // (melee_autodraw.c)
+    if (g_p31r.on)
+        return "far finisher run-in (ps31): the finisher intro follows it";
+    if (g_mdfwu.on && !g_mdfwu.punch)
+        return "finisher windup";       // (punch rule: our lethal swing is a normal engine swing - player-disable-melee would cut it)
+    if (g_mduInitUntil > n)
+        return
+            "our swing was parried / clashed: the pair to its hand-off, then the parrier's initiative (ps28)";
     // ps39 A (after every contextual finisher the attacker seemed to spam melee, shimmering and gliding forwards and backwards to the downed player;
     // log [19803] 'attacker released at 2.28 s ... the victim half plays on to 4.47 s', then [19805]-[19891] 30+ 'npcwind: fist-light-attack-1 cancelled - the
     // takedown victim (slot 0) is still in its half' and 'melee lunge ... we slid 0.06 m in 1 frames' every 2 frames): melee_npcwind.c cancelled each swing one
@@ -1096,37 +2418,84 @@ static const char *mdu_press_latched(void) {
     // lunge step. The swing must not start: while our takedown / finisher / escape pair's victim half still runs (released attacker or not), and 150 ms past
     // its end so the engine's buffered press dies, the engine gets player-disable-melee (every input device). Not while we pin (the pin blows are presses).
     // t2r-takedown-latch-ps38.txt = old (the cancel only).
-    {   static uint64_t gap_until; static int g39 = -1; static uint64_t g39at;
-        if (g39 < 0 || n - g39at > 3000) { g39at = n; g39 = GetFileAttributesA("t2r-takedown-latch-ps38.txt") == INVALID_FILE_ATTRIBUTES; }
+    {
+        static uint64_t gap_until;
+        static int g39 = -1;
+        static uint64_t g39at;
+        if (g39 < 0 || n - g39at > 3000) {
+            g39at = n;
+            g39 =
+                GetFileAttributesA("t2r-takedown-latch-ps38.txt") ==
+                INVALID_FILE_ATTRIBUTES;
+        }
         if (g39) {
             // ps41: the same rule for an EXECUTION (psync kind PS_MELEE_EXEC): the test read kind == PS_CTXDOWN only, so after the attacker's release nothing held
             // melee presses off while the executed victim's half still played. t2r-exec-latch-off.txt = executions as before.
-            static int x41 = -1; static uint64_t x41at; static int was_exec;
-            if (x41 < 0 || n - x41at > 3000) { x41at = n; x41 = GetFileAttributesA("t2r-exec-latch-off.txt") == INVALID_FILE_ATTRIBUTES; }
+            static int x41 = -1;
+            static uint64_t x41at;
+            static int was_exec;
+            if (x41 < 0 || n - x41at > 3000) {
+                x41at = n;
+                x41 =
+                    GetFileAttributesA("t2r-exec-latch-off.txt") ==
+                    INVALID_FILE_ATTRIBUTES;
+            }
             int exec = x41 && g_ps.kind == PS_MELEE_EXEC;
-            int gap = psync_own() && g_ps.role == 1 && (g_ps.kind == PS_CTXDOWN || exec) && !mdu_move(g_ps.move) && !mpn_hold_att() && g_ps.vic >= 0 && g_ps.vic < T2R_MAX_PEERS && !g_ps.out_done[1]
-                      && psync_ms() - g_ps.t0 < g_ps.vic_dur * 1000.0;
-            if (gap) { gap_until = n + 150; was_exec = exec; }
-            if (gap || n < gap_until) return was_exec ? "execution: its victim is still in its half (+150 ms after it; ps41, t2r-exec-latch-off.txt = old) - no swing starts on it" : "takedown: its victim is still in its half (+150 ms after it; ps39) - no swing starts on it";
+            int gap = PsyncOwn() && g_ps.role == 1
+                && (g_ps.kind == PS_CTXDOWN || exec)
+                && !MduMove(g_ps.move) && !MpnHoldAtt() && g_ps.vic >= 0
+                && g_ps.vic < T2R_MAX_PEERS && !g_ps.out_done[1]
+                && PsyncMs() - g_ps.t0 < g_ps.vic_dur * 1000.0;
+            if (gap) {
+                gap_until = n + 150;
+                was_exec = exec;
+            }
+            if (gap || n < gap_until)
+                return was_exec ?
+                    "execution: its victim is still in its half (+150 ms after it; ps41, t2r-exec-latch-off.txt = old) - no swing starts on it"
+                    :
+                    "takedown: its victim is still in its half (+150 ms after it; ps39) - no swing starts on it";
         }
     }
-    if (!psync_own() || g_ps.role != 1 || g_ps.kind != PS_CTXDOWN || (g_cd_sfx.uid == g_ps.uid && g_cd_sfx.att_freed) || mpn_hold_att()) return NULL;
-    int p = cd_pair_of_move(g_ps.move);
-    if (p < 0) return NULL;
+    if (!PsyncOwn() || g_ps.role != 1 || g_ps.kind != PS_CTXDOWN
+        || (g_cdSfx.uid == g_ps.uid && g_cdSfx.att_freed)
+        || MpnHoldAtt())
+        return NULL;
+    int p = CdPairOfMove(g_ps.move);
+    if (p < 0)
+        return NULL;
     const char *nm = CD_PAIRS[p].name;
-    if (strstr(nm, "wall") || strstr(nm, "cover")) return NULL;
-    if (!strncmp(nm, "mf-", 3)) return "finisher pair";
-    if (!strncmp(nm, "dc-", 3)) return "dodge counter pair";
-    if (strstr(nm, "disarm") || strstr(CD_ATT0(p), "disarm")) return "disarm pair";
+    if (strstr(nm, "wall") || strstr(nm, "cover"))
+        return NULL;
+    if (!strncmp(nm, "mf-", 3))
+        return "finisher pair";
+    if (!strncmp(nm, "dc-", 3))
+        return "dodge counter pair";
+    if (strstr(nm, "disarm") || strstr(CD_ATT0(p), "disarm"))
+        return "disarm pair";
     return NULL;
 }
-static void mdu_press_latch_tick(void) {
-    static const char *was; static int nl;
-    const char *why = mdu_press_latched();
-    if (why) { uint64_t none = 0; dc_call(0x0fa21391e0e4e478ULL /* player-disable-melee */, 0, &none); }
-    if (why != was) { if (LOGCAP(nl, 80)) DULOG("DUEL: press latch %s%s", why ? "ON - melee presses swallowed: " : "off", why ? why : (was ? was : "")); was = why; }
+
+static void MduPressLatchTick(void)
+{
+    static const char *was;
+    static int nl;
+    const char *why = MduPressLatched();
+    if (why) {
+        uint64_t none = 0;
+        DcCall(0x0fa21391e0e4e478ULL /* player-disable-melee */ , 0,
+                &none);
+    }
+    if (why != was) {
+        if (LOGCAP(nl, 80))
+            DULOG("DUEL: press latch %s%s",
+                  why ? "ON - melee presses swallowed: " : "off",
+                  why ? why : (was ? was : ""));
+        was = why;
+    }
 }
-static uint64_t mdu_blow_weapon(void);   // (v5-sfx, below g_mdw)
+
+static uint64_t MduBlowWeapon(void);  // (v5-sfx, below g_mdw)
 // the finisher's path gate asked ahead of the windup's contact (cd_upg_go probe: no start), so the contact finds the verdict cached
 // (the finisher did not play, B [41936]-[41940] Bookstore): the windup's 1h-blunt-quick-right was refused by the path gate (its victim
 // path, 2.12 m with the lying body, met clutter 0.6 m behind the victim); the contact's alternative loop asked cd_fin_pick for "the alt-th next" row, which
@@ -1135,27 +2504,73 @@ static uint64_t mdu_blow_weapon(void);   // (v5-sfx, below g_mdw)
 // mirror rows, sorted by spacing fit), the rows sharing the windup's SP intro first (seamless), then the others with their own SP intro from frame 0; each is
 // path-gated against the actual space (all gates kicked in one frame, pg_gate holds 16 - the verdicts come back together on the next frame), every refusal
 // logged; then the surface takedown against the blocking wall / cover (ctxdown's plan); only then the plain down blow. t2r-duel-fin-chain-off.txt = the old loop.
-static struct { uint64_t sw; int n, i, wait, c[CD_N]; float g[CD_N]; } g_mfc;
-static int mdu_fin_chain_off(void) { return GetFileAttributesA("t2r-duel-fin-chain-off.txt") != INVALID_FILE_ATTRIBUTES; }
-static int mdu_fin_same_intro(int nx) { return !g_mdfwu.on || g_mdfwu.fin < 0 || !strcmp(CD_ATT0(nx), CD_ATT0(g_mdfwu.fin)); }
+static struct {
+    uint64_t sw;
+    int n, i, wait, c[CD_N];
+    float g[CD_N];
+} g_mfc;
+static int MduFinChainOff(void)
+{
+    return GetFileAttributesA("t2r-duel-fin-chain-off.txt") !=
+        INVALID_FILE_ATTRIBUTES;
+}
+
+static int MduFinSameIntro(int nx)
+{
+    return !g_mdfwu.on || g_mdfwu.fin < 0
+        || !strcmp(CD_ATT0(nx), CD_ATT0(g_mdfwu.fin));
+}
+
 // (finisher animation bug; log [22442]-[22468]): the disarm shoulder-check windup (500 ms intro) was refused by the path gate 32 ms before its contact
 // and the contact then played a DIFFERENT move - the wall throat punch surface takedown ("FINISHER at a surface FIRST", the windup's intro blended out over 0.25 s):
 // the viewer saw the disarm windup and a throat punch. One outcome decided before contact: (1) a surface plan that is ready when the swing starts takes the swing
 // itself (no finisher windup is played for a move the contact would drop); (2) once a windup runs, only rows sharing ITS intro may follow it - never another
 // row's own intro, never a surface takedown; no such row fits the room = the plain down blow. t2r-fin-windup-plan-old.txt = the old behaviour.
-static int mdu_fwplan_on(void) {
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-fin-windup-plan-old.txt") != INVALID_FILE_ATTRIBUTES;
-        if (o != v) xlog("DUEL: finisher windup plan consistency %s", o ? "OFF (t2r-fin-windup-plan-old.txt): a refused windup finisher may fall to another finisher's intro / a surface takedown" : "ON: the windup's move is the move that lands (surface plan decides before the windup; a refused windup falls only to rows with its intro, else the plain blow)");
-        v = o; }
+static int MduFwplanOn(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-fin-windup-plan-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: finisher windup plan consistency %s",
+                 o ?
+                 "OFF (t2r-fin-windup-plan-old.txt): a refused windup finisher may fall to another finisher's intro / a surface takedown"
+                 :
+                 "ON: the windup's move is the move that lands (surface plan decides before the windup; a refused windup falls only to rows with its intro, else the plain blow)");
+        v = o;
+    }
     return !v;
 }
+
 // Regression (sprinting at a player and hitting just made them fall over, with no animation or finisher; log [61732]: the windup's
 // 1h-blunt-left-head-stop was refused - victim 71 deg off, max 30 - and the strict rule allowed only rows with the same intro: 0 of 7 other rows tried, plain
 // down blow). A finisher always beats none: the fallback chain tries every row again and the surface takedown after it (the pre-4989c83c order). The strict
 // same-intro rule is only on with t2r-fin-windup-strict.txt. The surface-plan-first part (no windup when a surface plan is ready) stays on.
-static int mdu_fwstrict_on(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-fin-windup-strict.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int mdu_fw_surface_ready(int s) { return mdu_fwplan_on() && g_cd.plan_ok && g_cd.plan_slot == s && GetFileAttributesA("t2r-duel-fin-open-first.txt") == INVALID_FILE_ATTRIBUTES; }
+static int MduFwstrictOn(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-fin-windup-strict.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static int MduFwSurfaceReady(int s)
+{
+    return MduFwplanOn() && g_cd.plan_ok && g_cd.plan_slot == s
+        && GetFileAttributesA("t2r-duel-fin-open-first.txt") ==
+        INVALID_FILE_ATTRIBUTES;
+}
+
 // ps46 (the last punch downed the victim normally instead of playing a finisher or a wall takedown; rule: every
 // downing blow of a duel plays an SP finisher or, at a wall / half wall, the surface takedown - never the plain engine down). The ps44 T9 back rule (a blow from
 // behind > 90 deg = SP's back reaction, then the turn) is for NON-downing blows only, and stays: the lethal blow is decided above it in mdu_contact.
@@ -1168,50 +2583,120 @@ static int mdu_fw_surface_ready(int s) { return mdu_fwplan_on() && g_cd.plan_ok 
 //       drop / attacker / exit bit) and whose victim ROOT path stays >= MD46_ROOT_CLEAR clear of the duel's ray fan plays with its gate kept
 //       (g_cd_fin_gate_keep; the spot / turn guards still apply) - the most room wins. None = the plain down blow as before (logged).
 // t2r-down-fin-ps46-old.txt = old (re-read every 2 s). Proof lines: 'DUEL: ps46 D1 / D2 / D3'.
-#define MD46_ROOT_CLEAR 0.30f      // [TUNING ps46] m the victim's root path must stay off the fan's wall hit (the body radius) for the D3 last resort
-static struct { uint64_t arm_sw, late_sw, d3_sw; } g_md46;
-static int md46_off(void) {
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-down-fin-ps46-old.txt") != INVALID_FILE_ATTRIBUTES;
-        if (o != v) DULOG("DUEL: ps46 downing-blow rule %s", o ? "OFF (t2r-down-fin-ps46-old.txt): the old lethal paths (plain down blow when no finisher starts)" : "ON: a blow that downs at its contact picks a finisher / surface takedown there (D1 / D2), every row refused by the room = the victim-wall-only row with its gate kept (D3)");
-        v = o; }
+#define MD46_ROOT_CLEAR 0.30f   // [TUNING ps46] m the victim's root path must stay off the fan's wall hit (the body radius) for the D3 last resort
+static struct {
+    uint64_t arm_sw, late_sw, d3_sw;
+} g_md46;
+static int Md46Off(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-down-fin-ps46-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            DULOG("DUEL: ps46 downing-blow rule %s",
+                  o ?
+                  "OFF (t2r-down-fin-ps46-old.txt): the old lethal paths (plain down blow when no finisher starts)"
+                  :
+                  "ON: a blow that downs at its contact picks a finisher / surface takedown there (D1 / D2), every row refused by the room = the victim-wall-only row with its gate kept (D3)");
+        v = o;
+    }
     return v;
 }
-static int md46_late(void) { return !md46_off() && g_md46.late_sw && g_md46.late_sw == g_mdu.sw_t0 && !g_mdfwu.on; }   // D2: the finisher was armed at the contact
-static int mdu_fin_try_row(int s, uint64_t mel, int nx, int probe) {
-    int sk = g_cd_fin_skip_intro, wu = g_cd_fin_windup, pr = g_cd_fin_probe;
-    g_cd_fin_probe = probe;
-    g_cd_fin_skip_intro = g_cd_fin_windup = (g_mdfwu.on && (g_mdfwu.punch || mdu_fin_same_intro(nx))) || md46_late();   // (punch rule: every fallback row passes its intro over too - the punch already landed)   // another intro: the row plays its own SP intro from frame 0 (no skip)
-    int r = cd_upg_go((uint32_t)s, mel, 0, nx);
-    g_cd_fin_skip_intro = sk; g_cd_fin_windup = wu; g_cd_fin_probe = pr;
+
+static int Md46Late(void)
+{
+    return !Md46Off() && g_md46.late_sw && g_md46.late_sw == g_mdu.sw_t0
+        && !g_mdfwu.on;
+}                               // D2: the finisher was armed at the contact
+
+static int MduFinTryRow(int s, uint64_t mel, int nx, int probe)
+{
+    int sk = g_cdFinSkipIntro, wu = g_cdFinWindup, pr =
+        g_cdFinProbe;
+    g_cdFinProbe = probe;
+    g_cdFinSkipIntro = g_cdFinWindup = (g_mdfwu.on && (g_mdfwu.punch || MduFinSameIntro(nx))) || Md46Late();   // (punch rule: every fallback row passes its intro over too - the punch already landed)   // another intro: the row plays its own SP intro from frame 0 (no skip)
+    int r = CdUpgGo((uint32_t) s, mel, 0, nx);
+    g_cdFinSkipIntro = sk;
+    g_cdFinWindup = wu;
+    g_cdFinProbe = pr;
     return r;
 }
-static struct { uint64_t sw, f0, tried; int wait; } g_mwc44;
+
+static struct {
+    uint64_t sw, f0, tried;
+    int wait;
+} g_mwc44;
 // ps47 (log [12913]-[12930]): after the windup's intro the contact re-gate refused, the 12-frame forced scan ran while the intro stood on its last frame (+282 ms late
 // contact, a freeze). After an intro the scan no longer waits (a surface takedown never follows a windup anyway: fwstrict). t2r-fw-scan-ps47-old.txt = old.
-static int fwsc47_off(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-fw-scan-ps47-old.txt") != INVALID_FILE_ATTRIBUTES; } return off; }      // ps44 T10: the forced wall / half-wall scan of one lethal blow (sw = its swing start)
-static void mdu_fin_chain_build(int s, uint64_t mel, int first) {
-    if (g_mfc.sw == g_mdu.sw_t0 && g_mfc.sw) return;
-    int c[CD_N]; float g[CD_N]; int n = cd_fin_all((uint32_t)s, c, g, (int)CD_N);
-    g_mfc.sw = g_mdu.sw_t0; g_mfc.n = 0; g_mfc.i = 0; g_mfc.wait = 0;
-    uint64_t vmk = mdk_vm(s); int nd46k = 0;                         // ps46k: an armed victim - the disarm rows (intro tiers as before) ahead of every non-disarm row
+static int Fwsc47Off(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-fw-scan-ps47-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return off;
+}                               // ps44 T10: the forced wall / half-wall scan of one lethal blow (sw = its swing start)
+
+static void MduFinChainBuild(int s, uint64_t mel, int first)
+{
+    if (g_mfc.sw == g_mdu.sw_t0 && g_mfc.sw)
+        return;
+    int c[CD_N];
+    float g[CD_N];
+    int n = CdFinAll((uint32_t) s, c, g, (int) CD_N);
+    g_mfc.sw = g_mdu.sw_t0;
+    g_mfc.n = 0;
+    g_mfc.i = 0;
+    g_mfc.wait = 0;
+    uint64_t vmk = MdkVm(s);
+    int nd46k = 0;              // ps46k: an armed victim - the disarm rows (intro tiers as before) ahead of every non-disarm row
     for (int pass = 0; pass < (vmk ? 4 : 2); pass++)
         for (int k = 0; k < n; k++) {
             int pi = vmk ? (pass & 1) : pass;
-            if (c[k] == first || mdu_fin_same_intro(c[k]) != !pi) continue;
-            if (vmk && mdk_is_dis(c[k], vmk) != (pass < 2)) continue;
-            if (pi && g_mdfwu.on && mdu_fwstrict_on()) continue;   // another row's own intro would replace the windup that played
-            if (vmk && pass < 2) nd46k++;
-            g_mfc.c[g_mfc.n] = c[k]; g_mfc.g[g_mfc.n] = g[k]; g_mfc.n++;
+            if (c[k] == first || MduFinSameIntro(c[k]) != !pi)
+                continue;
+            if (vmk && MdkIsDis(c[k], vmk) != (pass < 2))
+                continue;
+            if (pi && g_mdfwu.on && MduFwstrictOn())
+                continue;       // another row's own intro would replace the windup that played
+            if (vmk && pass < 2)
+                nd46k++;
+            g_mfc.c[g_mfc.n] = c[k];
+            g_mfc.g[g_mfc.n] = g[k];
+            g_mfc.n++;
         }
-    if (vmk) MDKLOG("DUEL: ps46k u%04x fallback chain after %s on slot %d: %d disarm row(s) of the weapon pair first, then %d other row(s) (victim's item class %llx)", g_mdu.uid, first >= 0 ? CD_PAIRS[first].name + 3 : "?", s, nd46k, g_mfc.n - nd46k, (unsigned long long)vmk);
-    char l[700]; int o = 0; l[0] = 0;
-    for (int k = 0; k < g_mfc.n && o < (int)sizeof l - 80; k++)
-        o += snprintf(l + o, sizeof l - (size_t)o, "%s%s%s gap %.2f", k ? ", " : "", CD_PAIRS[g_mfc.c[k]].name + 3, mdu_fin_same_intro(g_mfc.c[k]) && g_mdfwu.on ? " (the windup's intro)" : "", (double)(g_mfc.g[k] < 8.0f ? g_mfc.g[k] : 0.0f));
-    DULOG("DUEL: u%04x finisher fallback chain after %s was refused: %d other loaded row(s) of the weapon (the windup's own intro first, then by spacing fit): %s - every path gate kicked now; then the surface takedown, then the plain down blow",
-          g_mdu.uid, first >= 0 ? CD_PAIRS[first].name + 3 : "?", g_mfc.n, g_mfc.n ? l : "none");
-    for (int k = 0; k < g_mfc.n; k++) mdu_fin_try_row(s, mel, g_mfc.c[k], 1);
+    if (vmk)
+        MDKLOG
+            ("DUEL: ps46k u%04x fallback chain after %s on slot %d: %d disarm row(s) of the weapon pair first, then %d other row(s) (victim's item class %llx)",
+             g_mdu.uid, first >= 0 ? CD_PAIRS[first].name + 3 : "?", s,
+             nd46k, g_mfc.n - nd46k, (unsigned long long) vmk);
+    char l[700];
+    int o = 0;
+    l[0] = 0;
+    for (int k = 0; k < g_mfc.n && o < (int) sizeof l - 80; k++)
+        o += snprintf(l + o, sizeof l - (size_t) o, "%s%s%s gap %.2f",
+                      k ? ", " : "", CD_PAIRS[g_mfc.c[k]].name + 3,
+                      MduFinSameIntro(g_mfc.c[k])
+                      && g_mdfwu.on ? " (the windup's intro)" : "",
+                      (double) (g_mfc.g[k] < 8.0f ? g_mfc.g[k] : 0.0f));
+    DULOG
+        ("DUEL: u%04x finisher fallback chain after %s was refused: %d other loaded row(s) of the weapon (the windup's own intro first, then by spacing fit): %s - every path gate kicked now; then the surface takedown, then the plain down blow",
+         g_mdu.uid, first >= 0 ? CD_PAIRS[first].name + 3 : "?", g_mfc.n,
+         g_mfc.n ? l : "none");
+    for (int k = 0; k < g_mfc.n; k++)
+        MduFinTryRow(s, mel, g_mfc.c[k], 1);
 }
+
 // ps41 GATE FIRST. log [15558] 'FINISHER WINDUP ... replaced on its first frame by the SP intro ellie-2hblunt-kill-right-ko-2-intro', [15595] 'path
 // gate ... attacker end 112.72 282.45 0 open (mask 00) NO EXIT', [15596] 'the path is blocked (path gate) - plain down hit': the gate was asked 90 ms before the
 // intro's end (MDU_FW_LEAD_MS; its answer takes 3-4 frames, 40-62 ms), so both screens saw 0.6 s of an intro that was then cut, and no downing blow.
@@ -1223,154 +2708,395 @@ static void mdu_fin_chain_build(int s, uint64_t mel, int first) {
 // only on such a YES - no YES / no answer = the plain swing, its contact decides as before. An intro that started on a YES is not refused by a later gate NO
 // while the victim still stands on the answered spot (mfg_keep: the contact's gate is overridden, logged); a victim that moved is gated again as before.
 // t2r-fin-gate-first-off.txt = old (no background gate, the intro starts ungated).
-#define MFG_MAX_AGE_MS 2000        // [TUNING ps41] an answer older than this is not used (level geometry is static; the positions are checked separately)
-#define MFG_REASK_MS 1200          // [TUNING ps41] a standing answer is asked again after this long
-#define MFG_VIC_M 0.25f            // the gate's own cache tolerance for the victim's spot (pg_gate_base)
-#define MFG_BR_DEG 20.0f           // the fan precompute's bearing tolerance (mfp_lookup)
-#define MFG_TRIES 24               // frames one probe may stay unanswered ([TUNING ps41]; rec40a: 3-4)
-static struct { int slot, n, row[MFP_N], ans[MFP_N], asking, tries, cur, keep_fin; uint64_t t[MFP_N], ask0, keep_t; float vx[MFP_N], vz[MFP_N], br[MFP_N], avx, avz, abr, kvx, kvz, kbr; unsigned evals, yes, no, tmo, kept; } g_mfg = {.slot = -1, .asking = -1, .keep_fin = -1};
-static int mfg_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-fin-gate-first-off.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: finisher gate first %s (ps41)", o ? "OFF (t2r-fin-gate-first-off.txt): the intro starts ungated, the gate is asked 90 ms before its end" : "ON: the finisher rows' path gates are answered in the background while the opponent is one hit from down; an intro starts only on a fresh YES"); v = o; } return v; }
+#define MFG_MAX_AGE_MS 2000     // [TUNING ps41] an answer older than this is not used (level geometry is static; the positions are checked separately)
+#define MFG_REASK_MS 1200       // [TUNING ps41] a standing answer is asked again after this long
+#define MFG_VIC_M 0.25f         // the gate's own cache tolerance for the victim's spot (pg_gate_base)
+#define MFG_BR_DEG 20.0f        // the fan precompute's bearing tolerance (mfp_lookup)
+#define MFG_TRIES 24            // frames one probe may stay unanswered ([TUNING ps41]; rec40a: 3-4)
+static struct {
+    int slot, n, row[MFP_N], ans[MFP_N], asking, tries, cur, keep_fin;
+    uint64_t t[MFP_N], ask0, keep_t;
+    float vx[MFP_N], vz[MFP_N], br[MFP_N], avx, avz, abr, kvx, kvz, kbr;
+    unsigned evals, yes, no, tmo, kept;
+} g_mfg = {.slot = -1,.asking = -1,.keep_fin = -1 };
+
+static int MfgOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-fin-gate-first-off.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: finisher gate first %s (ps41)",
+                 o ?
+                 "OFF (t2r-fin-gate-first-off.txt): the intro starts ungated, the gate is asked 90 ms before its end"
+                 :
+                 "ON: the finisher rows' path gates are answered in the background while the opponent is one hit from down; an intro starts only on a fresh YES");
+        v = o;
+    }
+    return v;
+}
+
 // the answer for row index i against where the bodies stand now: 1 YES, 0 NO, -1 none / not usable (*why)
-static int mfg_valid(int i, const float *vl, const float *me, int *age, const char **why) {
+static int MfgValid(int i, const float *vl, const float *me, int *age,
+                     const char **why)
+{
     uint64_t now = GetTickCount64();
-    *age = g_mfg.t[i] ? (int)(now - g_mfg.t[i]) : -1; *why = "";
-    if (!g_mfg.t[i]) { *why = "no answer yet"; return -1; }
-    if (*age > MFG_MAX_AGE_MS) { *why = "too old"; return -1; }
+    *age = g_mfg.t[i] ? (int) (now - g_mfg.t[i]) : -1;
+    *why = "";
+    if (!g_mfg.t[i]) {
+        *why = "no answer yet";
+        return -1;
+    }
+    if (*age > MFG_MAX_AGE_MS) {
+        *why = "too old";
+        return -1;
+    }
     float dvx = vl[0] - g_mfg.vx[i], dvz = vl[2] - g_mfg.vz[i];
-    if (dvx * dvx + dvz * dvz > MFG_VIC_M * MFG_VIC_M) { *why = "the victim moved"; return -1; }
-    if (__builtin_fabsf(cd_wrap180((__builtin_atan2f(me[0] - vl[0], me[2] - vl[2]) - g_mfg.br[i]) * 57.29578f)) > MFG_BR_DEG) { *why = "the bearing turned"; return -1; }
+    if (dvx * dvx + dvz * dvz > MFG_VIC_M * MFG_VIC_M) {
+        *why = "the victim moved";
+        return -1;
+    }
+    if (__builtin_fabsf
+        (CdWrap180
+         ((__builtin_atan2f(me[0] - vl[0], me[2] - vl[2]) -
+           g_mfg.br[i]) * 57.29578f)) > MFG_BR_DEG) {
+        *why = "the bearing turned";
+        return -1;
+    }
     return g_mfg.ans[i];
 }
-static int mfg_locs(int s, float *vb, float *mb, const float **vl, const float **me) {
-    uint64_t h = s >= 0 ? puppet_handle((uint32_t)s) : 0;
-    *vl = h && h != ~0ULL ? puppet_locator(h, vb) : NULL; *me = player_locator(mb);
-    return *vl && *me && __builtin_isfinite((*vl)[0]) && __builtin_isfinite((*me)[0]);
+
+static int MfgLocs(int s, float *vb, float *mb, const float **vl,
+                    const float **me)
+{
+    uint64_t h = s >= 0 ? PuppetHandle((uint32_t) s) : 0;
+    *vl = h && h != ~0ULL ? PuppetLocator(h, vb) : NULL;
+    *me = PlayerLocator(mb);
+    return *vl && *me && __builtin_isfinite((*vl)[0])
+        && __builtin_isfinite((*me)[0]);
 }
+
 // every frame (mdu_tick, after mfp_tick): one probe in flight
-static void mfg_tick(void) {
-    int s = g_mfp.slot; uint64_t now = GetTickCount64();
-    if (mfg_off() || !g_mdu.on || s < 0 || g_mfp.n <= 0 || s != g_mdwf.slot || !g_mdwf.ms || now - g_mdwf.ms > 300) { g_mfg.asking = -1; if (s < 0 || g_mfp.n <= 0) { g_mfg.n = 0; g_mfg.slot = -1; } return; }
-    if (g_mfg.slot != s || g_mfg.n != g_mfp.n || memcmp(g_mfg.row, g_mfp.row, sizeof(int) * (size_t)g_mfp.n)) {      // the candidate list changed: answers of the rows that stay are kept
-        typeof(g_mfg) o = g_mfg; int on = o.slot == s ? o.n : 0;
-        for (int i = 0; i < g_mfp.n; i++) {
-            g_mfg.row[i] = g_mfp.row[i]; g_mfg.t[i] = 0; g_mfg.ans[i] = -1;
-            for (int j = 0; j < on; j++) if (o.row[j] == g_mfp.row[i]) { g_mfg.t[i] = o.t[j]; g_mfg.ans[i] = o.ans[j]; g_mfg.vx[i] = o.vx[j]; g_mfg.vz[i] = o.vz[j]; g_mfg.br[i] = o.br[j]; break; }
+static void MfgTick(void)
+{
+    int s = g_mfp.slot;
+    uint64_t now = GetTickCount64();
+    if (MfgOff() || !g_mdu.on || s < 0 || g_mfp.n <= 0 || s != g_mdwf.slot
+        || !g_mdwf.ms || now - g_mdwf.ms > 300) {
+        g_mfg.asking = -1;
+        if (s < 0 || g_mfp.n <= 0) {
+            g_mfg.n = 0;
+            g_mfg.slot = -1;
         }
-        g_mfg.n = g_mfp.n; g_mfg.slot = s; g_mfg.asking = -1; if (g_mfg.cur >= g_mfg.n) g_mfg.cur = 0;
-    }
-    if (g_mdfwu.on || g_p31r.on || g_downed || g_down_dying) { g_mfg.asking = -1; return; }      // (a running windup asks its own gate, mdu_fw_probe)
-    if (g_ps.role && !(mdu_in_pair() && g_ps.role == 1 && g_ps.vic == s)) { g_mfg.asking = -1; return; }   // (cd_upg_go answers 0 inside any other pair of ours)
-    float vb[16], mb[16]; const float *vl, *me;
-    if (!mfg_locs(s, vb, mb, &vl, &me)) { g_mfg.asking = -1; return; }
-    float dx = me[0] - vl[0], dz = me[2] - vl[2], d = __builtin_sqrtf(dx * dx + dz * dz);
-    if (d < 0.30f || d > 3.8f) { g_mfg.asking = -1; return; }      // (cd_upg_go's own range is 0.05-4.0 m)
-    int i = g_mfg.asking;
-    if (i < 0 || i >= g_mfg.n) {
-        i = -1; int old_i = -1, old_age = MFG_REASK_MS;
-        {   static int alt46k; uint64_t vmk = mdk_vm(s);       // ps46k: an armed victim - every other probe goes to a disarm row without a usable answer first
-            if (vmk && (alt46k ^= 1))
-                for (int k = 0; k < g_mfg.n && i < 0; k++) { int q = (g_mfg.cur + k) % g_mfg.n, age = 0; const char *why; if (mdk_is_dis(g_mfg.row[q], vmk) && mfg_valid(q, vl, me, &age, &why) < 0) i = q; } }
-        for (int k = 0; k < g_mfg.n && i < 0; k++) {
-            int q = (g_mfg.cur + k) % g_mfg.n, age = 0; const char *why;
-            if (mfg_valid(q, vl, me, &age, &why) < 0) i = q;
-            else if (age > old_age) { old_age = age; old_i = q; }
-        }
-        if (i < 0) i = old_i;
-        if (i < 0) return;                                           // every row has a usable answer
-        g_mfg.asking = i; g_mfg.tries = 0; g_mfg.ask0 = now; g_mfg.avx = vl[0]; g_mfg.avz = vl[2]; g_mfg.abr = __builtin_atan2f(dx, dz);
-    }
-    uint64_t w = mdu_blow_weapon(), mel = w == fnv64("abby-unarmed") ? 0 : w;
-    int sk = g_cd_fin_skip_intro, wu = g_cd_fin_windup, pr = g_cd_fin_probe;
-    g_cd_fin_probe = 1; g_cd_fin_skip_intro = 1; g_cd_fin_windup = 1;
-    int r = cd_upg_go((uint32_t)s, mel, 0, g_mfg.row[i]);
-    g_cd_fin_skip_intro = sk; g_cd_fin_windup = wu; g_cd_fin_probe = pr;
-    if (r == 2) {
-        if (++g_mfg.tries <= MFG_TRIES) return;
-        g_mfg.tmo++; g_mfg.t[i] = 0; g_mfg.ans[i] = -1; g_mfg.asking = -1; g_mfg.cur = (i + 1) % g_mfg.n;
-        static int nt; if (LOGCAP(nt, 40)) xlog("DUEL: fin gate first: %s on slot %d - no gate answer in %d frames (%d ms) - no answer kept (ps41)", CD_PAIRS[g_mfg.row[i]].name + 3, s, MFG_TRIES, (int)(now - g_mfg.ask0));
         return;
     }
-    g_mfg.ans[i] = r == 3; g_mfg.t[i] = now ? now : 1; g_mfg.vx[i] = g_mfg.avx; g_mfg.vz[i] = g_mfg.avz; g_mfg.br[i] = g_mfg.abr;
-    g_mfg.evals++; if (r == 3) g_mfg.yes++; else g_mfg.no++;
-    static int nl; if (LOGCAP(nl, 300)) xlog("DUEL: fin gate first: %s on slot %d -> %s after %d ms (%d frame(s) asked; %u background gate answers so far: %u yes / %u no, %u unanswered) (ps41)",
-                                             CD_PAIRS[g_mfg.row[i]].name + 3, s, r == 3 ? "YES" : "NO", (int)(now - g_mfg.ask0), g_mfg.tries + 1, g_mfg.evals, g_mfg.yes, g_mfg.no, g_mfg.tmo);
-    g_mfg.asking = -1; g_mfg.cur = (i + 1) % g_mfg.n;
-}
-static int mfg_row_idx(int s, int fin) { if (g_mfg.slot != s) return -1; for (int i = 0; i < g_mfg.n; i++) if (g_mfg.row[i] == fin) return i; return -1; }
-// mdu_fin_arm, after the pick: the per-swing log (rows considered, answers, ages) and the switch to a row with a fresh YES when the pick has none
-static void mfg_pick(int s) {
-    float vb[16], mb[16]; const float *vl, *me; char l[900]; int o = 0; l[0] = 0;
-    g_mfg.keep_fin = -1;
-    if (!mfg_locs(s, vb, mb, &vl, &me)) { DULOG("DUEL: u%04x fin gate first: no locators - no gate answer is used: no intro, the plain swing, its contact decides (ps41)", g_mdu.uid); return; }
-    int pi = mfg_row_idx(s, g_mdu_fin), page = -1, pa = -1; const char *pwhy = "not in the background list";
-    if (pi >= 0) pa = mfg_valid(pi, vl, me, &page, &pwhy);
-    int alt = -1, altd = -1;
-    uint64_t vmk = mdk_vm(s); int dk = mdk_is_dis(g_mdu_fin, vmk);   // ps46k: the victim's disarm class / the pick is a disarm of it
-    for (int i = 0; g_mfg.slot == s && i < g_mfg.n; i++) {
-        int age = -1; const char *why = ""; int a = mfg_valid(i, vl, me, &age, &why);
-        if (o < (int)sizeof l - 120) o += snprintf(l + o, sizeof l - (size_t)o, "%s%s %s %d ms%s%s%s", i ? ", " : "", CD_PAIRS[g_mfg.row[i]].name + 3, a == 1 ? "YES" : a == 0 ? "NO" : g_mfg.t[i] ? (g_mfg.ans[i] == 1 ? "(yes)" : "(no)") : "-", age, a < 0 ? " [" : "", a < 0 ? why : "", a < 0 ? "]" : "");
-        int isd = mdk_is_dis(g_mfg.row[i], vmk);
-        if (a == 1 && pa != 1 && g_mfg.row[i] != g_mdu_fin && (isd ? altd < 0 : (alt < 0 && !dk))) { float fr = 0.0f, wall = 9.0f; if (!mdu_fin_fan_blocked(s, g_mfg.row[i], &fr, &wall)) { if (isd) altd = g_mfg.row[i]; else alt = g_mfg.row[i]; } }
+    if (g_mfg.slot != s || g_mfg.n != g_mfp.n || memcmp(g_mfg.row, g_mfp.row, sizeof(int) * (size_t) g_mfp.n)) {        // the candidate list changed: answers of the rows that stay are kept
+        typeof(g_mfg) o = g_mfg;
+        int on = o.slot == s ? o.n : 0;
+        for (int i = 0; i < g_mfp.n; i++) {
+            g_mfg.row[i] = g_mfp.row[i];
+            g_mfg.t[i] = 0;
+            g_mfg.ans[i] = -1;
+            for (int j = 0; j < on; j++)
+                if (o.row[j] == g_mfp.row[i]) {
+                    g_mfg.t[i] = o.t[j];
+                    g_mfg.ans[i] = o.ans[j];
+                    g_mfg.vx[i] = o.vx[j];
+                    g_mfg.vz[i] = o.vz[j];
+                    g_mfg.br[i] = o.br[j];
+                    break;
+                }
+        }
+        g_mfg.n = g_mfp.n;
+        g_mfg.slot = s;
+        g_mfg.asking = -1;
+        if (g_mfg.cur >= g_mfg.n)
+            g_mfg.cur = 0;
     }
-    int first = g_mdu_fin;
+    if (g_mdfwu.on || g_p31r.on || g_downed || g_downDying) {
+        g_mfg.asking = -1;
+        return;
+    }                           // (a running windup asks its own gate, mdu_fw_probe)
+    if (g_ps.role && !(MduInPair() && g_ps.role == 1 && g_ps.vic == s)) {
+        g_mfg.asking = -1;
+        return;
+    }                           // (cd_upg_go answers 0 inside any other pair of ours)
+    float vb[16], mb[16];
+    const float *vl, *me;
+    if (!MfgLocs(s, vb, mb, &vl, &me)) {
+        g_mfg.asking = -1;
+        return;
+    }
+    float dx = me[0] - vl[0], dz = me[2] - vl[2], d =
+        __builtin_sqrtf(dx * dx + dz * dz);
+    if (d < 0.30f || d > 3.8f) {
+        g_mfg.asking = -1;
+        return;
+    }                           // (cd_upg_go's own range is 0.05-4.0 m)
+    int i = g_mfg.asking;
+    if (i < 0 || i >= g_mfg.n) {
+        i = -1;
+        int old_i = -1, old_age = MFG_REASK_MS;
+        {
+            static int alt46k;
+            uint64_t vmk = MdkVm(s);   // ps46k: an armed victim - every other probe goes to a disarm row without a usable answer first
+            if (vmk && (alt46k ^= 1))
+                for (int k = 0; k < g_mfg.n && i < 0; k++) {
+                    int q = (g_mfg.cur + k) % g_mfg.n, age = 0;
+                    const char *why;
+                    if (MdkIsDis(g_mfg.row[q], vmk)
+                        && MfgValid(q, vl, me, &age, &why) < 0)
+                        i = q;
+                }
+        }
+        for (int k = 0; k < g_mfg.n && i < 0; k++) {
+            int q = (g_mfg.cur + k) % g_mfg.n, age = 0;
+            const char *why;
+            if (MfgValid(q, vl, me, &age, &why) < 0)
+                i = q;
+            else if (age > old_age) {
+                old_age = age;
+                old_i = q;
+            }
+        }
+        if (i < 0)
+            i = old_i;
+        if (i < 0)
+            return;             // every row has a usable answer
+        g_mfg.asking = i;
+        g_mfg.tries = 0;
+        g_mfg.ask0 = now;
+        g_mfg.avx = vl[0];
+        g_mfg.avz = vl[2];
+        g_mfg.abr = __builtin_atan2f(dx, dz);
+    }
+    uint64_t w = MduBlowWeapon(), mel =
+        w == FNV64("abby-unarmed") ? 0 : w;
+    int sk = g_cdFinSkipIntro, wu = g_cdFinWindup, pr =
+        g_cdFinProbe;
+    g_cdFinProbe = 1;
+    g_cdFinSkipIntro = 1;
+    g_cdFinWindup = 1;
+    int r = CdUpgGo((uint32_t) s, mel, 0, g_mfg.row[i]);
+    g_cdFinSkipIntro = sk;
+    g_cdFinWindup = wu;
+    g_cdFinProbe = pr;
+    if (r == 2) {
+        if (++g_mfg.tries <= MFG_TRIES)
+            return;
+        g_mfg.tmo++;
+        g_mfg.t[i] = 0;
+        g_mfg.ans[i] = -1;
+        g_mfg.asking = -1;
+        g_mfg.cur = (i + 1) % g_mfg.n;
+        static int nt;
+        if (LOGCAP(nt, 40))
+            Xlog("DUEL: fin gate first: %s on slot %d - no gate answer in %d frames (%d ms) - no answer kept (ps41)", CD_PAIRS[g_mfg.row[i]].name + 3, s, MFG_TRIES, (int) (now - g_mfg.ask0));
+        return;
+    }
+    g_mfg.ans[i] = r == 3;
+    g_mfg.t[i] = now ? now : 1;
+    g_mfg.vx[i] = g_mfg.avx;
+    g_mfg.vz[i] = g_mfg.avz;
+    g_mfg.br[i] = g_mfg.abr;
+    g_mfg.evals++;
+    if (r == 3)
+        g_mfg.yes++;
+    else
+        g_mfg.no++;
+    static int nl;
+    if (LOGCAP(nl, 300))
+        Xlog("DUEL: fin gate first: %s on slot %d -> %s after %d ms (%d frame(s) asked; %u background gate answers so far: %u yes / %u no, %u unanswered) (ps41)", CD_PAIRS[g_mfg.row[i]].name + 3, s, r == 3 ? "YES" : "NO", (int) (now - g_mfg.ask0), g_mfg.tries + 1, g_mfg.evals, g_mfg.yes, g_mfg.no, g_mfg.tmo);
+    g_mfg.asking = -1;
+    g_mfg.cur = (i + 1) % g_mfg.n;
+}
+
+static int MfgRowIdx(int s, int fin)
+{
+    if (g_mfg.slot != s)
+        return -1;
+    for (int i = 0; i < g_mfg.n; i++)
+        if (g_mfg.row[i] == fin)
+            return i;
+    return -1;
+}
+
+// mdu_fin_arm, after the pick: the per-swing log (rows considered, answers, ages) and the switch to a row with a fresh YES when the pick has none
+static void MfgPick(int s)
+{
+    float vb[16], mb[16];
+    const float *vl, *me;
+    char l[900];
+    int o = 0;
+    l[0] = 0;
+    g_mfg.keep_fin = -1;
+    if (!MfgLocs(s, vb, mb, &vl, &me)) {
+        DULOG
+            ("DUEL: u%04x fin gate first: no locators - no gate answer is used: no intro, the plain swing, its contact decides (ps41)",
+             g_mdu.uid);
+        return;
+    }
+    int pi = MfgRowIdx(s, g_mduFin), page = -1, pa = -1;
+    const char *pwhy = "not in the background list";
+    if (pi >= 0)
+        pa = MfgValid(pi, vl, me, &page, &pwhy);
+    int alt = -1, altd = -1;
+    uint64_t vmk = MdkVm(s);
+    int dk = MdkIsDis(g_mduFin, vmk);        // ps46k: the victim's disarm class / the pick is a disarm of it
+    for (int i = 0; g_mfg.slot == s && i < g_mfg.n; i++) {
+        int age = -1;
+        const char *why = "";
+        int a = MfgValid(i, vl, me, &age, &why);
+        if (o < (int) sizeof l - 120)
+            o += snprintf(l + o, sizeof l - (size_t) o,
+                          "%s%s %s %d ms%s%s%s", i ? ", " : "",
+                          CD_PAIRS[g_mfg.row[i]].name + 3,
+                          a == 1 ? "YES" : a ==
+                          0 ? "NO" : g_mfg.t[i] ? (g_mfg.ans[i] ==
+                                                   1 ? "(yes)" : "(no)") :
+                          "-", age, a < 0 ? " [" : "", a < 0 ? why : "",
+                          a < 0 ? "]" : "");
+        int isd = MdkIsDis(g_mfg.row[i], vmk);
+        if (a == 1 && pa != 1 && g_mfg.row[i] != g_mduFin
+            && (isd ? altd < 0 : (alt < 0 && !dk))) {
+            float fr = 0.0f, wall = 9.0f;
+            if (!MduFinFanBlocked(s, g_mfg.row[i], &fr, &wall)) {
+                if (isd)
+                    altd = g_mfg.row[i];
+                else
+                    alt = g_mfg.row[i];
+            }
+        }
+    }
+    int first = g_mduFin;
     if (vmk && pa != 1 && (dk || altd >= 0)) {
-        MDKLOG("DUEL: ps46k u%04x fin gate first on slot %d: the pick %s (%s) has no fresh YES - %s%s (victim's item class %llx; t2r-disarm-keep-ps46-old.txt = old)", g_mdu.uid, s, CD_PAIRS[first].name + 3, dk ? "a DISARM" : "no disarm",
-               altd >= 0 ? "switched to the disarm row with a fresh YES: " : "KEPT: no other disarm row of the weapon pair has a fresh YES (no intro - the swing's contact asks its gate and starts it; never a non-disarm row instead)",
-               altd >= 0 ? CD_PAIRS[altd].name + 3 : "", (unsigned long long)vmk);
+        MDKLOG
+            ("DUEL: ps46k u%04x fin gate first on slot %d: the pick %s (%s) has no fresh YES - %s%s (victim's item class %llx; t2r-disarm-keep-ps46-old.txt = old)",
+             g_mdu.uid, s, CD_PAIRS[first].name + 3,
+             dk ? "a DISARM" : "no disarm",
+             altd >=
+             0 ? "switched to the disarm row with a fresh YES: " :
+             "KEPT: no other disarm row of the weapon pair has a fresh YES (no intro - the swing's contact asks its gate and starts it; never a non-disarm row instead)",
+             altd >= 0 ? CD_PAIRS[altd].name + 3 : "",
+             (unsigned long long) vmk);
         alt = altd;
     }
-    if (pa != 1 && alt >= 0) g_mdu_fin = alt;
-    DULOG("DUEL: u%04x fin gate first (ps41): %d row(s) considered on slot %d: %s | the pick %s: %s%s%s -> %s%s (t2r-fin-gate-first-off.txt = old)", g_mdu.uid, g_mfg.slot == s ? g_mfg.n : 0, s, o ? l : "none (the background gate has no list for this slot yet)",
-          CD_PAIRS[first].name + 3, pa == 1 ? "fresh YES" : pa == 0 ? "fresh NO" : "no usable answer", pa < 0 ? " - " : "", pa < 0 ? pwhy : "",
-          pa == 1 ? "kept, its intro may start" : alt >= 0 ? "switched to the row with a fresh YES: " : "no row has a fresh YES: no intro - the plain swing, its contact decides", pa != 1 && alt >= 0 ? CD_PAIRS[alt].name + 3 : "");
+    if (pa != 1 && alt >= 0)
+        g_mduFin = alt;
+    DULOG
+        ("DUEL: u%04x fin gate first (ps41): %d row(s) considered on slot %d: %s | the pick %s: %s%s%s -> %s%s (t2r-fin-gate-first-off.txt = old)",
+         g_mdu.uid, g_mfg.slot == s ? g_mfg.n : 0, s,
+         o ? l :
+         "none (the background gate has no list for this slot yet)",
+         CD_PAIRS[first].name + 3,
+         pa == 1 ? "fresh YES" : pa == 0 ? "fresh NO" : "no usable answer",
+         pa < 0 ? " - " : "", pa < 0 ? pwhy : "",
+         pa == 1 ? "kept, its intro may start" : alt >=
+         0 ? "switched to the row with a fresh YES: " :
+         "no row has a fresh YES: no intro - the plain swing, its contact decides",
+         pa != 1 && alt >= 0 ? CD_PAIRS[alt].name + 3 : "");
 }
+
 // mdu_fw_begin, before the intro replaces the swing: 1 = this row's gate answered YES for where the bodies stand (the intro may start, and is kept)
-static int mfg_intro_ok(int s, int fin, const mdu_row_t *m) {
-    float vb[16], mb[16]; const float *vl, *me; int i = mfg_row_idx(s, fin), age = -1, a = -1; const char *why = "not in the background list";
-    if (mfg_locs(s, vb, mb, &vl, &me) && i >= 0) a = mfg_valid(i, vl, me, &age, &why);
+static int MfgIntroOk(int s, int fin, const MduRowT *m)
+{
+    float vb[16], mb[16];
+    const float *vl, *me;
+    int i = MfgRowIdx(s, fin), age = -1, a = -1;
+    const char *why = "not in the background list";
+    if (MfgLocs(s, vb, mb, &vl, &me) && i >= 0)
+        a = MfgValid(i, vl, me, &age, &why);
     if (a == 1) {
-        g_mfg.keep_fin = fin; g_mfg.keep_t = g_mfg.t[i]; g_mfg.kvx = vl[0]; g_mfg.kvz = vl[2]; g_mfg.kbr = __builtin_atan2f(me[0] - vl[0], me[2] - vl[2]);
-        DULOG("DUEL: u%04x fin gate first: %s - path gate YES %d ms ago for these spots: the SP intro starts (ps41)", g_mdu.uid, CD_PAIRS[fin].name + 3, age);
+        g_mfg.keep_fin = fin;
+        g_mfg.keep_t = g_mfg.t[i];
+        g_mfg.kvx = vl[0];
+        g_mfg.kvz = vl[2];
+        g_mfg.kbr = __builtin_atan2f(me[0] - vl[0], me[2] - vl[2]);
+        DULOG
+            ("DUEL: u%04x fin gate first: %s - path gate YES %d ms ago for these spots: the SP intro starts (ps41)",
+             g_mdu.uid, CD_PAIRS[fin].name + 3, age);
         return 1;
     }
     g_mfg.keep_fin = -1;
-    DULOG("DUEL: u%04x fin gate first: %s - %s (%s%sage %d ms): the SP intro is NOT started - the plain swing %s plays, its contact decides (finisher from the contact / plain down blow) (ps41; t2r-fin-gate-first-off.txt = old)",
-          g_mdu.uid, CD_PAIRS[fin].name + 3, a == 0 ? "path gate NO" : "no usable path gate answer", a < 0 ? why : "", a < 0 ? ", " : "", age, m->move);
+    DULOG
+        ("DUEL: u%04x fin gate first: %s - %s (%s%sage %d ms): the SP intro is NOT started - the plain swing %s plays, its contact decides (finisher from the contact / plain down blow) (ps41; t2r-fin-gate-first-off.txt = old)",
+         g_mdu.uid, CD_PAIRS[fin].name + 3,
+         a == 0 ? "path gate NO" : "no usable path gate answer",
+         a < 0 ? why : "", a < 0 ? ", " : "", age, m->move);
     return 0;
 }
+
 // the windup's contact / its 90 ms probe: the intro started on a gate YES and the victim still stands on the answered spot - 1 = a gate NO now does not refuse it
-static int mfg_keep(int s, int fin) {
-    if (mfg_off() || !g_mdfwu.on || g_mdfwu.punch || g_mfg.keep_fin != fin || fin < 0) return 0;
-    float vb[16], mb[16]; const float *vl, *me;
-    if (!mfg_locs(s, vb, mb, &vl, &me)) return 0;
-    float dvx = vl[0] - g_mfg.kvx, dvz = vl[2] - g_mfg.kvz, db = __builtin_fabsf(cd_wrap180((__builtin_atan2f(me[0] - vl[0], me[2] - vl[2]) - g_mfg.kbr) * 57.29578f));
+static int MfgKeep(int s, int fin)
+{
+    if (MfgOff() || !g_mdfwu.on || g_mdfwu.punch || g_mfg.keep_fin != fin
+        || fin < 0)
+        return 0;
+    float vb[16], mb[16];
+    const float *vl, *me;
+    if (!MfgLocs(s, vb, mb, &vl, &me))
+        return 0;
+    float dvx = vl[0] - g_mfg.kvx, dvz = vl[2] - g_mfg.kvz, db =
+        __builtin_fabsf(CdWrap180
+                        ((__builtin_atan2f(me[0] - vl[0], me[2] - vl[2]) -
+                          g_mfg.kbr) * 57.29578f));
     if (dvx * dvx + dvz * dvz > MFG_VIC_M * MFG_VIC_M || db > MFG_BR_DEG) {
-        static uint64_t lt; uint64_t n = GetTickCount64();
-        if (n - lt > 400) { lt = n; DULOG("DUEL: u%04x fin gate first: %s - the victim moved %.2f m / the bearing turned %.0f deg since the intro's gate YES: the gate is asked again as before (ps41)", g_mdu.uid, CD_PAIRS[fin].name + 3, (double)__builtin_sqrtf(dvx * dvx + dvz * dvz), (double)db); }
+        static uint64_t lt;
+        uint64_t n = GetTickCount64();
+        if (n - lt > 400) {
+            lt = n;
+            DULOG
+                ("DUEL: u%04x fin gate first: %s - the victim moved %.2f m / the bearing turned %.0f deg since the intro's gate YES: the gate is asked again as before (ps41)",
+                 g_mdu.uid, CD_PAIRS[fin].name + 3,
+                 (double) __builtin_sqrtf(dvx * dvx + dvz * dvz),
+                 (double) db);
+        }
         return 0;
     }
     return 1;
 }
-static void mdu_fw_probe(int s) {
-    if (g_mdfwu.gate >= 0 || g_mdfwu.gate_tries > 8) return;
-    uint64_t w = mdu_blow_weapon(), mel = w == fnv64("abby-unarmed") ? 0 : w;
+
+static void MduFwProbe(int s)
+{
+    if (g_mdfwu.gate >= 0 || g_mdfwu.gate_tries > 8)
+        return;
+    uint64_t w = MduBlowWeapon(), mel =
+        w == FNV64("abby-unarmed") ? 0 : w;
     g_mdfwu.gate_tries++;
-    g_cd_fin_probe = 1; g_cd_fin_skip_intro = 1; g_cd_fin_windup = 1;
-    g_cd_fin_gate_keep = mfg_keep(s, g_mdfwu.fin) ? g_mdfwu.fin + 1 : 0;   // ps41: a started intro is not refused by the gate while the victim stands on the answered spot
-    int r = cd_upg_go((uint32_t)s, mel, 0, g_mdfwu.fin);
-    g_cd_fin_gate_keep = 0;
-    g_cd_fin_probe = 0; g_cd_fin_skip_intro = 0; g_cd_fin_windup = 0;
-    if (r == 2) return;
+    g_cdFinProbe = 1;
+    g_cdFinSkipIntro = 1;
+    g_cdFinWindup = 1;
+    g_cdFinGateKeep = MfgKeep(s, g_mdfwu.fin) ? g_mdfwu.fin + 1 : 0;        // ps41: a started intro is not refused by the gate while the victim stands on the answered spot
+    int r = CdUpgGo((uint32_t) s, mel, 0, g_mdfwu.fin);
+    g_cdFinGateKeep = 0;
+    g_cdFinProbe = 0;
+    g_cdFinSkipIntro = 0;
+    g_cdFinWindup = 0;
+    if (r == 2)
+        return;
     g_mdfwu.gate = r == 3;
-    DULOG("DUEL: u%04x finisher windup %s: path gate asked %d ms before the contact - %s", g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3, (int)(int64_t)(g_mdu.sw_tc - GetTickCount64()),
-          r == 3 ? "clear (cached for the contact)" : "refused (the contact tries the other finishers / the surface plan / the plain down blow)");
-    if (r != 3 && !mdu_fin_chain_off()) mdu_fin_chain_build(s, mel, g_mdfwu.fin);   // the other rows' gates answer before the contact
+    DULOG
+        ("DUEL: u%04x finisher windup %s: path gate asked %d ms before the contact - %s",
+         g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3,
+         (int) (int64_t) (g_mdu.sw_tc - GetTickCount64()),
+         r ==
+         3 ? "clear (cached for the contact)" :
+         "refused (the contact tries the other finishers / the surface plan / the plain down blow)");
+    if (r != 3 && !MduFinChainOff())
+        MduFinChainBuild(s, mel, g_mdfwu.fin);       // the other rows' gates answer before the contact
 }
-static int pul_att_active(void);   // melee_pullout.c
-static int pul_drag_move(uint64_t move);   // ctxdown.c: the pull-out's own pair moves are not cancelled
-static void mdu_next(uint64_t now, const char *how);
-static uint64_t g_mdu_ehit_move, g_mdu_ehit_ms, g_mdu_plain_rm_move, g_mdu_plain_rm_until;
-static void mdu_plain_rm_arm(void);
+
+static int PulAttActive(void);        // melee_pullout.c
+static int PulDragMove(uint64_t move);        // ctxdown.c: the pull-out's own pair moves are not cancelled
+static void MduNext(uint64_t now, const char *how);
+static uint64_t g_mdu_ehit_move, g_mdu_ehit_ms, g_mdu_plain_rm_move,
+    g_mdu_plain_rm_until;
+static void MduPlainRmArm(void);
 // ---- ps31: SP's variety of openers / chain shapes / the far finisher run-in --------------------------------------------------------------------
 // OPENER RULE. Game data (re/melee-dc/melee-moves.json.xz): fist-light-attack-1 starts when a `left-opener` fact is < 30 frames old OR the defender is > 2.0 m
 // away OR an Ellie-type defender OR a blocking one; fist-light-attack-left-1 has distance-less-than tests 3.0 / 2.0; every "-far" opener has range 3-5 m. SP run
@@ -1383,91 +3109,212 @@ static void mdu_plain_rm_arm(void);
 // nothing started by the next mdu_tick, with a melee press < P31_PRESS_MS old - the wanted row starts through start-melee-action, the call mdu_next / mdu_dc_route
 // use for every combo step and dodge attack (left-1 through it: dlog4 "... swapped for SP's left jab ... -> 1" 5 of 5). A refused start re-injects the press
 // with the veto off (the engine's own opener). t2r-duel-opener-ps30.txt = the engine's own opener always.
-static uint64_t g_bot_melee_ms;   // bot.c: its melee press (the pad injection is masked while the duel blocks melee-attack)
-static int mdu_p31_opener_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; int o = GetFileAttributesA("t2r-duel-opener-ps30.txt") != INVALID_FILE_ATTRIBUTES; if (o != v) xlog("DUEL: opener rule %s (ps31)", o ? "OFF (t2r-duel-opener-ps30.txt): the engine's own opener" : "ON: SP's opener by distance / last ender (left jab < 2.0 m, -far at 3-5 m), decided in the move search - no swing is cancelled"); v = o; } return v; }
-static const struct { const char *o_open, *o_far, *o_left; } P31_OPEN[] = {   // (not "far": a windows.h macro)
-    {"fist-light-attack-1", "fist-light-attack-1-far", "fist-light-attack-left-1"},
-    {"abby-1h-blunt-light-1", "ellie-1h-blunt-light-1-far", NULL},
-    {"ellie-1h-blunt-light-1", "ellie-1h-blunt-light-1-far", NULL},
-    {"ellie-1h-blade-light-1", "ellie-1h-blade-light-1-far", NULL},
-    {"ellie-2h-blunt-attack-1", "ellie-2h-blunt-attack-1-far", NULL},
-    {"switchblade-light-attack-1", "switchblade-light-attack-1-far", NULL},
+static uint64_t g_botMeleeMs; // bot.c: its melee press (the pad injection is masked while the duel blocks melee-attack)
+static int MduP31OpenerOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        int o =
+            GetFileAttributesA("t2r-duel-opener-ps30.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != v)
+            Xlog("DUEL: opener rule %s (ps31)",
+                 o ?
+                 "OFF (t2r-duel-opener-ps30.txt): the engine's own opener"
+                 :
+                 "ON: SP's opener by distance / last ender (left jab < 2.0 m, -far at 3-5 m), decided in the move search - no swing is cancelled");
+        v = o;
+    }
+    return v;
+}
+
+static const struct {
+    const char *o_open, *o_far, *o_left;
+} P31_OPEN[] = {                // (not "far": a windows.h macro)
+    { "fist-light-attack-1", "fist-light-attack-1-far",
+     "fist-light-attack-left-1" },
+    { "abby-1h-blunt-light-1", "ellie-1h-blunt-light-1-far", NULL },
+    { "ellie-1h-blunt-light-1", "ellie-1h-blunt-light-1-far", NULL },
+    { "ellie-1h-blade-light-1", "ellie-1h-blade-light-1-far", NULL },
+    { "ellie-2h-blunt-attack-1", "ellie-2h-blunt-attack-1-far", NULL },
+    { "switchblade-light-attack-1", "switchblade-light-attack-1-far",
+     NULL },
 };
+
 #define P31_NOPEN ((int)(sizeof P31_OPEN / sizeof P31_OPEN[0]))
-static uint64_t g_p31_open_sid[8];
-static int g_p33_rows_ok;   // ps33: both 1h blunt blow-5 rows' pairs are loaded here (mdu_p31_tick, every 2 s)
-static int mdu_p31_row_ok(const char *n) { int r = n ? mdu_row_named(n) : -1; return r >= 0 && (MDU_MOVES[r].res & 7) == 7 && g_mdu.mv_cd[r] >= 0 && cd_pair_loaded(g_mdu.mv_cd[r]); }
+static uint64_t g_p31OpenSid[8];
+static int g_p33RowsOk;       // ps33: both 1h blunt blow-5 rows' pairs are loaded here (mdu_p31_tick, every 2 s)
+static int MduP31RowOk(const char *n)
+{
+    int r = n ? MduRowNamed(n) : -1;
+    return r >= 0 && (MDU_MOVES[r].res & 7) == 7 && g_mdu.mv_cd[r] >= 0
+        && CdPairLoaded(g_mdu.mv_cd[r]);
+}
+
 // meleeenv.c me_cand_hook: is this candidate a set's step-1 opener (cheap; the sids are filled by mdu_p31_tick)
-static int mdu_open_cand(uint64_t aname) {
-    if (!g_mdu.on || !aname || !g_p31_open_sid[0]) return 0;
-    for (int i = 0; i < P31_NOPEN; i++) if (g_p31_open_sid[i] == aname) return 1;
+static int MduOpenCand(uint64_t aname)
+{
+    if (!g_mdu.on || !aname || !g_p31OpenSid[0])
+        return 0;
+    for (int i = 0; i < P31_NOPEN; i++)
+        if (g_p31OpenSid[i] == aname)
+            return 1;
     return 0;
 }
+
 // meleeenv.c me_cand_hook, inside the engine's move search, AFTER the engine's own check passed this opener: 1 = answer "no" (SP's rule wants another row)
-static int mdu_open_veto(uint64_t aname) {
+static int MduOpenVeto(uint64_t aname)
+{
     int oi = -1;
-    for (int i = 0; i < P31_NOPEN; i++) if (g_p31_open_sid[i] == aname) { oi = i; break; }
-    if (oi < 0 || !g_mdu.on || mdu_p31_opener_old() || g_p31.dec_slot < 0 || g_frame - g_p31.dec_frame > 2) return 0;
+    for (int i = 0; i < P31_NOPEN; i++)
+        if (g_p31OpenSid[i] == aname) {
+            oi = i;
+            break;
+        }
+    if (oi < 0 || !g_mdu.on || MduP31OpenerOld() || g_p31.dec_slot < 0
+        || g_frame - g_p31.dec_frame > 2)
+        return 0;
     uint64_t now = GetTickCount64();
-    if (now - g_mdu_next_ms < 300 || now - g_p31.direct_ms < 300 || (g_mdu.win_end > now && g_mdu.next_move)) return 0;   // a combo step / a start of our own
-    if ((g_mdu.sw_on && !g_mdu.sw_done) || g_p31r.on || g_mdfwu.on || g_p31.force_intro_until > now || g_p31.dec_lethal) return 0;   // (a lethal press: the finisher paths own the opener row)
-    const char *want = NULL, *why = NULL; float d = g_p31.dec_d;
-    int e = g_p31.ender && now - g_p31.ender_ms < P31_ENDER_MS ? g_p31.ender : 0;
-    if (d >= P31_FAR_MIN) { if (g_p31.ok[oi]) { want = P31_OPEN[oi].o_far; why = "SP: the -far opener at 3-5 m"; } }
+    if (now - g_mduNextMs < 300 || now - g_p31.direct_ms < 300
+        || (g_mdu.win_end > now && g_mdu.next_move))
+        return 0;               // a combo step / a start of our own
+    if ((g_mdu.sw_on && !g_mdu.sw_done) || g_p31r.on || g_mdfwu.on
+        || g_p31.force_intro_until > now || g_p31.dec_lethal)
+        return 0;               // (a lethal press: the finisher paths own the opener row)
+    const char *want = NULL, *why = NULL;
+    float d = g_p31.dec_d;
+    int e = g_p31.ender
+        && now - g_p31.ender_ms < P31_ENDER_MS ? g_p31.ender : 0;
+    if (d >= P31_FAR_MIN) {
+        if (g_p31.ok[oi]) {
+            want = P31_OPEN[oi].o_far;
+            why = "SP: the -far opener at 3-5 m";
+        }
+    }
     // ps32: the press after a landed 4th-hit ender (inside the ender memory, same duel partner, inside 3.0 m) = blow 5, SP's stun-combo strike (rule: ours, see mdu_p32_old)
-    else if ((oi == 1 || oi == 2) && g_p33_ender_ms && now - g_p33_ender_ms < P31_ENDER_MS && !mdu_p33_old() && !g_p33_done && g_p33_rows_ok && g_mdu.slot >= 0 && g_p31.dec_slot == g_mdu.slot && d < P31_LEFT_ENDER_M) {
+    else if ((oi == 1 || oi == 2) && g_p33EnderMs
+             && now - g_p33EnderMs < P31_ENDER_MS && !MduP33Old()
+             && !g_p33_done && g_p33RowsOk && g_mdu.slot >= 0
+             && g_p31.dec_slot == g_mdu.slot && d < P31_LEFT_ENDER_M) {
         // ps33: the press after a landed 1h blunt light-4 = blow 5, SP's backhand to the head (left / right in turn; rule: ours, see mdu_p33_old)
-        want = g_p33_hand ? "1hblunt-stun-breaker-combo-1" : "1hblunt-stun-breaker-combo-left-1";
-        why = g_p33_hand ? "blow 5 after the 1h blunt ender: SP's right-hand breaker strike (ps33)" : "blow 5 after the 1h blunt ender: SP's left backhand breaker strike (ps33)";
-    }
-    else if (oi == 0 && e && !mdu_p32_old() && !g_p32_done && g_p31.ok[6] && g_mdu.slot >= 0 && g_p31.dec_slot == g_mdu.slot && d < P31_LEFT_ENDER_M) {
-        want = "fists-stun-combo-1"; why = e == 2 ? "blow 5 after the 4-kick ender: SP's left backhand stun-combo strike (ps32)" : "blow 5 after the 4-punch ender: SP's left backhand stun-combo strike (ps32)";
-    }
-    else if (P31_OPEN[oi].o_left && g_p31.ok[7]) {
-        if (e == 2) why = "kept: SP opens with light-1 after a 4-kick ender";
-        else if (e == 1 && d < P31_LEFT_ENDER_M) { want = P31_OPEN[oi].o_left; why = "SP: left-1 after a 4-punch ender (6 of 6)"; }
-        else if (d < P31_LEFT_M) { want = P31_OPEN[oi].o_left; why = "SP: the left jab from neutral inside 2.0 m"; }
-        else why = "kept: SP opens with light-1 from 2.0-3.0 m";
+        want =
+            g_p33_hand ? "1hblunt-stun-breaker-combo-1" :
+            "1hblunt-stun-breaker-combo-left-1";
+        why =
+            g_p33_hand ?
+            "blow 5 after the 1h blunt ender: SP's right-hand breaker strike (ps33)"
+            :
+            "blow 5 after the 1h blunt ender: SP's left backhand breaker strike (ps33)";
+    } else if (oi == 0 && e && !MduP32Old() && !g_p32Done && g_p31.ok[6]
+               && g_mdu.slot >= 0 && g_p31.dec_slot == g_mdu.slot
+               && d < P31_LEFT_ENDER_M) {
+        want = "fists-stun-combo-1";
+        why =
+            e ==
+            2 ?
+            "blow 5 after the 4-kick ender: SP's left backhand stun-combo strike (ps32)"
+            :
+            "blow 5 after the 4-punch ender: SP's left backhand stun-combo strike (ps32)";
+    } else if (P31_OPEN[oi].o_left && g_p31.ok[7]) {
+        if (e == 2)
+            why = "kept: SP opens with light-1 after a 4-kick ender";
+        else if (e == 1 && d < P31_LEFT_ENDER_M) {
+            want = P31_OPEN[oi].o_left;
+            why = "SP: left-1 after a 4-punch ender (6 of 6)";
+        } else if (d < P31_LEFT_M) {
+            want = P31_OPEN[oi].o_left;
+            why = "SP: the left jab from neutral inside 2.0 m";
+        } else
+            why = "kept: SP opens with light-1 from 2.0-3.0 m";
     }
     if (!want) {
-        if (why && why != g_p31.was) { static int nk; if (LOGCAP(nk, 200)) xlog("DUEL: opener rule: the engine's %s at %.2f m %s (ps31)", P31_OPEN[oi].o_open, (double)d, why); }
-        g_p31.was = why; return 0;
+        if (why && why != g_p31.was) {
+            static int nk;
+            if (LOGCAP(nk, 200))
+                Xlog("DUEL: opener rule: the engine's %s at %.2f m %s (ps31)", P31_OPEN[oi].o_open, (double) d, why);
+        }
+        g_p31.was = why;
+        return 0;
     }
     g_p31.was = NULL;
-    g_p31.veto_ms = now ? now : 1; g_p31.veto_frame = g_frame; g_p31.want = fnv64_rt(want); g_p31.want_name = want; g_p31.slot = g_p31.dec_slot; g_p31.d = d; g_p31.why = why;
+    g_p31.veto_ms = now ? now : 1;
+    g_p31.veto_frame = g_frame;
+    g_p31.want = Fnv64Rt(want);
+    g_p31.want_name = want;
+    g_p31.slot = g_p31.dec_slot;
+    g_p31.d = d;
+    g_p31.why = why;
     return 1;
 }
+
 // CHAIN SHAPES (SP run): [dodge-back | sprint | light-1] -> 2 -> 3 -> 4-punch and left-1 -> 1 -> 2 -> 4-kick (light-2's combo list holds 3 and 4-kick, light-3's
 // only 4-punch). ps30 took the kick 1 in 3 at random. -1 = the ps30 random branch (t2r-duel-kick-random-ps30.txt), else 1 = this chain opened with the left jab.
-static int mdu_p31_kick(void) { return GetFileAttributesA("t2r-duel-kick-random-ps30.txt") != INVALID_FILE_ATTRIBUTES ? -1 : g_p31.chain_left; }
+static int MduP31Kick(void)
+{
+    return GetFileAttributesA("t2r-duel-kick-random-ps30.txt") !=
+        INVALID_FILE_ATTRIBUTES ? -1 : g_p31.chain_left;
+}
+
 // a PLAIN (pair-less) light-2 landed: the same chain shape as the paired blow's branch in mdu_contact (ps30 had no kick branch on a plain blow)
-static void mdu_p31_branch(const mdu_row_t *m) {
-    if (!m->next || strcmp(m->move, "fist-light-attack-2") || mdu_p31_kick() != 1 || GetFileAttributesA("t2r-duel-no-kick-branch.txt") != INVALID_FILE_ATTRIBUTES) return;
-    if (!mdu_p31_row_ok("fist-light-attack-4-kick")) return;
-    g_mdu.next_move = fnv64("fist-light-attack-4-kick");
-    DULOG("DUEL: u%04x combo branch after a plain light-2: fist-light-attack-4-kick (this chain opened with the left jab; ps31)", g_mdu.uid);
+static void MduP31Branch(const MduRowT *m)
+{
+    if (!m->next || strcmp(m->move, "fist-light-attack-2")
+        || MduP31Kick() != 1
+        || GetFileAttributesA("t2r-duel-no-kick-branch.txt") !=
+        INVALID_FILE_ATTRIBUTES)
+        return;
+    if (!MduP31RowOk("fist-light-attack-4-kick"))
+        return;
+    g_mdu.next_move = FNV64("fist-light-attack-4-kick");
+    DULOG
+        ("DUEL: u%04x combo branch after a plain light-2: fist-light-attack-4-kick (this chain opened with the left jab; ps31)",
+         g_mdu.uid);
 }
+
 // a combo ender landed (the 4th-hit gap starts): which one - it decides the next opener - and the gap's one buffered press
-static void mdu_p31_ender(const mdu_row_t *m, uint64_t now) {
-    g_p31.gap_lock = g_mdu.lock_until; g_p31.gap_buf = 0;
-    if (mdu_p32_row((int)(m - MDU_MOVES)) >= 3) {   // ps33: the 1h blunt blow 6 (or blow 5 with blow 6 switched off) ended the chain - the gap, then a normal opener
+static void MduP31Ender(const MduRowT *m, uint64_t now)
+{
+    g_p31.gap_lock = g_mdu.lock_until;
+    g_p31.gap_buf = 0;
+    if (MduP32Row((int) (m - MDU_MOVES)) >= 3) {      // ps33: the 1h blunt blow 6 (or blow 5 with blow 6 switched off) ended the chain - the gap, then a normal opener
         g_p33_done = 1;
-        DULOG("DUEL: u%04x 1h blunt extra strike %s landed - the chain is over: gap %d ms, then the opener; no knee state, no prompt, no guaranteed finisher (ps33)", g_mdu.uid, m->move, MDU_GAP4_MS);
+        DULOG
+            ("DUEL: u%04x 1h blunt extra strike %s landed - the chain is over: gap %d ms, then the opener; no knee state, no prompt, no guaranteed finisher (ps33)",
+             g_mdu.uid, m->move, MDU_GAP4_MS);
         return;
     }
-    if (m->set == MDU_1HBLUNT && m->kind == MDUK_LIGHT) { g_p33_ender_ms = now; g_p33_done = 0; }   // ps33: a landed 1h blunt light-4 arms its blows 5 / 6 once
-    if (mdu_p32_row((int)(m - MDU_MOVES))) {   // ps32: blow 6 ended the chain - the gap again, then the opener rule with the 4th hit's ender memory (its alternation) kept
-        g_p32_done = 1; if (g_p31.ender) g_p31.ender_ms = now;
-        DULOG("DUEL: u%04x blow 6 %s landed - the chain is over: gap %d ms, then SP's opener rule (ender memory: %s); no stun state, no prompt, no guaranteed finisher (ps32)", g_mdu.uid, m->move, MDU_GAP4_MS,
-              g_p31.ender == 2 ? "4-kick -> light-1" : g_p31.ender == 1 ? "4-punch -> the left jab" : "none");
+    if (m->set == MDU_1HBLUNT && m->kind == MDUK_LIGHT) {
+        g_p33EnderMs = now;
+        g_p33_done = 0;
+    }                           // ps33: a landed 1h blunt light-4 arms its blows 5 / 6 once
+    if (MduP32Row((int) (m - MDU_MOVES))) {   // ps32: blow 6 ended the chain - the gap again, then the opener rule with the 4th hit's ender memory (its alternation) kept
+        g_p32Done = 1;
+        if (g_p31.ender)
+            g_p31.ender_ms = now;
+        DULOG
+            ("DUEL: u%04x blow 6 %s landed - the chain is over: gap %d ms, then SP's opener rule (ender memory: %s); no stun state, no prompt, no guaranteed finisher (ps32)",
+             g_mdu.uid, m->move, MDU_GAP4_MS,
+             g_p31.ender == 2 ? "4-kick -> light-1" : g_p31.ender ==
+             1 ? "4-punch -> the left jab" : "none");
         return;
     }
-    if (m->set == MDU_FIST && m->kind == MDUK_LIGHT) g_p32_done = 0;      // ps32: a 4th-hit ender arms blows 5 / 6 once
-    if (m->set != MDU_FIST || m->kind != MDUK_LIGHT) return;
-    g_p31.ender = strstr(m->move, "kick") ? 2 : 1; g_p31.ender_ms = now;
-    DULOG("DUEL: u%04x combo ender %s landed - gap %d ms with one press buffered in its last %d ms; SP's next opener: %s (ps31)", g_mdu.uid, m->move, MDU_GAP4_MS, MDU_GAP4_BUF_MS,
-          g_p31.ender == 2 ? "light-1 (after the kick)" : "the left jab inside 3.0 m (after the 4-punch)");
+    if (m->set == MDU_FIST && m->kind == MDUK_LIGHT)
+        g_p32Done = 0;         // ps32: a 4th-hit ender arms blows 5 / 6 once
+    if (m->set != MDU_FIST || m->kind != MDUK_LIGHT)
+        return;
+    g_p31.ender = strstr(m->move, "kick") ? 2 : 1;
+    g_p31.ender_ms = now;
+    DULOG
+        ("DUEL: u%04x combo ender %s landed - gap %d ms with one press buffered in its last %d ms; SP's next opener: %s (ps31)",
+         g_mdu.uid, m->move, MDU_GAP4_MS, MDU_GAP4_BUF_MS,
+         g_p31.ender ==
+         2 ? "light-1 (after the kick)" :
+         "the left jab inside 3.0 m (after the 4-punch)");
 }
+
 // C. FAR FINISHER RUN-IN. SP: a lethal press at 3.05-4.98 m starts the move <set>-far-finisher-transfer (clip player-kill-close-distance, anim-melee-player-shared-t2:
 // MP-loaded, resident, 1.00 s, 3.0 m of root travel) and the finisher's intro starts 233-484 ms later (10 of 10). ps30: a lethal swing engaged to 3.5 m and the
 // punch's warp / the finisher's run-in pull covered the gap ("the far-lethal warp"). Now: the lethal engine swing is cancelled on its first frame (as the finisher
@@ -1477,162 +3324,362 @@ static void mdu_p31_ender(const mdu_row_t *m, uint64_t now) {
 // intro, judged exactly like every lethal windup today (its window to the intro's end on its screen, our ruling at the contact, its refusal of a covered START).
 // Not when the clip is missing, no finisher with an SP intro fits, a surface plan is ready, or the world ray between the two bodies is blocked: the ps30 path.
 // t2r-fin-far-run-ps30.txt = off.
-static int mdu_p31_run_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-fin-far-run-ps30.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static void mdu_p31_run_end(const char *why) {
-    if (!g_p31r.on) return;
-    mhr_stop(SID_PLAYER, g_p31r.sid, 0.20f); padinj_block("melee-attack", 0); g_p31r.on = 0;
-    DULOG("DUEL: far finisher run-in on slot %d ended after %d ms of %d: %s - no finisher (ps31)", g_p31r.slot, (int)(GetTickCount64() - g_p31r.t0), g_p31r.T, why);
+static int MduP31RunOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-fin-far-run-ps30.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
 }
+
+static void MduP31RunEnd(const char *why)
+{
+    if (!g_p31r.on)
+        return;
+    MhrStop(SID_PLAYER, g_p31r.sid, 0.20f);
+    PadinjBlock("melee-attack", 0);
+    g_p31r.on = 0;
+    DULOG
+        ("DUEL: far finisher run-in on slot %d ended after %d ms of %d: %s - no finisher (ps31)",
+         g_p31r.slot, (int) (GetTickCount64() - g_p31r.t0), g_p31r.T, why);
+}
+
 // mdu_swing_note: our step-1 swing (row r) started with nobody inside the engage reach. 1 = the run-in took the press (the swing is cancelled)
-static int mdu_p31_run_begin(int r, uint64_t now) {
-    if (mdu_p31_run_old() || g_p31r.on || now < g_p31r.blocked_until || mdu_fw_off() || !g_start_melee_orig) return 0;
-    const mdu_row_t *m = &MDU_MOVES[r];
-    if (m->step > 1 || (m->kind != MDUK_LIGHT && m->kind != MDUK_FAR)) return 0;
-    float d = 0.0f; int s = mdu_cand_r(&d, P31_FAR_MAX);
-    if (s < 0 || d <= P31_FAR_MIN) return 0;
-    uint64_t h = puppet_handle((uint32_t)s);
-    if (!h || !mdu_blow_lethal(s, h)) return 0;
-    float len = anim_len(SID_PLAYER, "player-kill-close-distance");
-    if (!(len >= 0.5f && len <= 2.0f)) { static int nl; if (LOGCAP(nl, 20)) DULOG("DUEL: far finisher run-in: player-kill-close-distance is not loaded here (%.2f s) - the ps30 far-lethal path (ps31)", (double)len); return 0; }
-    int row0 = g_mdu.sw_row; g_mdu.sw_row = r; g_mdu_fin = -1; mdu_fin_arm(s); g_mdu.sw_row = row0;
-    int fin = g_mdu_fin; g_mdu_fin = -1;
-    if (fin < 0 || !cd_mf_intro(fin) || mdu_fw_surface_ready(s)) { DULOG("DUEL: far finisher run-in: LETHAL press on slot %d from %.2f m - %s: the ps30 far-lethal path (ps31)", s, (double)d, fin < 0 ? "no SP finisher fits" : !cd_mf_intro(fin) ? "the picked finisher has no SP intro" : "a surface plan is ready"); return 0; }
-    float cv[8], ca[8], dend = 1.4f;                                       // [TUNING ps31] 1.4 m when the intro's own start spot cannot be read
-    if (cd_offset_at(h, CD_VIC0(fin), 0.0f, cv) && cd_offset_at(SID_PLAYER, CD_ATT0(fin), 0.0f, ca)) dend = __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) + (ca[2] - cv[2]) * (ca[2] - cv[2]));
-    if (dend < 0.8f) dend = 0.8f;
-    if (dend > MDU_REACH - 0.2f) dend = MDU_REACH - 0.2f;                  // (the restarted opener must find the victim inside the engage reach)
-    float k = (d - 3.05f) / (4.98f - 3.05f); k = k < 0.0f ? 0.0f : k > 1.0f ? 1.0f : k;
-    int T = P31_RUN_MIN_MS + (int)(k * (float)(P31_RUN_MAX_MS - P31_RUN_MIN_MS) + 0.5f);
-    g_mdfwu_cancel_t60 = g_t60 ? g_t60 : 1;                                // (the cancel's begin-holster must not stow our melee item, mdu_fw_keep)
-    uint64_t me0 = SID_PLAYER, cr = dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
-    uint64_t sid = fnv64("player-kill-close-distance"), ar = mhr_animate(SID_PLAYER, sid, 0.0f, 0.10f);
-    if (!ar || ar == ~0ULL) {      // refused: the opener starts again at once (the ps30 path takes it: the run-in is off for 500 ms)
-        uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, fnv64_rt(m->move), 0, 0, 0, 0, 0};
-        if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
-        g_p31r.blocked_until = now + 500; g_p31.direct_ms = now;
-        g_start_melee_orig(ret, 8, args, 0);
-        DULOG("DUEL: far finisher run-in: player-kill-close-distance refused by animate_ (%llx) - %s restarted -> %llx, the ps30 far-lethal path (ps31)", (unsigned long long)ar, m->move, (unsigned long long)ret[0]);
-        if (!ret[0]) padinj_press("melee-attack", 120);
+static int MduP31RunBegin(int r, uint64_t now)
+{
+    if (MduP31RunOld() || g_p31r.on || now < g_p31r.blocked_until
+        || MduFwOff() || !g_startMeleeOrig)
+        return 0;
+    const MduRowT *m = &MDU_MOVES[r];
+    if (m->step > 1 || (m->kind != MDUK_LIGHT && m->kind != MDUK_FAR))
+        return 0;
+    float d = 0.0f;
+    int s = MduCandR(&d, P31_FAR_MAX);
+    if (s < 0 || d <= P31_FAR_MIN)
+        return 0;
+    uint64_t h = PuppetHandle((uint32_t) s);
+    if (!h || !MduBlowLethal(s, h))
+        return 0;
+    float len = AnimLen(SID_PLAYER, "player-kill-close-distance");
+    if (!(len >= 0.5f && len <= 2.0f)) {
+        static int nl;
+        if (LOGCAP(nl, 20))
+            DULOG
+                ("DUEL: far finisher run-in: player-kill-close-distance is not loaded here (%.2f s) - the ps30 far-lethal path (ps31)",
+                 (double) len);
+        return 0;
+    }
+    int row0 = g_mdu.sw_row;
+    g_mdu.sw_row = r;
+    g_mduFin = -1;
+    MduFinArm(s);
+    g_mdu.sw_row = row0;
+    int fin = g_mduFin;
+    g_mduFin = -1;
+    if (fin < 0 || !CdMfIntro(fin) || MduFwSurfaceReady(s)) {
+        DULOG
+            ("DUEL: far finisher run-in: LETHAL press on slot %d from %.2f m - %s: the ps30 far-lethal path (ps31)",
+             s, (double) d,
+             fin <
+             0 ? "no SP finisher fits" : !CdMfIntro(fin) ?
+             "the picked finisher has no SP intro" :
+             "a surface plan is ready");
+        return 0;
+    }
+    float cv[8], ca[8], dend = 1.4f;    // [TUNING ps31] 1.4 m when the intro's own start spot cannot be read
+    if (CdOffsetAt(h, CD_VIC0(fin), 0.0f, cv)
+        && CdOffsetAt(SID_PLAYER, CD_ATT0(fin), 0.0f, ca))
+        dend =
+            __builtin_sqrtf((ca[0] - cv[0]) * (ca[0] - cv[0]) +
+                            (ca[2] - cv[2]) * (ca[2] - cv[2]));
+    if (dend < 0.8f)
+        dend = 0.8f;
+    if (dend > MDU_REACH - 0.2f)
+        dend = MDU_REACH - 0.2f;        // (the restarted opener must find the victim inside the engage reach)
+    float k = (d - 3.05f) / (4.98f - 3.05f);
+    k = k < 0.0f ? 0.0f : k > 1.0f ? 1.0f : k;
+    int T =
+        P31_RUN_MIN_MS +
+        (int) (k * (float) (P31_RUN_MAX_MS - P31_RUN_MIN_MS) + 0.5f);
+    g_mdfwuCancelT60 = g_t60 ? g_t60 : 1;     // (the cancel's begin-holster must not stow our melee item, mdu_fw_keep)
+    uint64_t me0 = SID_PLAYER, cr =
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
+    uint64_t sid = FNV64("player-kill-close-distance"), ar =
+        MhrAnimate(SID_PLAYER, sid, 0.0f, 0.10f);
+    if (!ar || ar == ~0ULL) {   // refused: the opener starts again at once (the ps30 path takes it: the run-in is off for 500 ms)
+        uint64_t ret[2] = { 0, 0 }, args[8] =
+            { SID_PLAYER, h, Fnv64Rt(m->move), 0, 0, 0, 0, 0 };
+        if (g_maHave)
+            for (int i = 3; i < 8; i++)
+                args[i] = g_maCache[i];
+        g_p31r.blocked_until = now + 500;
+        g_p31.direct_ms = now;
+        g_startMeleeOrig(ret, 8, args, 0);
+        DULOG
+            ("DUEL: far finisher run-in: player-kill-close-distance refused by animate_ (%llx) - %s restarted -> %llx, the ps30 far-lethal path (ps31)",
+             (unsigned long long) ar, m->move,
+             (unsigned long long) ret[0]);
+        if (!ret[0])
+            PadinjPress("melee-attack", 120);
         return 1;
     }
     memset(&g_p31r, 0, sizeof g_p31r);
-    g_p31r.on = 1; g_p31r.slot = s; g_p31r.row = r; g_p31r.T = T; g_p31r.fin = fin; g_p31r.t0 = now; g_p31r.move = fnv64_rt(m->move); g_p31r.sid = sid; g_p31r.d0 = d; g_p31r.dend = dend;
-    {   // the straight line between the two bodies must be free of static world (read on the next frame; blocked = the run-in is undone)
-        float mb[16], vb[16]; const float *me = uc4_my_loc(mb), *vl = puppet_locator(h, vb);
-        if (me && vl) { float a[3] = {me[0], me[1] + 0.9f, me[2]}, b[3] = {vl[0], vl[1] + 0.9f, vl[2]}; g_p31r.ray = world_ray_kick(a, b); g_p31r.ray_f = g_frame; }
+    g_p31r.on = 1;
+    g_p31r.slot = s;
+    g_p31r.row = r;
+    g_p31r.T = T;
+    g_p31r.fin = fin;
+    g_p31r.t0 = now;
+    g_p31r.move = Fnv64Rt(m->move);
+    g_p31r.sid = sid;
+    g_p31r.d0 = d;
+    g_p31r.dend = dend;
+    {                           // the straight line between the two bodies must be free of static world (read on the next frame; blocked = the run-in is undone)
+        float mb[16], vb[16];
+        const float *me = Uc4MyLoc(mb), *vl = PuppetLocator(h, vb);
+        if (me && vl) {
+            float a[3] = { me[0], me[1] + 0.9f, me[2] }, b[3] =
+                { vl[0], vl[1] + 0.9f, vl[2] };
+            g_p31r.ray = WorldRayKick(a, b);
+            g_p31r.ray_f = g_frame;
+        }
     }
-    padinj_block("melee-attack", now + (uint64_t)T + 40);
-    { uint8_t b[4] = {(uint8_t)(0x80 | (3 << 2) | 2), 0, (uint8_t)(T & 0xff), (uint8_t)(T >> 8)}; if (g_send_tramp) g_send_tramp(MSG_DODGE_SWING, b, 4, 0xff); }   // melee_npcwind.c npcw_recv: class 3 var 2 = this clip on our puppet
+    PadinjBlock("melee-attack", now + (uint64_t) T + 40);
+    {
+        uint8_t b[4] =
+            { (uint8_t) (0x80 | (3 << 2) | 2), 0, (uint8_t) (T & 0xff),
+     (uint8_t) (T >> 8) };
+        if (g_sendTramp)
+            g_sendTramp(MSG_DODGE_SWING, b, 4, 0xff);
+    }                           // melee_npcwind.c npcw_recv: class 3 var 2 = this clip on our puppet
     g_mdu.sw_on = 0;
-    DULOG("DUEL: FAR FINISHER RUN-IN on slot %d: LETHAL press from %.2f m (SP: 3.05-4.98 m) - %s cancelled on its first frame (%llx), player-kill-close-distance on us (-> %llx) for %d ms onto %.2f m = the intro start of %s; then the SP intro is the dodgeable windup (ps31)",
-          s, (double)d, m->move, (unsigned long long)cr, (unsigned long long)ar, T, (double)dend, CD_PAIRS[fin].name + 3);
+    DULOG
+        ("DUEL: FAR FINISHER RUN-IN on slot %d: LETHAL press from %.2f m (SP: 3.05-4.98 m) - %s cancelled on its first frame (%llx), player-kill-close-distance on us (-> %llx) for %d ms onto %.2f m = the intro start of %s; then the SP intro is the dodgeable windup (ps31)",
+         s, (double) d, m->move, (unsigned long long) cr,
+         (unsigned long long) ar, T, (double) dend,
+         CD_PAIRS[fin].name + 3);
     return 1;
 }
-static void mdu_p31_run_tick(uint64_t now) {
-    if (!g_p31r.on) return;
-    int s = g_p31r.slot; uint64_t h = puppet_handle((uint32_t)s);
-    float vb[16], mb[16]; const float *vl = h ? puppet_locator(h, vb) : NULL, *me = uc4_my_loc(mb);
-    if (match_substate() != 6 || g_downed || g_down_dying || local_hp() <= 0.0f) { mdu_p31_run_end("we are down / dead"); return; }
-    if (!mdu_partner_ok(s) || !vl || !me || !__builtin_isfinite(me[0])) { mdu_p31_run_end("the victim is gone / down"); return; }
-    if (psync_own()) { mdu_p31_run_end("a paired move took our body"); return; }
-    if (mdg_own_clip_on()) { mdu_p31_run_end("we dodged"); return; }
+
+static void MduP31RunTick(uint64_t now)
+{
+    if (!g_p31r.on)
+        return;
+    int s = g_p31r.slot;
+    uint64_t h = PuppetHandle((uint32_t) s);
+    float vb[16], mb[16];
+    const float *vl = h ? PuppetLocator(h, vb) : NULL, *me =
+        Uc4MyLoc(mb);
+    if (MatchSubstate() != 6 || g_downed || g_downDying
+        || LocalHp() <= 0.0f) {
+        MduP31RunEnd("we are down / dead");
+        return;
+    }
+    if (!MduPartnerOk(s) || !vl || !me || !__builtin_isfinite(me[0])) {
+        MduP31RunEnd("the victim is gone / down");
+        return;
+    }
+    if (PsyncOwn()) {
+        MduP31RunEnd("a paired move took our body");
+        return;
+    }
+    if (MdgOwnClipOn()) {
+        MduP31RunEnd("we dodged");
+        return;
+    }
     if (g_p31r.ray) {
-        if (g_frame <= g_p31r.ray_f) return;
-        float rt = ray_t(g_p31r.ray); g_p31r.ray = 0;
-        float dx0 = vl[0] - me[0], dz0 = vl[2] - me[2], len = __builtin_sqrtf(dx0 * dx0 + dz0 * dz0);
+        if (g_frame <= g_p31r.ray_f)
+            return;
+        float rt = RayT(g_p31r.ray);
+        g_p31r.ray = 0;
+        float dx0 = vl[0] - me[0], dz0 = vl[2] - me[2], len =
+            __builtin_sqrtf(dx0 * dx0 + dz0 * dz0);
         if (rt >= 0.0f && rt <= 1.0f && rt * len < len - 0.5f) {
             g_p31r.blocked_until = now + 500;
-            mdu_p31_run_end("static world between us and the victim");
-            uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, g_p31r.move, 0, 0, 0, 0, 0};
-            if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
+            MduP31RunEnd("static world between us and the victim");
+            uint64_t ret[2] = { 0, 0 }, args[8] =
+                { SID_PLAYER, h, g_p31r.move, 0, 0, 0, 0, 0 };
+            if (g_maHave)
+                for (int i = 3; i < 8; i++)
+                    args[i] = g_maCache[i];
             g_p31.direct_ms = now;
-            if (g_start_melee_orig) g_start_melee_orig(ret, 8, args, 0);
-            DULOG("DUEL: far finisher run-in undone: the world ray hit %.2f m ahead of %.2f m - the opener restarted -> %llx (the ps30 far-lethal path; ps31)", (double)(rt * len), (double)len, (unsigned long long)ret[0]);
-            if (!ret[0]) padinj_press("melee-attack", 120);
+            if (g_startMeleeOrig)
+                g_startMeleeOrig(ret, 8, args, 0);
+            DULOG
+                ("DUEL: far finisher run-in undone: the world ray hit %.2f m ahead of %.2f m - the opener restarted -> %llx (the ps30 far-lethal path; ps31)",
+                 (double) (rt * len), (double) len,
+                 (unsigned long long) ret[0]);
+            if (!ret[0])
+                PadinjPress("melee-attack", 120);
             return;
         }
     }
-    float dx = vl[0] - me[0], dz = vl[2] - me[2], d = __builtin_sqrtf(dx * dx + dz * dz), el = (float)(int64_t)(now - g_p31r.t0);
-    if (d < 0.05f) return;
-    if (el >= (float)g_p31r.T) {
-        mhr_stop(SID_PLAYER, g_p31r.sid, 0.10f); padinj_block("melee-attack", 0); g_p31r.on = 0;
-        uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, g_p31r.move, 0, 0, 0, 0, 0};
-        if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
-        g_p31.force_intro_until = now + 300; g_p31.direct_ms = now;
-        if (g_start_melee_orig) g_start_melee_orig(ret, 8, args, 0);
-        DULOG("DUEL: far finisher run-in over after %d ms (planned %d): %.2f m from slot %d (target %.2f m, start %.2f m) - the opener restarted -> %llx, its finisher's SP intro is the windup%s (ps31)",
-              (int)el, g_p31r.T, (double)d, s, (double)g_p31r.dend, (double)g_p31r.d0, (unsigned long long)ret[0], ret[0] ? "" : " - REFUSED: the press goes back to the engine");
-        if (!ret[0]) padinj_press("melee-attack", 120);
+    float dx = vl[0] - me[0], dz = vl[2] - me[2], d =
+        __builtin_sqrtf(dx * dx + dz * dz), el =
+        (float) (int64_t) (now - g_p31r.t0);
+    if (d < 0.05f)
+        return;
+    if (el >= (float) g_p31r.T) {
+        MhrStop(SID_PLAYER, g_p31r.sid, 0.10f);
+        PadinjBlock("melee-attack", 0);
+        g_p31r.on = 0;
+        uint64_t ret[2] = { 0, 0 }, args[8] =
+            { SID_PLAYER, h, g_p31r.move, 0, 0, 0, 0, 0 };
+        if (g_maHave)
+            for (int i = 3; i < 8; i++)
+                args[i] = g_maCache[i];
+        g_p31.force_intro_until = now + 300;
+        g_p31.direct_ms = now;
+        if (g_startMeleeOrig)
+            g_startMeleeOrig(ret, 8, args, 0);
+        DULOG
+            ("DUEL: far finisher run-in over after %d ms (planned %d): %.2f m from slot %d (target %.2f m, start %.2f m) - the opener restarted -> %llx, its finisher's SP intro is the windup%s (ps31)",
+             (int) el, g_p31r.T, (double) d, s, (double) g_p31r.dend,
+             (double) g_p31r.d0, (unsigned long long) ret[0],
+             ret[0] ? "" :
+             " - REFUSED: the press goes back to the engine");
+        if (!ret[0])
+            PadinjPress("melee-attack", 120);
         return;
     }
-    if (g_snapx_block_ms && now - g_snapx_block_ms < 700) return;          // (snapcross threw our body back off geometry: no pull through it)
-    float ux = dx / d, uz = dz / d, x = el / (float)g_p31r.T; x = x * x * (3.0f - 2.0f * x);
+    if (g_snapxBlockMs && now - g_snapxBlockMs < 700)
+        return;                 // (snapcross threw our body back off geometry: no pull through it)
+    float ux = dx / d, uz = dz / d, x = el / (float) g_p31r.T;
+    x = x * x * (3.0f - 2.0f * x);
     float D = g_p31r.d0 - (g_p31r.d0 - g_p31r.dend) * x, st = d - D;
-    st = st > 0.30f ? 0.30f : st < -0.10f ? -0.10f : st;                   // [TUNING ps31] <= 0.30 m a frame (SP's transfer: ~8.5 m/s)
-    float want = __builtin_atan2f(ux, uz), cur = uc4_yaw(me) / 57.29578f, dy = __builtin_remainderf(want - cur, 6.2831853f), mx = MDU_TURN_CAP_DPS * 0.01745329f / 60.0f;
+    st = st > 0.30f ? 0.30f : st < -0.10f ? -0.10f : st;        // [TUNING ps31] <= 0.30 m a frame (SP's transfer: ~8.5 m/s)
+    float want = __builtin_atan2f(ux, uz), cur =
+        Uc4Yaw(me) / 57.29578f, dy =
+        __builtin_remainderf(want - cur, 6.2831853f), mx =
+        MDU_TURN_CAP_DPS * 0.01745329f / 60.0f;
     float yaw = cur + (dy > mx ? mx : dy < -mx ? -mx : dy);
-    float l8[8] = {me[0] + ux * st, me[1], me[2] + uz * st, 1.0f, 0.0f, __builtin_sinf(yaw * 0.5f), 0.0f, __builtin_cosf(yaw * 0.5f)};
-    static psync_bf bf;
-    psync_bf_from_loc(&bf, l8);
+    float l8[8] =
+        { me[0] + ux * st, me[1], me[2] + uz * st, 1.0f, 0.0f,
+  __builtin_sinf(yaw * 0.5f), 0.0f, __builtin_cosf(yaw * 0.5f) };
+    static PsyncBf bf;
+    PsyncBfFromLoc(&bf, l8);
     mo_write(SID_PLAYER, &bf, MO_SRC("duel.p31_run_in"), 0);
 }
+
 // every frame while the duel feature is on (mdu_tick, engaged or not): the melee press edge, the opener decision's inputs for the move search, the refused opener's start
-static void mdu_p31_tick(uint64_t now) {
-    int held = (game_focused() && (GetAsyncKeyState(0x46) & 0x8000)) || pad_cmd_on("melee-attack") || (g_bot_melee_ms && now - g_bot_melee_ms < 80);
-    if (held && !g_p31.held) g_p31.press_ms = now;
+static void MduP31Tick(uint64_t now)
+{
+    int held = (GameFocused() && (GetAsyncKeyState(0x46) & 0x8000))
+        || PadCmdOn("melee-attack") || (g_botMeleeMs
+                                          && now - g_botMeleeMs < 80);
+    if (held && !g_p31.held)
+        g_p31.press_ms = now;
     g_p31.held = held;
-    if (!g_p31_open_sid[0]) for (int i = 0; i < P31_NOPEN; i++) g_p31_open_sid[i] = fnv64_rt(P31_OPEN[i].o_open);
-    g_p31.dec_slot = -1; g_p31.dec_frame = g_frame;
-    if (!mdu_p31_opener_old() && match_substate() == 6 && !g_downed && !g_down_dying) {
-        if (!g_p31.ok_at || now - g_p31.ok_at > 2000) {      // which rows can play here (the rows' -hit pairs resident)
+    if (!g_p31OpenSid[0])
+        for (int i = 0; i < P31_NOPEN; i++)
+            g_p31OpenSid[i] = Fnv64Rt(P31_OPEN[i].o_open);
+    g_p31.dec_slot = -1;
+    g_p31.dec_frame = g_frame;
+    if (!MduP31OpenerOld() && MatchSubstate() == 6 && !g_downed
+        && !g_downDying) {
+        if (!g_p31.ok_at || now - g_p31.ok_at > 2000) { // which rows can play here (the rows' -hit pairs resident)
             g_p31.ok_at = now ? now : 1;
-            for (int i = 0; i < P31_NOPEN; i++) g_p31.ok[i] = mdu_p31_row_ok(P31_OPEN[i].o_far);
-            g_p31.ok[7] = mdu_p31_row_ok("fist-light-attack-left-1");
-            g_p31.ok[6] = mdu_p31_row_ok("fists-stun-combo-1");                 // ps32 (not loaded = the row is never chosen)
-            g_p33_rows_ok = mdu_p31_row_ok("1hblunt-stun-breaker-combo-left-1") && mdu_p31_row_ok("1hblunt-stun-breaker-combo-1");   // ps33
+            for (int i = 0; i < P31_NOPEN; i++)
+                g_p31.ok[i] = MduP31RowOk(P31_OPEN[i].o_far);
+            g_p31.ok[7] = MduP31RowOk("fist-light-attack-left-1");
+            g_p31.ok[6] = MduP31RowOk("fists-stun-combo-1"); // ps32 (not loaded = the row is never chosen)
+            g_p33RowsOk = MduP31RowOk("1hblunt-stun-breaker-combo-left-1") && MduP31RowOk("1hblunt-stun-breaker-combo-1");      // ps33
         }
-        float d = 0.0f; int s = mdu_cand_r(&d, P31_FAR_MAX);
-        if (s >= 0) { uint64_t h = puppet_handle((uint32_t)s); g_p31.dec_slot = s; g_p31.dec_d = d; g_p31.dec_lethal = h ? mdu_blow_lethal(s, h) : 0; }
+        float d = 0.0f;
+        int s = MduCandR(&d, P31_FAR_MAX);
+        if (s >= 0) {
+            uint64_t h = PuppetHandle((uint32_t) s);
+            g_p31.dec_slot = s;
+            g_p31.dec_d = d;
+            g_p31.dec_lethal = h ? MduBlowLethal(s, h) : 0;
+        }
     }
-    if (!g_p31.veto_ms) return;
+    if (!g_p31.veto_ms)
+        return;
     if (g_p31.started_ms >= g_p31.veto_ms) {
-        DULOG("DUEL: opener rule at %.2f m (%s): the engine's opener was refused in its move search and the engine's own next candidate started - kept (ps31)", (double)g_p31.d, g_p31.why ? g_p31.why : "?");
-        g_p31.veto_ms = 0; return;
-    }
-    int pressed = g_p31.press_ms && g_p31.press_ms + P31_PRESS_MS >= g_p31.veto_ms;
-    if (!pressed) {
-        if (now - g_p31.veto_ms > 120) { static int nl; if (LOGCAP(nl, 60)) DULOG("DUEL: opener rule: a refused opener with no melee press in the last %d ms - nothing started (ps31)", P31_PRESS_MS); g_p31.veto_ms = 0; }
+        DULOG
+            ("DUEL: opener rule at %.2f m (%s): the engine's opener was refused in its move search and the engine's own next candidate started - kept (ps31)",
+             (double) g_p31.d, g_p31.why ? g_p31.why : "?");
+        g_p31.veto_ms = 0;
         return;
     }
-    uint64_t h = g_p31.slot >= 0 ? puppet_handle((uint32_t)g_p31.slot) : 0, ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, g_p31.want, 0, 0, 0, 0, 0};
-    if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
-    int late = (int)(now - g_p31.veto_ms);
-    g_p31.veto_ms = 0; g_p31.direct_ms = now;
-    int own_tail = g_mdu.pair_on && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid;   // our own last duel pair still blends out (the opener right after the 4th-hit gap)
-    if (h && g_start_melee_orig && !g_downed && !g_down_dying && (!psync_own() || own_tail) && !mdg_own_clip_on()) {
-        if (own_tail) { psync_att_out(psync_ms() - g_ps.t0 + g_ps.chain_shift); psync_own_att_free("duel opener (ps31)"); }   // (as mdu_next: our half blends out under the new swing)
-        g_start_melee_orig(ret, 8, args, 0);
+    int pressed = g_p31.press_ms
+        && g_p31.press_ms + P31_PRESS_MS >= g_p31.veto_ms;
+    if (!pressed) {
+        if (now - g_p31.veto_ms > 120) {
+            static int nl;
+            if (LOGCAP(nl, 60))
+                DULOG
+                    ("DUEL: opener rule: a refused opener with no melee press in the last %d ms - nothing started (ps31)",
+                     P31_PRESS_MS);
+            g_p31.veto_ms = 0;
+        }
+        return;
     }
-    DULOG("DUEL: opener rule at %.2f m on slot %d: %s started in place of the engine's opener (%s) -> %llx, %d ms after the move search refused it; no swing was started or cancelled%s (ps31)",
-          (double)g_p31.d, g_p31.slot, g_p31.want_name ? g_p31.want_name : "?", g_p31.why ? g_p31.why : "?", (unsigned long long)ret[0], late, ret[0] ? "" : " - REFUSED: the press goes back to the engine, its own opener starts");
-    if (!ret[0]) padinj_press("melee-attack", 120);
+    uint64_t h =
+        g_p31.slot >= 0 ? PuppetHandle((uint32_t) g_p31.slot) : 0,
+        ret[2] = { 0, 0 }, args[8] =
+        { SID_PLAYER, h, g_p31.want, 0, 0, 0, 0, 0 };
+    if (g_maHave)
+        for (int i = 3; i < 8; i++)
+            args[i] = g_maCache[i];
+    int late = (int) (now - g_p31.veto_ms);
+    g_p31.veto_ms = 0;
+    g_p31.direct_ms = now;
+    int own_tail = g_mdu.pair_on && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid; // our own last duel pair still blends out (the opener right after the 4th-hit gap)
+    if (h && g_startMeleeOrig && !g_downed && !g_downDying
+        && (!PsyncOwn() || own_tail) && !MdgOwnClipOn()) {
+        if (own_tail) {
+            PsyncAttOut(PsyncMs() - g_ps.t0 + g_ps.chain_shift);
+            PsyncOwnAttFree("duel opener (ps31)");
+        }                       // (as mdu_next: our half blends out under the new swing)
+        g_startMeleeOrig(ret, 8, args, 0);
+    }
+    DULOG
+        ("DUEL: opener rule at %.2f m on slot %d: %s started in place of the engine's opener (%s) -> %llx, %d ms after the move search refused it; no swing was started or cancelled%s (ps31)",
+         (double) g_p31.d, g_p31.slot,
+         g_p31.want_name ? g_p31.want_name : "?",
+         g_p31.why ? g_p31.why : "?", (unsigned long long) ret[0], late,
+         ret[0] ? "" :
+         " - REFUSED: the press goes back to the engine, its own opener starts");
+    if (!ret[0])
+        PadinjPress("melee-attack", 120);
 }
-static void mdu_swing_note(int started, uint64_t move) {
-    mst_note_move(started);   // melee_duel_stance.c: the stance on us is cut on our move's first frame
-    if (started) g_p31.started_ms = GetTickCount64();   // ps31: a melee move of ours started (the opener rule: the engine's own next candidate after a refused opener)
-    if (!mdu_on() || !started || match_substate() != 6) return;
-    if (g_p31r.on) {   // ps31 C: a melee move that starts on us during the far finisher run-in (keyboard F is not under padinj_block) is cancelled - the run-in owns the press
-        uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
+
+static void MduSwingNote(int started, uint64_t move)
+{
+    MstNoteMove(started);     // melee_duel_stance.c: the stance on us is cut on our move's first frame
+    if (started)
+        g_p31.started_ms = GetTickCount64();    // ps31: a melee move of ours started (the opener rule: the engine's own next candidate after a refused opener)
+    if (!MduOn() || !started || MatchSubstate() != 6)
+        return;
+    if (g_p31r.on) {            // ps31 C: a melee move that starts on us during the far finisher run-in (keyboard F is not under padinj_block) is cancelled - the run-in owns the press
+        uint64_t me0 = SID_PLAYER;
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
         g_mdu.sw_on = 0;
-        static int nlr; if (LOGCAP(nlr, 30)) DULOG("DUEL: melee move %llx started during the far finisher run-in - cancelled (ps31)", (unsigned long long)move);
+        static int nlr;
+        if (LOGCAP(nlr, 30))
+            DULOG
+                ("DUEL: melee move %llx started during the far finisher run-in - cancelled (ps31)",
+                 (unsigned long long) move);
         return;
     }
     // (side pull under the truck, log [13769]-[13802]): the pull-out's own press started an engine swing again 2 frames after the TRIGGER, the duel
     // re-engaged on it and its -hit pair replaced the pull-out intro. While our pull-out runs, every melee move that starts on us is cancelled: the pull-out owns the press
-    if (pul_att_active() && !pul_drag_move(move)) {
-        uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
+    if (PulAttActive() && !PulDragMove(move)) {
+        uint64_t me0 = SID_PLAYER;
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
         g_mdu.sw_on = 0;
-        static int nl; if (LOGCAP(nl, 30)) DULOG("DUEL: melee move %llx started during our pull-out - cancelled, no duel swing", (unsigned long long)move);
+        static int nl;
+        if (LOGCAP(nl, 30))
+            DULOG
+                ("DUEL: melee move %llx started during our pull-out - cancelled, no duel swing",
+                 (unsigned long long) move);
         return;
     }
     // v5-sfx latch (A [45227]-[45304] / B [47003]-[47098] / hammer [27181]): an engine melee move that starts on us DURING the finisher windup (the combo
@@ -1640,18 +3687,37 @@ static void mdu_swing_note(int started, uint64_t move) {
     // a new melee move started on us") and the new swing picked ANOTHER finisher and restarted another SP intro - 4 picks / 4 intro restarts for one kill on both
     // screens. One lethal swing = one finisher: the intruding move is cancelled and the same intro goes on from its phase (the pick, the contact time, the
     // partner's replica stay). Only a dodge / a real break (mdu_fw_end elsewhere) ends a windup. t2r-duel-no-fin-latch.txt = the old restart.
-    if (g_mdfwu.on && !g_mdfwu.punch && started && g_mdu.sw_on && GetFileAttributesA("t2r-duel-no-fin-latch.txt") == INVALID_FILE_ATTRIBUTES) {
+    if (g_mdfwu.on && !g_mdfwu.punch && started && g_mdu.sw_on
+        && GetFileAttributesA("t2r-duel-no-fin-latch.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
         uint64_t nw = GetTickCount64();
         if (nw + 10 < g_mdu.sw_tc) {
-            uint64_t me0 = SID_PLAYER, cr = dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
-            float ph = g_mdfwu.im > 0 ? (float)(nw - g_mdfwu.t0) * g_mdfwu.sp / (float)g_mdfwu.im : 0.0f;
-            if (ph < 0.0f) ph = 0.0f;
-            if (ph > 0.97f) ph = 0.97f;
-            uint64_t r = mhr_animate(SID_PLAYER, g_mdfwu.sid, ph, 0.0f);
-            if (g_mdfwu.sp < 0.999f) dtl_speed(SID_PLAYER, g_mdfwu.sid, g_mdfwu.sp);
-            static int nl; if (LOGCAP(nl, 60))
-            DULOG("DUEL: u%04x finisher windup %s LATCHED: engine move %016llx started on us %d ms before the contact - cancelled (%llx), the intro goes on from phase %.3f (-> %llx); no re-pick",
-                  g_mdu.uid, g_mdfwu.fin >= 0 ? CD_PAIRS[g_mdfwu.fin].name + 3 : "?", (unsigned long long)move, (int)(int64_t)(g_mdu.sw_tc - nw), (unsigned long long)cr, (double)ph, (unsigned long long)r);
+            uint64_t me0 = SID_PLAYER, cr =
+                DcCall(0x394888944e949d5fULL /* cancel-melee-action */ ,
+                        1, &me0);
+            float ph =
+                g_mdfwu.im >
+                0 ? (float) (nw -
+                             g_mdfwu.t0) * g_mdfwu.sp /
+                (float) g_mdfwu.im : 0.0f;
+            if (ph < 0.0f)
+                ph = 0.0f;
+            if (ph > 0.97f)
+                ph = 0.97f;
+            uint64_t r = MhrAnimate(SID_PLAYER, g_mdfwu.sid, ph, 0.0f);
+            if (g_mdfwu.sp < 0.999f)
+                DTL_SPEED(SID_PLAYER, g_mdfwu.sid, g_mdfwu.sp);
+            static int nl;
+            if (LOGCAP(nl, 60))
+                DULOG
+                    ("DUEL: u%04x finisher windup %s LATCHED: engine move %016llx started on us %d ms before the contact - cancelled (%llx), the intro goes on from phase %.3f (-> %llx); no re-pick",
+                     g_mdu.uid,
+                     g_mdfwu.fin >=
+                     0 ? CD_PAIRS[g_mdfwu.fin].name + 3 : "?",
+                     (unsigned long long) move,
+                     (int) (int64_t) (g_mdu.sw_tc - nw),
+                     (unsigned long long) cr, (double) ph,
+                     (unsigned long long) r);
             return;
         }
     }
@@ -1661,20 +3727,60 @@ static void mdu_swing_note(int started, uint64_t move) {
     // engine's own -hit of that swing): the ps23 park_hook branch drops the engine contact without counting it, so the engine's -hit move one frame before our
     // contact read as a foreign move and ended the windup. The engine's -hit at / after the lethal swing's contact time is still our lethal swing.
     // t2r-fin-enghit-ps33.txt = old.
-    int p34_enghit = g_mdu.eng_contact || (g_mdu.sw_lethal && GetTickCount64() + 50 >= g_mdu.sw_tc && GetFileAttributesA("t2r-fin-enghit-ps33.txt") == INVALID_FILE_ATTRIBUTES);
-    if (g_mdfwu.on && g_mdfwu.punch && g_mdu.sw_on && !g_mdu.eng_contact && p34_enghit) { static int nl; if (LOGCAP(nl, 40)) DULOG("DUEL: u%04x engine move %llx started %lld ms before the lethal swing's contact - it is the swing's own -hit: the finisher windup goes on (ps34)", g_mdu.uid, (unsigned long long)move, (long long)(g_mdu.sw_tc - GetTickCount64())); }
-    if (g_mdfwu.on && !(g_mdfwu.punch && g_mdu.sw_on && p34_enghit)) mdu_fw_end("a new melee move started on us", 1);   // (v5-finwind; punch rule: the engine's own -hit move after its dropped contact is still our lethal swing)
-    if (mpn_hold_att()) { g_mdu.sw_on = 0; return; }   // A press during a pin blow also started an engine swing - its plain contact landed mid-pin; the pin owns the presses
-    if (dc_armed_at(GetTickCount64())) { DULOG("DUEL: swing press inside the dodge-counter window - dcounter.c plays the SP counter pair, no duel swing"); g_mdu.sw_on = 0; return; }
-    int r = mdu_row_of(move), kill_sub = 0;
+    int p34_enghit = g_mdu.eng_contact || (g_mdu.sw_lethal
+                                           && GetTickCount64() + 50 >=
+                                           g_mdu.sw_tc
+                                           &&
+                                           GetFileAttributesA
+                                           ("t2r-fin-enghit-ps33.txt") ==
+                                           INVALID_FILE_ATTRIBUTES);
+    if (g_mdfwu.on && g_mdfwu.punch && g_mdu.sw_on && !g_mdu.eng_contact
+        && p34_enghit) {
+        static int nl;
+        if (LOGCAP(nl, 40))
+            DULOG
+                ("DUEL: u%04x engine move %llx started %lld ms before the lethal swing's contact - it is the swing's own -hit: the finisher windup goes on (ps34)",
+                 g_mdu.uid, (unsigned long long) move,
+                 (long long) (g_mdu.sw_tc - GetTickCount64()));
+    }
+    if (g_mdfwu.on && !(g_mdfwu.punch && g_mdu.sw_on && p34_enghit))
+        MduFwEnd("a new melee move started on us", 1);        // (v5-finwind; punch rule: the engine's own -hit move after its dropped contact is still our lethal swing)
+    if (MpnHoldAtt()) {
+        g_mdu.sw_on = 0;
+        return;
+    }                           // A press during a pin blow also started an engine swing - its plain contact landed mid-pin; the pin owns the presses
+    if (DcArmedAt(GetTickCount64())) {
+        DULOG
+            ("DUEL: swing press inside the dodge-counter window - dcounter.c plays the SP counter pair, no duel swing");
+        g_mdu.sw_on = 0;
+        return;
+    }
+    int r = MduRowOf(move), kill_sub = 0;
     // (a swing was DODGED - 'melee locked 650 ms' - and 90 ms later a LETHAL swing started with no wind-up and its finisher
     // killed the dodger mid dodge step, through a crate): a melee move that starts on us inside the MISS recovery is cancelled on its first frame.
-    if (g_mdu.on && g_mdg.atk_lock_until > GetTickCount64() && !pul_drag_move(move) && GetFileAttributesA("t2r-duel-miss-lock-soft.txt") == INVALID_FILE_ATTRIBUTES) {
-        uint64_t me0 = SID_PLAYER, cr = dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
-        DULOG("DUEL: u%04x melee move %016llx started inside the MISS recovery (%d ms left) - cancelled (-> %llx), no swing", g_mdu.uid, (unsigned long long)move, (int)(g_mdg.atk_lock_until - GetTickCount64()), (unsigned long long)cr);
-        g_mdu.sw_on = 0; return;
+    if (g_mdu.on && g_mdg.atk_lock_until > GetTickCount64()
+        && !PulDragMove(move)
+        && GetFileAttributesA("t2r-duel-miss-lock-soft.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        uint64_t me0 = SID_PLAYER, cr =
+            DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1,
+                    &me0);
+        DULOG
+            ("DUEL: u%04x melee move %016llx started inside the MISS recovery (%d ms left) - cancelled (-> %llx), no swing",
+             g_mdu.uid, (unsigned long long) move,
+             (int) (g_mdg.atk_lock_until - GetTickCount64()),
+             (unsigned long long) cr);
+        g_mdu.sw_on = 0;
+        return;
     }
-    { static int nl; if (r >= 0 && LOGCAP(nl, 400)) DULOG("DUEL: swing start %s (row %d, slot %d, sw_on %d, fw %d) (11-10 trace)", MDU_MOVES[r].move, r, g_mdu.slot, g_mdu.sw_on, g_mdfwu.on); }
+    {
+        static int nl;
+        if (r >= 0 && LOGCAP(nl, 400))
+            DULOG
+                ("DUEL: swing start %s (row %d, slot %d, sw_on %d, fw %d) (11-10 trace)",
+                 MDU_MOVES[r].move, r, g_mdu.slot, g_mdu.sw_on,
+                 g_mdfwu.on);
+    }
     // v5-disfix (half a finisher and then a disarm instead of a smooth disarm with SP's timing; log 15468-15472: victim hp 10, the engine itself picked its fist KILL move
     // (fist-kick-face-kill-sync 948b37d65066cf63 / fist-kick-face-kill 599731b7fef0a6b5 - not duel rows) for the swing, mdu_row_of = -1, this function returned silently, the
     // lethal swing was a FREE swing: no pick at the start, no SP-intro windup; ctxdown.c cd_contact_fin then started the finisher at the jab's contact with the intro passed
@@ -1682,41 +3788,99 @@ static void mdu_swing_note(int started, uint64_t move) {
     // cover / ledge / infected) is now the lethal fist swing of the duel: it takes fist-light-attack-1's row, and when that swing downs its candidate (mdu_blow_lethal) the
     // normal lethal path runs - mdu_fin_arm picks the finisher at the swing START, mdu_fw_begin cancels the kill move and plays the pick's SP intro as the windup (a disarm's
     // too), the -sync pair follows at the intro's end. Not lethal / no candidate = the old silent return. t2r-no-free-fin-windup.txt = off.
-    if (r < 0 && !g_mdu.sw_on && !g_downed && !g_down_dying) {
-        static int off = -1; static uint64_t offat; uint64_t no = GetTickCount64();
-        if (off < 0 || no - offat > 2000) { offat = no; int o = GetFileAttributesA("t2r-no-free-fin-windup.txt") != INVALID_FILE_ATTRIBUTES; if (o != off) xlog("DUEL: free lethal swing windup %s", o ? "OFF (t2r-no-free-fin-windup.txt)" : "on: an engine fist kill move is the duel's lethal swing - the SP intro is its windup"); off = o; }
-        if (!off) for (size_t i = 0; i < sizeof FIN_ANIMS / sizeof FIN_ANIMS[0]; i++) {
-            if (FIN_ANIMS[i].move != move) continue;
-            const char *a = FIN_ANIMS[i].att;
-            // (B 16416-16460, hammer: a 0.3 s swing from the left, then the second half of a finisher from the right): the engine's WEAPON kill
-            // moves (1h-blunt-quick-right(-sync), 1h-blunt-handle-finisher, ...) took the same contact path - now each family maps to its set's opening duel row
-            const char *sub = NULL;
-            // (B 16626: behind the victim mid-duel the engine picked abby-fist-sneak-kill-rear-choke - left to the engine, it played the
-            //  choke instead of the duel's disarm. Inside a duel a fist sneak kill is the duel's lethal swing too. t2r-duel-sneak-to-engine.txt = old.)
-            int sneak_ok = mdu_engaged() && strstr(a, "-fist-") && GetFileAttributesA("t2r-duel-sneak-to-engine.txt") == INVALID_FILE_ATTRIBUTES;
-            if ((sneak_ok || !strstr(a, "sneak")) && !strstr(a, "cover") && !strstr(a, "ledge") && !strstr(a, "wall") && !strstr(a, "knee") && !strstr(a, "-inf-") && !strstr(a, "shambler")) {
-                // (A 17141: abby-fist-stun-kill-throw-down missed "-fist-kill-" - the engine's kill move played on the attacker only, its damage
-                //  downed B as a plain down, B lay stuck prone on both screens. Every fist kill family (-fist-kill- / -fist-stun-kill- / ...) and the abby weapon sets now map.)
-                if (strstr(a, "-fist-")) sub = "fist-light-attack-1";
-                else if (!strncmp(a, "abby-1hblunt", 12)) sub = "abby-1h-blunt-light-1";
-                else if (!strncmp(a, "ellie-1hblunt", 13) || !strncmp(a, "ellie-short-pipe", 16)) sub = "ellie-1h-blunt-light-1";
-                else if (!strncmp(a, "ellie-1hblade", 13) || !strncmp(a, "ellie-machete", 13) || !strncmp(a, "abby-1hblade", 12) || !strncmp(a, "abby-machete", 12)) sub = "ellie-1h-blade-light-1";
-                else if (!strncmp(a, "ellie-2hblunt", 13) || !strncmp(a, "ellie-2hblade", 13) || !strncmp(a, "abby-2h", 7)) sub = "ellie-2h-blunt-attack-1";
-            }
-            if (!sub) { static int nm; if (LOGCAP(nm, 30)) xlog("DUEL: engine kill move %016llx (%s) has no duel row family - left to the engine", (unsigned long long)move, a); }
-            if (sub) {
-                int fr = mdu_row_named(sub);
-                if (fr >= 0) { r = fr; kill_sub = 1; }
-            }
-            break;
+    if (r < 0 && !g_mdu.sw_on && !g_downed && !g_downDying) {
+        static int off = -1;
+        static uint64_t offat;
+        uint64_t no = GetTickCount64();
+        if (off < 0 || no - offat > 2000) {
+            offat = no;
+            int o =
+                GetFileAttributesA("t2r-no-free-fin-windup.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+            if (o != off)
+                Xlog("DUEL: free lethal swing windup %s",
+                     o ? "OFF (t2r-no-free-fin-windup.txt)" :
+                     "on: an engine fist kill move is the duel's lethal swing - the SP intro is its windup");
+            off = o;
         }
+        if (!off)
+            for (size_t i = 0; i < sizeof FIN_ANIMS / sizeof FIN_ANIMS[0];
+                 i++) {
+                if (FIN_ANIMS[i].move != move)
+                    continue;
+                const char *a = FIN_ANIMS[i].att;
+                // (B 16416-16460, hammer: a 0.3 s swing from the left, then the second half of a finisher from the right): the engine's WEAPON kill
+                // moves (1h-blunt-quick-right(-sync), 1h-blunt-handle-finisher, ...) took the same contact path - now each family maps to its set's opening duel row
+                const char *sub = NULL;
+                // (B 16626: behind the victim mid-duel the engine picked abby-fist-sneak-kill-rear-choke - left to the engine, it played the
+                //  choke instead of the duel's disarm. Inside a duel a fist sneak kill is the duel's lethal swing too. t2r-duel-sneak-to-engine.txt = old.)
+                int sneak_ok = MduEngaged() && strstr(a, "-fist-")
+                    && GetFileAttributesA("t2r-duel-sneak-to-engine.txt")
+                    == INVALID_FILE_ATTRIBUTES;
+                if ((sneak_ok || !strstr(a, "sneak"))
+                    && !strstr(a, "cover") && !strstr(a, "ledge")
+                    && !strstr(a, "wall") && !strstr(a, "knee")
+                    && !strstr(a, "-inf-") && !strstr(a, "shambler")) {
+                    // (A 17141: abby-fist-stun-kill-throw-down missed "-fist-kill-" - the engine's kill move played on the attacker only, its damage
+                    //  downed B as a plain down, B lay stuck prone on both screens. Every fist kill family (-fist-kill- / -fist-stun-kill- / ...) and the abby weapon sets now map.)
+                    if (strstr(a, "-fist-"))
+                        sub = "fist-light-attack-1";
+                    else if (!strncmp(a, "abby-1hblunt", 12))
+                        sub = "abby-1h-blunt-light-1";
+                    else if (!strncmp(a, "ellie-1hblunt", 13)
+                             || !strncmp(a, "ellie-short-pipe", 16))
+                        sub = "ellie-1h-blunt-light-1";
+                    else if (!strncmp(a, "ellie-1hblade", 13)
+                             || !strncmp(a, "ellie-machete", 13)
+                             || !strncmp(a, "abby-1hblade", 12)
+                             || !strncmp(a, "abby-machete", 12))
+                        sub = "ellie-1h-blade-light-1";
+                    else if (!strncmp(a, "ellie-2hblunt", 13)
+                             || !strncmp(a, "ellie-2hblade", 13)
+                             || !strncmp(a, "abby-2h", 7))
+                        sub = "ellie-2h-blunt-attack-1";
+                }
+                if (!sub) {
+                    static int nm;
+                    if (LOGCAP(nm, 30))
+                        Xlog("DUEL: engine kill move %016llx (%s) has no duel row family - left to the engine", (unsigned long long) move, a);
+                }
+                if (sub) {
+                    int fr = MduRowNamed(sub);
+                    if (fr >= 0) {
+                        r = fr;
+                        kill_sub = 1;
+                    }
+                }
+                break;
+            }
     }
     if (r < 0 && g_mdu.sw_on && p34_enghit) {   // the engine's own contact (dropped) switches our swing to its -hit move - that is still our blow
-        DULOG("DUEL: u%04x swing %s -> engine -hit move %llx after its dropped contact - kept, the duel's contact still lands", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, (unsigned long long)move);
-        g_mdu_ehit_move = move; g_mdu_ehit_ms = GetTickCount64(); sptl_engine_hit(move); return; }   // (sptl: SP's -hit starts once, at the duel's contact, with the victim half - the engine's early one is undone)
-    if (r < 0 && !g_mdu.sw_on) { static int nl; if (LOGCAP(nl, 40)) DULOG("DUEL: engine move %016llx is no duel row - plain engine move (11-10 trace)", (unsigned long long)move); }
-    if (r < 0) { if (g_mdu.sw_on) { DULOG("DUEL: swing %s replaced by move %llx - warp off", MDU_MOVES[g_mdu.sw_row].move, (unsigned long long)move); g_mdu.sw_on = 0; } return; }
-    const mdu_row_t *m = &MDU_MOVES[r];
+        DULOG
+            ("DUEL: u%04x swing %s -> engine -hit move %llx after its dropped contact - kept, the duel's contact still lands",
+             g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move,
+             (unsigned long long) move);
+        g_mdu_ehit_move = move;
+        g_mdu_ehit_ms = GetTickCount64();
+        SptlEngineHit(move);
+        return;
+    }                           // (sptl: SP's -hit starts once, at the duel's contact, with the victim half - the engine's early one is undone)
+    if (r < 0 && !g_mdu.sw_on) {
+        static int nl;
+        if (LOGCAP(nl, 40))
+            DULOG
+                ("DUEL: engine move %016llx is no duel row - plain engine move (11-10 trace)",
+                 (unsigned long long) move);
+    }
+    if (r < 0) {
+        if (g_mdu.sw_on) {
+            DULOG("DUEL: swing %s replaced by move %llx - warp off",
+                  MDU_MOVES[g_mdu.sw_row].move, (unsigned long long) move);
+            g_mdu.sw_on = 0;
+        }
+        return;
+    }
+    const MduRowT *m = &MDU_MOVES[r];
     uint64_t now = GetTickCount64();
     // (A [56184]-[56414]): from blow 2 the next press waits for the breath (MDU_NEXT_AT 910 ms), but
     // the -hit pair hands off at 0.60 s and the engine fired its OWN buffered keyboard press (keyboard F is not under padinj_block) the frame the pair ended
@@ -1728,55 +3892,116 @@ static void mdu_swing_note(int started, uint64_t move) {
     // B [20699]-[20715]): the first version cancelled it and held the press for the breath - the engine re-fired the swing every 2 frames (8 cancels in
     // 280 ms = a twitching idle), then the kick started from the idle pose at +922 ms (a 40 deg torso pop at clip frame 286). The chain step now starts
     // at the hand-off (~+625 ms, the NEXT2 timing) when the engine's buffered press fires there. t2r-duel-engine-press-opener.txt = the old opener.
-    if (!kill_sub && g_mdu.on && g_mdu.slot >= 0 && g_mdu.win_end > now && g_mdu.next_move && m->kind == MDUK_LIGHT && m->step <= 1 && fnv64_rt(m->move) != g_mdu.next_move &&
-        now - g_mdu_next_ms > 200 && GetFileAttributesA("t2r-duel-engine-press-opener.txt") == INVALID_FILE_ATTRIBUTES) {
-        { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); }
-        DULOG("DUEL: u%04x engine swing %s from its own press in the combo window (+%d ms after the contact, breath +%d) - replaced on its first frame by the chain's next step",
-              g_mdu.uid, m->move, (int)(now - g_mdu.hit_ms), MDU_NEXT_AT());
-        mdu_next(now, "the engine's own press in the window");
+    if (!kill_sub && g_mdu.on && g_mdu.slot >= 0 && g_mdu.win_end > now
+        && g_mdu.next_move && m->kind == MDUK_LIGHT && m->step <= 1
+        && Fnv64Rt(m->move) != g_mdu.next_move
+        && now - g_mduNextMs > 200
+        && GetFileAttributesA("t2r-duel-engine-press-opener.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        {
+            uint64_t me0 = SID_PLAYER;
+            DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1,
+                    &me0);
+        }
+        DULOG
+            ("DUEL: u%04x engine swing %s from its own press in the combo window (+%d ms after the contact, breath +%d) - replaced on its first frame by the chain's next step",
+             g_mdu.uid, m->move, (int) (now - g_mdu.hit_ms),
+             MDU_NEXT_AT());
+        MduNext(now, "the engine's own press in the window");
         return;
     }
     {
-    // v5-var (SP does not always open with the left jab; re/melee-sp-timeline.md row 12: the MP engine opens with fist-light-attack-1 every time):
-    // SP's DC (melee-moves.json): left-1 needs distance < 2.0 m; light-1 needs a left opener within 30 frames OR distance > 2.0 m OR an Ellie defender OR a
-    // blocking one - our player victims pass the Ellie bit, so the engine's first candidate light-1 always won. SP vs a human: < 2.0 m from neutral = the left
-    // jab (then left-1 -> 1 -> 2 -> ...), 2-3 m = the right light-1, 3-5 m = light-1-far. The engine's neutral light-1 inside 2.0 m is swapped for left-1 here
-    // (its own SP row: tc 303 ms, dodge window from it). Not after a duel combo press (mdu_next), not for the sprint / dodge / far openers. t2r-duel-no-left-opener.txt = off.
-    float d = 0.0f; int s = -1;
-    if (!kill_sub && !strcmp(m->move, "fist-light-attack-1") && !g_downed && !g_down_dying && (s = mdu_cand(&d)) >= 0 && d < 2.0f && now - g_mdu_next_ms > 200 && GetFileAttributesA("t2r-duel-left-opener.txt") != INVALID_FILE_ATTRIBUTES) {   // (a cancel + restart of a started swing - opt-in)
-        int lr = mdu_row_named("fist-light-attack-left-1"); uint64_t ph = puppet_handle((uint32_t)s);
-        if (lr >= 0 && (MDU_MOVES[lr].res & 7) == 7 && g_mdu.mv_cd[lr] >= 0 && cd_pair_loaded(g_mdu.mv_cd[lr]) && ph && g_start_melee_orig) {
-            uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, ph, fnv64_rt(MDU_MOVES[lr].move), 0, 0, 0, 0, 0};
-            if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
-            { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); }
-            g_start_melee_orig(ret, 8, args, 0);
-            if (ret[0]) { DULOG("DUEL: opener at %.2f m from neutral: the engine's fist-light-attack-1 swapped for SP's left jab fist-light-attack-left-1 (SP: < 2.0 m) -> %llx", (double)d, (unsigned long long)ret[0]); return; }
-            args[2] = move; g_start_melee_orig(ret, 8, args, 0);
-            DULOG("DUEL: opener swap to the left jab refused - fist-light-attack-1 restarted -> %llx", (unsigned long long)ret[0]);
-            if (!ret[0]) return;
+        // v5-var (SP does not always open with the left jab; re/melee-sp-timeline.md row 12: the MP engine opens with fist-light-attack-1 every time):
+        // SP's DC (melee-moves.json): left-1 needs distance < 2.0 m; light-1 needs a left opener within 30 frames OR distance > 2.0 m OR an Ellie defender OR a
+        // blocking one - our player victims pass the Ellie bit, so the engine's first candidate light-1 always won. SP vs a human: < 2.0 m from neutral = the left
+        // jab (then left-1 -> 1 -> 2 -> ...), 2-3 m = the right light-1, 3-5 m = light-1-far. The engine's neutral light-1 inside 2.0 m is swapped for left-1 here
+        // (its own SP row: tc 303 ms, dodge window from it). Not after a duel combo press (mdu_next), not for the sprint / dodge / far openers. t2r-duel-no-left-opener.txt = off.
+        float d = 0.0f;
+        int s = -1;
+        if (!kill_sub && !strcmp(m->move, "fist-light-attack-1") && !g_downed && !g_downDying && (s = MduCand(&d)) >= 0 && d < 2.0f && now - g_mduNextMs > 200 && GetFileAttributesA("t2r-duel-left-opener.txt") != INVALID_FILE_ATTRIBUTES) {      // (a cancel + restart of a started swing - opt-in)
+            int lr = MduRowNamed("fist-light-attack-left-1");
+            uint64_t ph = PuppetHandle((uint32_t) s);
+            if (lr >= 0 && (MDU_MOVES[lr].res & 7) == 7
+                && g_mdu.mv_cd[lr] >= 0 && CdPairLoaded(g_mdu.mv_cd[lr])
+                && ph && g_startMeleeOrig) {
+                uint64_t ret[2] = { 0, 0 }, args[8] =
+                    { SID_PLAYER, ph, Fnv64Rt(MDU_MOVES[lr].move), 0, 0,
+0, 0, 0 };
+                if (g_maHave)
+                    for (int i = 3; i < 8; i++)
+                        args[i] = g_maCache[i];
+                {
+                    uint64_t me0 = SID_PLAYER;
+                    DcCall(0x394888944e949d5fULL /* cancel-melee-action */
+                            , 1, &me0);
+                }
+                g_startMeleeOrig(ret, 8, args, 0);
+                if (ret[0]) {
+                    DULOG
+                        ("DUEL: opener at %.2f m from neutral: the engine's fist-light-attack-1 swapped for SP's left jab fist-light-attack-left-1 (SP: < 2.0 m) -> %llx",
+                         (double) d, (unsigned long long) ret[0]);
+                    return;
+                }
+                args[2] = move;
+                g_startMeleeOrig(ret, 8, args, 0);
+                DULOG
+                    ("DUEL: opener swap to the left jab refused - fist-light-attack-1 restarted -> %llx",
+                     (unsigned long long) ret[0]);
+                if (!ret[0])
+                    return;
+            }
         }
     }
-    }
-    mdp_press(r, now);                                                     // melee_duel_parry.c: our press while their swing runs = the parry / clash claim
-    if (g_mdp_tl && mdu_turnlock_on()) {      // ps41 turn lock: no claim was possible - this press starts no swing
+    MdpPress(r, now);          // melee_duel_parry.c: our press while their swing runs = the parry / clash claim
+    if (g_mdp_tl && MduTurnlockOn()) {        // ps41 turn lock: no claim was possible - this press starts no swing
         g_mdp_tl = 0;
-        { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); }
-        DULOG("DUEL: press during slot %d's swing (+%d ms) - no swing of ours: their turn (parry not available: %s); dodge is open (%s cancelled on its first frame - %s; melee presses off for %d ms; ps41)",
-              g_mdu.slot, g_mdp_tl_since, g_mdp_tl_no ? g_mdp_tl_no : "?", m->move, mdu_tl_cancel_old() ? "the old path (t2r-turnlock-cancel-old.txt)" : kill_sub ? "FALLBACK: an engine kill move, the move search hook only judges duel rows" : "FALLBACK: the move search did not refuse it (ps41b - look why)", g_mdp_tl_until > now ? (int)(g_mdp_tl_until - now) : 0);
+        {
+            uint64_t me0 = SID_PLAYER;
+            DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1,
+                    &me0);
+        }
+        DULOG
+            ("DUEL: press during slot %d's swing (+%d ms) - no swing of ours: their turn (parry not available: %s); dodge is open (%s cancelled on its first frame - %s; melee presses off for %d ms; ps41)",
+             g_mdu.slot, g_mdp_tl_since, g_mdpTlNo ? g_mdpTlNo : "?",
+             m->move,
+             MduTlCancelOld()?
+             "the old path (t2r-turnlock-cancel-old.txt)" : kill_sub ?
+             "FALLBACK: an engine kill move, the move search hook only judges duel rows"
+             :
+             "FALLBACK: the move search did not refuse it (ps41b - look why)",
+             g_mdpTlUntil > now ? (int) (g_mdpTlUntil - now) : 0);
         return;
     }
-    if ((m->res & 7) != 7 || g_mdu.mv_cd[r] < 0 || !cd_pair_loaded(g_mdu.mv_cd[r])) { DULOG("DUEL: swing %s - its -hit pair is not in the MP paks (SP-only) - plain swing", m->move); return; }
-    if (g_downed || g_down_dying || local_hp() <= 0.0f) return;
-    float d = 0.0f; int s = mdu_cand(&d), far_lethal = 0;
-    if (s < 0 && mdu_p31_run_begin(r, now)) return;   // ps31 C: a lethal press at 3-5 m = SP's far finisher transfer (run-in, then the finisher intro), not the far-lethal warp
-    if (s < 0) {      // v5-lethal: beyond the engage reach, a LETHAL swing still engages for its SP finisher (the engine's lunge reaches that far)
-        float stand = 0.0f, srch = 0.0f, mg = 0.0f, fr = 0.0f; ml_reach(move, &stand, &srch, &mg, &fr);
-        float lr = srch > MDU_LETHAL_MAX ? MDU_LETHAL_MAX : srch, d2 = 0.0f;
-        int s2 = lr > (g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH) ? mdu_cand_r(&d2, lr) : -1;
-        if (s2 >= 0 && mdu_blow_lethal(s2, puppet_handle((uint32_t)s2))) {
-            s = s2; d = d2; far_lethal = 1;
-            DULOG("DUEL: swing %s - LETHAL on slot %d from %.2f m, past the %.1f m engage reach but inside its lunge reach %.2f m: engaged for its SP finisher", m->move, s, (double)d,
-                  (double)(g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH), (double)lr);
+    if ((m->res & 7) != 7 || g_mdu.mv_cd[r] < 0
+        || !CdPairLoaded(g_mdu.mv_cd[r])) {
+        DULOG
+            ("DUEL: swing %s - its -hit pair is not in the MP paks (SP-only) - plain swing",
+             m->move);
+        return;
+    }
+    if (g_downed || g_downDying || LocalHp() <= 0.0f)
+        return;
+    float d = 0.0f;
+    int s = MduCand(&d), far_lethal = 0;
+    if (s < 0 && MduP31RunBegin(r, now))
+        return;                 // ps31 C: a lethal press at 3-5 m = SP's far finisher transfer (run-in, then the finisher intro), not the far-lethal warp
+    if (s < 0) {                // v5-lethal: beyond the engage reach, a LETHAL swing still engages for its SP finisher (the engine's lunge reaches that far)
+        float stand = 0.0f, srch = 0.0f, mg = 0.0f, fr = 0.0f;
+        MlReach(move, &stand, &srch, &mg, &fr);
+        float lr = srch > MDU_LETHAL_MAX ? MDU_LETHAL_MAX : srch, d2 =
+            0.0f;
+        int s2 =
+            lr > (g_mdu.slot >=
+                  0 ? MDU_FAR_M : MDU_REACH) ? MduCandR(&d2, lr) : -1;
+        if (s2 >= 0 && MduBlowLethal(s2, PuppetHandle((uint32_t) s2))) {
+            s = s2;
+            d = d2;
+            far_lethal = 1;
+            DULOG
+                ("DUEL: swing %s - LETHAL on slot %d from %.2f m, past the %.1f m engage reach but inside its lunge reach %.2f m: engaged for its SP finisher",
+                 m->move, s, (double) d,
+                 (double) (g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH),
+                 (double) lr);
         }
     }
     // Two blows landing almost at the same time did not go into a clash: one player's run-up
@@ -1785,58 +4010,138 @@ static void mdu_swing_note(int started, uint64_t move) {
     // lunge lands that far), capped at MDU_LUNGE_MAX; both swings are then duel swings and the clash rule judges them. t2r-duel-near-engage.txt = the old 2.4 m.
     // ps31: a "-far" opener (SP: 3-5 m, movement reach 5.0 m in the game data) is a duel swing out to that range - else it stayed a free engine swing with no pair,
     // no dodge rule (the 2.4 m engage reach / the 3.0 m partner reach above).
-    if (s < 0 && m->kind == MDUK_FAR && !mdu_p31_opener_old()) {
-        float d4 = 0.0f; int s4 = mdu_cand_r(&d4, P31_FAR_MAX + 0.3f);
-        if (s4 >= 0) { s = s4; d = d4; DULOG("DUEL: far opener %s on slot %d from %.2f m - inside SP's 3-5 m range: a duel swing (ps31)", m->move, s, (double)d); }
+    if (s < 0 && m->kind == MDUK_FAR && !MduP31OpenerOld()) {
+        float d4 = 0.0f;
+        int s4 = MduCandR(&d4, P31_FAR_MAX + 0.3f);
+        if (s4 >= 0) {
+            s = s4;
+            d = d4;
+            DULOG
+                ("DUEL: far opener %s on slot %d from %.2f m - inside SP's 3-5 m range: a duel swing (ps31)",
+                 m->move, s, (double) d);
+        }
     }
-    if (s < 0 && g_mdu.slot < 0 && GetFileAttributesA("t2r-duel-near-engage.txt") == INVALID_FILE_ATTRIBUTES) {
-        float stand = 0.0f, srch = 0.0f, mg = 0.0f, fr = 0.0f, d3 = 0.0f; ml_reach(move, &stand, &srch, &mg, &fr);
+    if (s < 0 && g_mdu.slot < 0
+        && GetFileAttributesA("t2r-duel-near-engage.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        float stand = 0.0f, srch = 0.0f, mg = 0.0f, fr = 0.0f, d3 = 0.0f;
+        MlReach(move, &stand, &srch, &mg, &fr);
         float lr = srch > MDU_LUNGE_MAX ? MDU_LUNGE_MAX : srch;
-        int s3 = lr > MDU_REACH ? mdu_cand_r(&d3, lr) : -1;
-        if (s3 >= 0) { s = s3; d = d3; DULOG("DUEL: swing %s on slot %d from %.2f m - past the %.1f m engage reach but inside its lunge reach %.2f m: engaged (clash rule applies)", m->move, s, (double)d, (double)MDU_REACH, (double)lr); }
+        int s3 = lr > MDU_REACH ? MduCandR(&d3, lr) : -1;
+        if (s3 >= 0) {
+            s = s3;
+            d = d3;
+            DULOG
+                ("DUEL: swing %s on slot %d from %.2f m - past the %.1f m engage reach but inside its lunge reach %.2f m: engaged (clash rule applies)",
+                 m->move, s, (double) d, (double) MDU_REACH, (double) lr);
+        }
     }
-    if (s < 0) { if (g_mdu.slot >= 0) DULOG("DUEL: u%04x swing %s - the partner is not in reach (%.1f m max) / not free - plain swing", g_mdu.uid, m->move, (double)(g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH)); return; }
-    if (kill_sub) {      // v5-disfix: only a swing that downs its candidate is taken over; anything else keeps the engine's own kill move (the old free swing)
-        if (!far_lethal && !mdu_blow_lethal(s, puppet_handle((uint32_t)s))) { DULOG("DUEL: u%04x engine kill move %016llx on slot %d: its blow is not lethal by the net hp - left to the engine", g_mdu.uid, (unsigned long long)move, s); return; }
-        DULOG("DUEL: u%04x engine kill move %016llx on slot %d (%.2f m) is a LETHAL swing outside a duel: taken as %s - the finisher is picked now, its SP intro is the windup", g_mdu.uid, (unsigned long long)move, s, (double)d, m->move);
+    if (s < 0) {
+        if (g_mdu.slot >= 0)
+            DULOG
+                ("DUEL: u%04x swing %s - the partner is not in reach (%.1f m max) / not free - plain swing",
+                 g_mdu.uid, m->move,
+                 (double) (g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH));
+        return;
     }
-    if (g_mdu.slot < 0) { mdu_engage(s, "our swing", 0); uint8_t p[3] = {(uint8_t)r, (uint8_t)m->set, (uint8_t)bq_cap_flags()}; mdu_send(MDUO_ENGAGE, p, 3); }
-    uint64_t h = puppet_handle((uint32_t)s);
-    mdl_begin_row(r, SID_PLAYER, -1, m->tc_ms);                             // Measure this row's striking hand + angle on our body (melee_dodge.c)
-    g_mdu.sw_on = 1; g_mdu.sw_row = r; g_mdu.sw_t0 = now; g_mdu.sw_tc = now + m->tc_ms; g_mdu.sw_done = 0; g_mdu.eng_contact = 0; g_mdu.sw_d0 = d; g_mdu.gate = -1; g_mdu.gate_tries = 0; g_mdu.gate_short_s = 0.0f;
-    g_mdu_sw_opener = m->step <= 1 && now - g_mdu_next_ms > 200;
-    if (mdu_p32_row(r) >= 3) {   // ps33: a 1h blunt blow 5 / 6
-        g_p33_done = 1; if (mdu_p32_row(r) == 3) g_p33_hand = !strcmp(m->move, "1hblunt-stun-breaker-combo-left-1");   // (the next blow 5 takes the other hand)
-        DULOG("DUEL: u%04x 1H BLUNT BLOW %d %s (%s) on slot %d at %.2f m, %d ms after the light-4 ender - contact in %d ms, the weapon's normal damage, its own synced pair; no knee state (ps33)", g_mdu.uid, mdu_p32_row(r) + 2, m->move, m->swing, s, (double)d,
-              g_p33_ender_ms ? (int)(now - g_p33_ender_ms) : 0, m->tc_ms);
+    if (kill_sub) {             // v5-disfix: only a swing that downs its candidate is taken over; anything else keeps the engine's own kill move (the old free swing)
+        if (!far_lethal
+            && !MduBlowLethal(s, PuppetHandle((uint32_t) s))) {
+            DULOG
+                ("DUEL: u%04x engine kill move %016llx on slot %d: its blow is not lethal by the net hp - left to the engine",
+                 g_mdu.uid, (unsigned long long) move, s);
+            return;
+        }
+        DULOG
+            ("DUEL: u%04x engine kill move %016llx on slot %d (%.2f m) is a LETHAL swing outside a duel: taken as %s - the finisher is picked now, its SP intro is the windup",
+             g_mdu.uid, (unsigned long long) move, s, (double) d, m->move);
     }
-    else if (mdu_p32_row(r)) {   // ps32: fist blow 5 / 6 (never an opener: steps 5 / 6)
-        g_p32_done = 1;
-        DULOG("DUEL: u%04x BLOW %d %s (%s) on slot %d at %.2f m, %d ms after the %s ender - contact in %d ms, 15 damage, its own synced pair; the victim gets no stun state (ps32)", g_mdu.uid, mdu_p32_row(r) + 4, m->move,
-              mdu_p32_row(r) == 1 ? "SP's left backhand, abby-fist-stun-hammerfist-1" : "SP's right overhead hammerfist, abby-fist-stun-hammerfist-2", s, (double)d, g_p31.ender ? (int)(now - g_p31.ender_ms) : 0,
-              g_p31.ender == 2 ? "4-kick" : g_p31.ender == 1 ? "4-punch" : "(no)", m->tc_ms);
+    if (g_mdu.slot < 0) {
+        MduEngage(s, "our swing", 0);
+        uint8_t p[3] =
+            { (uint8_t) r, (uint8_t) m->set, (uint8_t) BqCapFlags() };
+        MduSend(MDUO_ENGAGE, p, 3);
     }
-    if (g_mdu_sw_opener) {   // ps31: which SP chain this opener starts (left-1 -> 1 -> 2 -> 4-kick, anything else -> 2 -> 3 -> 4-punch) + the proof line of the opener
+    uint64_t h = PuppetHandle((uint32_t) s);
+    MdlBeginRow(r, SID_PLAYER, -1, m->tc_ms); // Measure this row's striking hand + angle on our body (melee_dodge.c)
+    g_mdu.sw_on = 1;
+    g_mdu.sw_row = r;
+    g_mdu.sw_t0 = now;
+    g_mdu.sw_tc = now + m->tc_ms;
+    g_mdu.sw_done = 0;
+    g_mdu.eng_contact = 0;
+    g_mdu.sw_d0 = d;
+    g_mdu.gate = -1;
+    g_mdu.gate_tries = 0;
+    g_mdu.gate_short_s = 0.0f;
+    g_mduSwOpener = m->step <= 1 && now - g_mduNextMs > 200;
+    if (MduP32Row(r) >= 3) {  // ps33: a 1h blunt blow 5 / 6
+        g_p33_done = 1;
+        if (MduP32Row(r) == 3)
+            g_p33_hand = !strcmp(m->move, "1hblunt-stun-breaker-combo-left-1"); // (the next blow 5 takes the other hand)
+        DULOG
+            ("DUEL: u%04x 1H BLUNT BLOW %d %s (%s) on slot %d at %.2f m, %d ms after the light-4 ender - contact in %d ms, the weapon's normal damage, its own synced pair; no knee state (ps33)",
+             g_mdu.uid, MduP32Row(r) + 2, m->move, m->swing, s,
+             (double) d, g_p33EnderMs ? (int) (now - g_p33EnderMs) : 0,
+             m->tc_ms);
+    } else if (MduP32Row(r)) {        // ps32: fist blow 5 / 6 (never an opener: steps 5 / 6)
+        g_p32Done = 1;
+        DULOG
+            ("DUEL: u%04x BLOW %d %s (%s) on slot %d at %.2f m, %d ms after the %s ender - contact in %d ms, 15 damage, its own synced pair; the victim gets no stun state (ps32)",
+             g_mdu.uid, MduP32Row(r) + 4, m->move,
+             MduP32Row(r) ==
+             1 ? "SP's left backhand, abby-fist-stun-hammerfist-1" :
+             "SP's right overhead hammerfist, abby-fist-stun-hammerfist-2",
+             s, (double) d, g_p31.ender ? (int) (now - g_p31.ender_ms) : 0,
+             g_p31.ender == 2 ? "4-kick" : g_p31.ender ==
+             1 ? "4-punch" : "(no)", m->tc_ms);
+    }
+    if (g_mduSwOpener) {      // ps31: which SP chain this opener starts (left-1 -> 1 -> 2 -> 4-kick, anything else -> 2 -> 3 -> 4-punch) + the proof line of the opener
         g_p31.chain_left = !strcmp(m->move, "fist-light-attack-left-1");
-        static int nlo; if (LOGCAP(nlo, 400)) DULOG("DUEL: u%04x opener %s at %.2f m (%s; last ender %s %d ms ago) - chain shape %s (ps31)", g_mdu.uid, m->move, (double)d,
-            m->kind == MDUK_SPRINT ? "sprint attack" : m->kind == MDUK_DODGE_BACK || m->kind == MDUK_DODGE_FW ? "dodge attack" : m->kind == MDUK_FAR ? "far variant" : "from neutral",
-            g_p31.ender == 2 ? "4-kick" : g_p31.ender == 1 ? "4-punch" : "none", g_p31.ender ? (int)(now - g_p31.ender_ms) : 0,
-            m->set != MDU_FIST ? "1 -> 2 -> 3 -> 4 (the set's SP chain)" : g_p31.chain_left ? "left-1 -> 1 -> 2 -> 4-kick" : "-> 2 -> 3 -> 4-punch");
+        static int nlo;
+        if (LOGCAP(nlo, 400))
+            DULOG
+                ("DUEL: u%04x opener %s at %.2f m (%s; last ender %s %d ms ago) - chain shape %s (ps31)",
+                 g_mdu.uid, m->move, (double) d,
+                 m->kind == MDUK_SPRINT ? "sprint attack" : m->kind ==
+                 MDUK_DODGE_BACK
+                 || m->kind == MDUK_DODGE_FW ? "dodge attack" : m->kind ==
+                 MDUK_FAR ? "far variant" : "from neutral",
+                 g_p31.ender == 2 ? "4-kick" : g_p31.ender ==
+                 1 ? "4-punch" : "none",
+                 g_p31.ender ? (int) (now - g_p31.ender_ms) : 0,
+                 m->set !=
+                 MDU_FIST ? "1 -> 2 -> 3 -> 4 (the set's SP chain)" :
+                 g_p31.
+                 chain_left ? "left-1 -> 1 -> 2 -> 4-kick" :
+                 "-> 2 -> 3 -> 4-punch");
     }
-    g_mdu_sw_yaw0 = g_mdu_yaw_prev; g_mdu_sw_yaw0_ok = g_mdu_yaw_prev_f && g_frame - g_mdu_yaw_prev_f <= 2;   // ps23: our facing on the frame before the engine started the swing (mdu_tick tracks it)
-    g_mdu.act_ms = now; g_mdu.next_move = 0; g_mdu.step = m->step ? m->step : g_mdu.step + 1;
-    g_mdu.sw_auth = mdu_auth_dist(g_mdu.mv_cd[r], h);
-    g_mdu.sw_D = m->dist > 0.0f ? m->dist : g_mdu.sw_auth > 0.2f ? g_mdu.sw_auth : 0.95f;
-    mdu_sample_travel(m);
-    g_mdu.sw_lethal = mdu_blow_lethal(s, h);   // the puppet's own hp stays 100 here - the victim's NET hp decides
-    if (far_lethal) {      // v5-lethal: the far engage is only for the finisher - none for this swing = the old plain swing (the duel ends at once)
-        g_mdu_fin = -1; mdu_fin_arm(s);
-        if (g_mdu_fin < 0) { mdu_end("a lethal swing past the engage reach without an SP finisher - the engine's swing + Melee Down take it", 1, MDUO_END); return; }
+    g_mdu_sw_yaw0 = g_mduYawPrev;
+    g_mduSwYaw0Ok = g_mduYawPrevF && g_frame - g_mduYawPrevF <= 2;     // ps23: our facing on the frame before the engine started the swing (mdu_tick tracks it)
+    g_mdu.act_ms = now;
+    g_mdu.next_move = 0;
+    g_mdu.step = m->step ? m->step : g_mdu.step + 1;
+    g_mdu.sw_auth = MduAuthDist(g_mdu.mv_cd[r], h);
+    g_mdu.sw_D =
+        m->dist > 0.0f ? m->dist : g_mdu.sw_auth >
+        0.2f ? g_mdu.sw_auth : 0.95f;
+    MduSampleTravel(m);
+    g_mdu.sw_lethal = MduBlowLethal(s, h);    // the puppet's own hp stays 100 here - the victim's NET hp decides
+    if (far_lethal) {           // v5-lethal: the far engage is only for the finisher - none for this swing = the old plain swing (the duel ends at once)
+        g_mduFin = -1;
+        MduFinArm(s);
+        if (g_mduFin < 0) {
+            MduEnd
+                ("a lethal swing past the engage reach without an SP finisher - the engine's swing + Melee Down take it",
+                 1, MDUO_END);
+            return;
+        }
     }
     // At ~150 ms ping dodging was only possible by pre-reading the swing: the victim sees our swing one-way latency late, so
     // the windup it can react to was tc - latency (266 -> ~190 ms for a jab). The windup now runs that much slower on our side (<= 120 ms), the contact
     // moves with it and the victim's dodge window gets the same length: both see SP's windup time.
-    g_mdu_sw_sp = 1.0f; g_mdu_sw_xtra = 0;
+    g_mdu_sw_sp = 1.0f;
+    g_mduSwXtra = 0;
     // The stretch is capped at 70 ms (was 120) so the dodge does not get too easy: past ~70 ms one-way
     // the victim sees a slightly shorter windup than SP's instead of the attacker's swing getting slower and slower
     // v5-knifepace (knife attacks were faster than fist attacks): a knife combo swing's windup runs as long as
@@ -1845,9 +4150,15 @@ static void mdu_swing_note(int started, uint64_t move) {
     // SP-exact (re/melee-sp-deviation-1104.md): the knife plays SP's own pace by default - the slowed knife clip made the engine's own contact / -hit
     // fire at SP time 30-120 ms before the duel contact (= the cancel + rewind double punch). t2r-knife-fist-pace.txt = the earlier fist pace again.
     int kx = 0;
-    if (m->set == MDU_KNIFE && m->step >= 1 && m->step <= 4 && GetFileAttributesA("t2r-knife-fist-pace.txt") != INVALID_FILE_ATTRIBUTES) {
-        static const char *const FR[5] = {NULL, "fist-light-attack-1", "fist-light-attack-2", "fist-light-attack-3", "fist-light-attack-4-punch"};
-        int fr = mdu_row_named(FR[m->step]); if (fr >= 0 && MDU_MOVES[fr].tc_ms > m->tc_ms) kx = MDU_MOVES[fr].tc_ms - m->tc_ms;
+    if (m->set == MDU_KNIFE && m->step >= 1 && m->step <= 4
+        && GetFileAttributesA("t2r-knife-fist-pace.txt") !=
+        INVALID_FILE_ATTRIBUTES) {
+        static const char *const FR[5] =
+            { NULL, "fist-light-attack-1", "fist-light-attack-2",
+"fist-light-attack-3", "fist-light-attack-4-punch" };
+        int fr = MduRowNamed(FR[m->step]);
+        if (fr >= 0 && MDU_MOVES[fr].tc_ms > m->tc_ms)
+            kx = MDU_MOVES[fr].tc_ms - m->tc_ms;
     }
     // SP-exact: the ping windup is OFF by default. The victim's replica already plays the swing from phase 0 on the SWING arrival and reaches its contact
     // on the START arrival (melee_duel_contact.c), and a press before that START is refused there (i-frames) - so the victim sees SP's full windup at any
@@ -1863,52 +4174,136 @@ static void mdu_swing_note(int started, uint64_t move) {
     // contact 87-108 ms early, before the path gate answered, so every light-2 (4 of 4, both directions) fell to MDUO_PLAIN - the victim played the generic SP
     // arm-out reaction with no punch on its screen. At x1.00 the pull is -6..-8 ms and every blow got its pair. Contact = reaction beats
     // slower. t2r-duel-mp-windup.txt = the stretch below.
-    { int ow = (int)psync_oneway(s); ow = ow > 120 ? 120 : ow; if (ow < MDU_MP_WINDUP_MS) ow = MDU_MP_WINDUP_MS;
-      if (GetFileAttributesA("t2r-duel-mp-windup.txt") == INVALID_FILE_ATTRIBUTES || GetFileAttributesA("t2r-duel-sp-pace.txt") != INVALID_FILE_ATTRIBUTES) ow = 0; ow += kx;
-      int npx = (!g_mdu.sw_lethal && g_npcw_x_move == move && g_npcw_x > 0) ? g_npcw_x : 0; g_npcw_x_move = 0;   // The swing's own wind-up (see wup_ct)
-      if (npx) ow = npx;
-      // Swings were too fast without proper wind ups (slower, fluid, smooth and rather quick but more cinematic): a duel swing's windup is at
-      // least 420 ms for the opener and 360 ms for a combo follow-up (SP fists 266-303 ms = one reaction time + ping, unreadable online), the clip slowed to at
-      // most x0.65 so it never reads as slow motion. t2r-duel-fast-pace.txt = the old pace.
-      // The delay was far too long: press to contact 485-565 ms vs SP 267-302 - the floors are OFF by default now,
-      // the swing keeps SP's own windup plus the ping stretch only. t2r-duel-slow-pace.txt = the floors below again.
-      if (m->tc_ms > 0 && GetFileAttributesA("t2r-duel-fast-pace.txt") == INVALID_FILE_ATTRIBUTES && GetFileAttributesA("t2r-duel-slow-pace.txt") != INVALID_FILE_ATTRIBUTES) {   /* the stretched clip (x0.45-0.65) made the engine's own contact fire 190-300 ms before the duel contact -> engine -hit started, cancelled and the swing rewound (10 cancels / 17 dropped contacts vs 1 / 4 before) = double punches, hits that do not connect. SP data (re/sp-melee-cadence-1030.md): the player's own swing is press -> contact 266-425 ms with NO tell (the tell is an NPC attacker clip), so the floor is OFF by default again; t2r-duel-slow-pace.txt = the floors */   // DEFAULT path = floor 520 ms (midpoint of the default ~285 ms SP swing + ping and SP tell 0.6-0.9 s); t2r-duel-fast-pace.txt = the old SP-own windup
-          // SP timing (re/sp-melee-cadence-1030.md: SP gives ~0.6-0.9 s to read a blow and ~1.0 s between chained blows): floors
-          // 560 / 480 ms with the clip slowed to at most x0.55 (x0.65 capped a 266 ms fist swing at ~410 ms) - blow to blow ~0.97 s with MDU_NEXT_MS.
-          // t2r-duel-sp-tempo-old.txt = 420 / 360 at x0.65.
-          int spt = GetFileAttributesA("t2r-duel-sp-tempo-old.txt") == INVALID_FILE_ATTRIBUTES;
-          int floor_ms = 520, cap = (int)((float)m->tc_ms / 0.45f) - m->tc_ms; (void)spt;
-          if (m->tc_ms + ow < floor_ms) ow = floor_ms - m->tc_ms;
-          if (ow > cap) ow = cap;
-      }
-      uint64_t clip = mstag_clip_of(move); if (!clip && m->swing && *m->swing) clip = fnv64(m->swing);   // (the duel moves' record lookup answered 0 - the windup never ran; the row's own clip name)
-      if (ow >= 15 && clip && m->tc_ms > 0) {
-          g_mdu_sw_xtra = ow; g_mdu_sw_sp = (float)m->tc_ms / (float)(m->tc_ms + ow); if (!npx) mstag_speed(clip, g_mdu_sw_sp); g_mdu_sw_clip = clip; g_mdu.sw_tc += (uint64_t)ow;
-          if (npx) { wup_arm(clip, (float)m->tc_ms, (float)ow, now);
-                     g_wup.k = mdu_clip_k(m);
-                     if (g_wup.k != 1.0f) DULOG("DUEL: u%04x swing clip of %s runs to %.0f ms of clip time at the contact, not %d (x%.2f: the -hit half continues the swing from that pose; SP's switch time %d ms lies before the clip's hit window %d ms; ps43)", g_mdu.uid, m->move, (double)((float)m->tc_ms * g_wup.k), m->tc_ms, (double)g_wup.k, m->tc_ms, m->hw0);
-                     DULOG("DUEL: u%04x the swing's own wind-up: +%d ms, cocked part x%.2f (no hold), last %.0f ms x1.00 (contact at %d ms)", g_mdu.uid, ow, (double)wup_rate(0.0f, (float)m->tc_ms, (float)ow), (double)WUP_TAIL_MS, m->tc_ms + ow); }
-          DULOG("DUEL: u%04x windup +%d ms for the one-way latency + knife pace %d ms to slot %d (clip speed x%.2f, contact at %d ms)", g_mdu.uid, ow, kx, s, (double)g_mdu_sw_sp, m->tc_ms + ow); }
-      else { static int nl; if (LOGCAP(nl, 20)) DULOG("DUEL: u%04x no ping windup: one-way %d ms, clip %llx, tc %d ms", g_mdu.uid, ow, (unsigned long long)clip, m->tc_ms); } }
-    if (!far_lethal) { g_mdu_fin = -1; if (g_mdu.sw_lethal) mdu_fin_arm(s); }
-    if (g_mdu_fin >= 0 && mdu_fw_surface_ready(s)) {   // the contact takes the surface takedown first (below) - no finisher windup for a move that is dropped there
-        DULOG("DUEL: u%04x surface plan %s is ready for slot %d at the swing start - no finisher windup for %s (the contact plays the surface takedown; t2r-fin-windup-plan-old.txt = old)", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s, CD_PAIRS[g_mdu_fin].name + 3); }
-    g_mdu_fw_move = move;
-    int fw = g_mdu_fin >= 0 && !mdu_fw_surface_ready(s) && mdu_fw_begin(s, h, m, now);                // v5-finwind: the finisher's SP intro IS this swing's (dodgeable) windup
-    if (g_mdu_fin >= 0 && !fw && g_mdu.sw_tc > now) g_mdu.sw_tc = now;   // (the finisher's run-in pull, paired.c PS_FIN_PULL_MS, closes the gap for a far press)   // (+60 showed the punch's first frames before the finisher)   // (from 2.8 m the finisher at +60 ms pulled the attacker 1.1 m in 0.26 s - 'instant'; a far press lets the swing close in first)   // SP replaces the lethal swing on the press frame - the finisher starts now, not at the swing's contact (+267..425 ms)
-    if (g_mlg.on) ml_glide_end("duel swing");
-    if (fw && !g_mdfwu.punch) { mdu_row_t fr = mdu_fw_row(m, g_mdfwu.im); g_mdu_cue_k = (float)g_mdfwu.tce / (float)g_mdfwu.im; mdu_swing_cues(&fr, now, SID_PLAYER, dc_weapon(), -1); g_mdu_cue_k = 1.0f; }   // (the intro's own events are psync's, passed over at the contact)
-    else { g_mdu_cue_k = sptl_on() ? sptl_cue_k(m->tc_ms, m->tc_ms + g_mdu_sw_xtra) : 1.0f; mdu_swing_cues(m, now, SID_PLAYER, dc_weapon(), -1); g_mdu_cue_k = 1.0f; }
-    { int tce = fw ? g_mdfwu.tce : m->tc_ms + g_mdu_sw_xtra, pr = g_mdu.sw_lethal || !mdu_pin_ok() ? -1 : mpn_predict(m->set, s, h, g_mdu.sw_D);   // (v5-contact3: byte 8 = the predicted pin push row + 1; old clients read 4 bytes)
-      uint16_t f1 = fw && !g_mdfwu.punch ? (uint16_t)(g_mdfwu.fin + 1) : 0;   // (punch: the victim sees the normal swing, no intro replica)                     // (bytes 9-10 = the finisher row + 1 whose SP intro is this windup; old clients read 5)
-      uint8_t p[8] = {(uint8_t)r, (uint8_t)(g_mdu.step), (uint8_t)tce, (uint8_t)(tce >> 8), (uint8_t)(pr >= 0 && pr < 255 ? pr + 1 : 0), (uint8_t)f1, (uint8_t)(f1 >> 8), (uint8_t)bq_cap_flags()}; mdu_send(MDUO_SWING, p, 8); }   // (byte 11 = melee_beat.c flags)
-    g_mdu_sw_move = move;
-    if (!fw && !g_mdu.sw_lethal) bq_press_attack(r, g_mdu.step, (int)(g_mdu.sw_tc - now), now);   // melee_beat.c: stamp + send the intent; the contact waits for the RESULT (lethal / finisher windups keep the old path)
-    sptl_note_swing(r, g_mdu_sw_sp);
-    DULOG("DUEL: u%04x SWING %s (step %d, %s) on slot %d: start %.2f m, contact in %d ms at %.2f m (%s; pair authored %.2f m), clip root travel to contact %.2f m -> unwarped %.2f m%s",
-         g_mdu.uid, m->move, g_mdu.step, m->swing, s, (double)d, m->tc_ms, (double)g_mdu.sw_D, m->dist > 0.0f ? "SP measured" : "pair authored", (double)g_mdu.sw_auth,
-         (double)g_mdu.sw_F[8], (double)(d - g_mdu.sw_F[8]), g_mdu.sw_lethal ? "; LETHAL: the engine's contact + normal Melee Down take it (HOOK: finisher beat)" : "");
+    {
+        int ow = (int) PsyncOneway(s);
+        ow = ow > 120 ? 120 : ow;
+        if (ow < MDU_MP_WINDUP_MS)
+            ow = MDU_MP_WINDUP_MS;
+        if (GetFileAttributesA("t2r-duel-mp-windup.txt") ==
+            INVALID_FILE_ATTRIBUTES
+            || GetFileAttributesA("t2r-duel-sp-pace.txt") !=
+            INVALID_FILE_ATTRIBUTES)
+            ow = 0;
+        ow += kx;
+        int npx = (!g_mdu.sw_lethal && g_npcwXMove == move
+                   && g_npcwX > 0) ? g_npcwX : 0;
+        g_npcwXMove = 0;      // The swing's own wind-up (see wup_ct)
+        if (npx)
+            ow = npx;
+        // Swings were too fast without proper wind ups (slower, fluid, smooth and rather quick but more cinematic): a duel swing's windup is at
+        // least 420 ms for the opener and 360 ms for a combo follow-up (SP fists 266-303 ms = one reaction time + ping, unreadable online), the clip slowed to at
+        // most x0.65 so it never reads as slow motion. t2r-duel-fast-pace.txt = the old pace.
+        // The delay was far too long: press to contact 485-565 ms vs SP 267-302 - the floors are OFF by default now,
+        // the swing keeps SP's own windup plus the ping stretch only. t2r-duel-slow-pace.txt = the floors below again.
+        if (m->tc_ms > 0 && GetFileAttributesA("t2r-duel-fast-pace.txt") == INVALID_FILE_ATTRIBUTES && GetFileAttributesA("t2r-duel-slow-pace.txt") != INVALID_FILE_ATTRIBUTES) {       /* the stretched clip (x0.45-0.65) made the engine's own contact fire 190-300 ms before the duel contact -> engine -hit started, cancelled and the swing rewound (10 cancels / 17 dropped contacts vs 1 / 4 before) = double punches, hits that do not connect. SP data (re/sp-melee-cadence-1030.md): the player's own swing is press -> contact 266-425 ms with NO tell (the tell is an NPC attacker clip), so the floor is OFF by default again; t2r-duel-slow-pace.txt = the floors */// DEFAULT path = floor 520 ms (midpoint of the default ~285 ms SP swing + ping and SP tell 0.6-0.9 s); t2r-duel-fast-pace.txt = the old SP-own windup
+            // SP timing (re/sp-melee-cadence-1030.md: SP gives ~0.6-0.9 s to read a blow and ~1.0 s between chained blows): floors
+            // 560 / 480 ms with the clip slowed to at most x0.55 (x0.65 capped a 266 ms fist swing at ~410 ms) - blow to blow ~0.97 s with MDU_NEXT_MS.
+            // t2r-duel-sp-tempo-old.txt = 420 / 360 at x0.65.
+            int spt =
+                GetFileAttributesA("t2r-duel-sp-tempo-old.txt") ==
+                INVALID_FILE_ATTRIBUTES;
+            int floor_ms = 520, cap =
+                (int) ((float) m->tc_ms / 0.45f) - m->tc_ms;
+            (void) spt;
+            if (m->tc_ms + ow < floor_ms)
+                ow = floor_ms - m->tc_ms;
+            if (ow > cap)
+                ow = cap;
+        }
+        uint64_t clip = MstagClipOf(move);
+        if (!clip && m->swing && *m->swing)
+            clip = FNV64(m->swing);     // (the duel moves' record lookup answered 0 - the windup never ran; the row's own clip name)
+        if (ow >= 15 && clip && m->tc_ms > 0) {
+            g_mduSwXtra = ow;
+            g_mduSwSp = (float) m->tc_ms / (float) (m->tc_ms + ow);
+            if (!npx)
+                mstag_speed(clip, g_mduSwSp);
+            g_mduSwClip = clip;
+            g_mdu.sw_tc += (uint64_t) ow;
+            if (npx) {
+                WupArm(clip, (float) m->tc_ms, (float) ow, now);
+                g_wup.k = MduClipK(m);
+                if (g_wup.k != 1.0f)
+                    DULOG
+                        ("DUEL: u%04x swing clip of %s runs to %.0f ms of clip time at the contact, not %d (x%.2f: the -hit half continues the swing from that pose; SP's switch time %d ms lies before the clip's hit window %d ms; ps43)",
+                         g_mdu.uid, m->move,
+                         (double) ((float) m->tc_ms * g_wup.k), m->tc_ms,
+                         (double) g_wup.k, m->tc_ms, m->hw0);
+                DULOG
+                    ("DUEL: u%04x the swing's own wind-up: +%d ms, cocked part x%.2f (no hold), last %.0f ms x1.00 (contact at %d ms)",
+                     g_mdu.uid, ow, (double) WupRate(0.0f,
+                                                      (float) m->tc_ms,
+                                                      (float) ow),
+                     (double) WUP_TAIL_MS, m->tc_ms + ow);
+            }
+            DULOG
+                ("DUEL: u%04x windup +%d ms for the one-way latency + knife pace %d ms to slot %d (clip speed x%.2f, contact at %d ms)",
+                 g_mdu.uid, ow, kx, s, (double) g_mduSwSp,
+                 m->tc_ms + ow);
+        } else {
+            static int nl;
+            if (LOGCAP(nl, 20))
+                DULOG
+                    ("DUEL: u%04x no ping windup: one-way %d ms, clip %llx, tc %d ms",
+                     g_mdu.uid, ow, (unsigned long long) clip, m->tc_ms);
+    }}
+    if (!far_lethal) {
+        g_mduFin = -1;
+        if (g_mdu.sw_lethal)
+            MduFinArm(s);
+    }
+    if (g_mduFin >= 0 && MduFwSurfaceReady(s)) {    // the contact takes the surface takedown first (below) - no finisher windup for a move that is dropped there
+        DULOG
+            ("DUEL: u%04x surface plan %s is ready for slot %d at the swing start - no finisher windup for %s (the contact plays the surface takedown; t2r-fin-windup-plan-old.txt = old)",
+             g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s,
+             CD_PAIRS[g_mduFin].name + 3);
+    }
+    g_mduFwMove = move;
+    int fw = g_mduFin >= 0 && !MduFwSurfaceReady(s) && MduFwBegin(s, h, m, now);  // v5-finwind: the finisher's SP intro IS this swing's (dodgeable) windup
+    if (g_mduFin >= 0 && !fw && g_mdu.sw_tc > now)
+        g_mdu.sw_tc = now;      // (the finisher's run-in pull, paired.c PS_FIN_PULL_MS, closes the gap for a far press)   // (+60 showed the punch's first frames before the finisher)   // (from 2.8 m the finisher at +60 ms pulled the attacker 1.1 m in 0.26 s - 'instant'; a far press lets the swing close in first)   // SP replaces the lethal swing on the press frame - the finisher starts now, not at the swing's contact (+267..425 ms)
+    if (g_mlg.on)
+        MlGlideEnd("duel swing");
+    if (fw && !g_mdfwu.punch) {
+        MduRowT fr = MduFwRow(m, g_mdfwu.im);
+        g_mduCueK = (float) g_mdfwu.tce / (float) g_mdfwu.im;
+        MduSwingCues(&fr, now, SID_PLAYER, DcWeapon(), -1);
+        g_mduCueK = 1.0f;
+    }                           // (the intro's own events are psync's, passed over at the contact)
+    else {
+        g_mduCueK =
+            SptlOn()? SptlCueK(m->tc_ms,
+                                  m->tc_ms + g_mduSwXtra) : 1.0f;
+        MduSwingCues(m, now, SID_PLAYER, DcWeapon(), -1);
+        g_mduCueK = 1.0f;
+    }
+    {
+        int tce = fw ? g_mdfwu.tce : m->tc_ms + g_mduSwXtra, pr = g_mdu.sw_lethal || !MduPinOk()? -1 : MpnPredict(m->set, s, h, g_mdu.sw_D);       // (v5-contact3: byte 8 = the predicted pin push row + 1; old clients read 4 bytes)
+        uint16_t f1 = fw && !g_mdfwu.punch ? (uint16_t) (g_mdfwu.fin + 1) : 0;  // (punch: the victim sees the normal swing, no intro replica)                     // (bytes 9-10 = the finisher row + 1 whose SP intro is this windup; old clients read 5)
+        uint8_t p[8] =
+            { (uint8_t) r, (uint8_t) (g_mdu.step), (uint8_t) tce,
+     (uint8_t) (tce >> 8), (uint8_t) (pr >= 0
+                                      && pr < 255 ? pr + 1 : 0),
+     (uint8_t) f1, (uint8_t) (f1 >> 8), (uint8_t) BqCapFlags() };
+        MduSend(MDUO_SWING, p, 8);
+    }                           // (byte 11 = melee_beat.c flags)
+    g_mduSwMove = move;
+    if (!fw && !g_mdu.sw_lethal)
+        BqPressAttack(r, g_mdu.step, (int) (g_mdu.sw_tc - now), now); // melee_beat.c: stamp + send the intent; the contact waits for the RESULT (lethal / finisher windups keep the old path)
+    SptlNoteSwing(r, g_mduSwSp);
+    DULOG
+        ("DUEL: u%04x SWING %s (step %d, %s) on slot %d: start %.2f m, contact in %d ms at %.2f m (%s; pair authored %.2f m), clip root travel to contact %.2f m -> unwarped %.2f m%s",
+         g_mdu.uid, m->move, g_mdu.step, m->swing, s, (double) d, m->tc_ms,
+         (double) g_mdu.sw_D,
+         m->dist > 0.0f ? "SP measured" : "pair authored",
+         (double) g_mdu.sw_auth, (double) g_mdu.sw_F[8],
+         (double) (d - g_mdu.sw_F[8]),
+         g_mdu.
+         sw_lethal ?
+         "; LETHAL: the engine's contact + normal Melee Down take it (HOOK: finisher beat)"
+         : "");
 }
+
 // ONE owner of our yaw during a duel swing.
 //  (1) 'swing turn -11 .. -44 deg in one frame held to 10 deg', then 'psync: start 0.07 m / 25 deg from the attacker's authored spot' (up to 60 deg
 //      in other cases): the turn step was measured from the yaw the ENGINE left this frame (the swing clip's own root yaw, ~3 deg a
@@ -1920,49 +4315,124 @@ static void mdu_swing_note(int started, uint64_t move) {
 //  (3) 'YAW SNAP ... no ext writer' of 65-150 deg on the swing's first frame: the engine's melee action
 //      snapped the body onto the stick / target direction. The turn starts from the facing of the frame before the swing (as the old tell path did)
 //      and runs at the MDU_TURN_CAP_DPS cap - continuous yaw. t2r-duel-swing-yaw-ps22.txt = the earlier turn (step from the engine's yaw, exact facing).
-static int mdu_swing_yaw_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-swing-yaw-ps22.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static void mdu_yaw_track(void) { float yb[16]; const float *yl = uc4_my_loc(yb); if (yl && __builtin_isfinite(yl[0])) { g_mdu_yaw_prev = uc4_yaw(yl) / 57.29578f; g_mdu_yaw_prev_f = g_frame; } }
-static int cd_offset_at(uint64_t ent, const char *clip, float p0, float *c);   // ctxdown.c
-#define MDU_FW_SIDE_STEP 0.06f     // [TUNING ps39] m a frame sideways in a finisher intro (SP: the attacker's steps in a finisher start are <= 0.13 m a frame in all)
-#define MDU_FW_SIDE_MAX 0.5236f    // [TUNING ps39] rad (30 deg) round the victim in one intro
+static int MduSwingYawOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-swing-yaw-ps22.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
+}
+
+static void MduYawTrack(void)
+{
+    float yb[16];
+    const float *yl = Uc4MyLoc(yb);
+    if (yl && __builtin_isfinite(yl[0])) {
+        g_mduYawPrev = Uc4Yaw(yl) / 57.29578f;
+        g_mduYawPrevF = g_frame;
+    }
+}
+
+static int CdOffsetAt(uint64_t ent, const char *clip, float p0, float *c);    // ctxdown.c
+#define MDU_FW_SIDE_STEP 0.06f  // [TUNING ps39] m a frame sideways in a finisher intro (SP: the attacker's steps in a finisher start are <= 0.13 m a frame in all)
+#define MDU_FW_SIDE_MAX 0.5236f // [TUNING ps39] rad (30 deg) round the victim in one intro
 // every frame of the swing: warp toward the contact distance, face the victim (exact on the contact frame)
-static void mdu_warp(uint64_t now, const float *vl) {
-    float lb[16]; const float *l = uc4_my_loc(lb);
-    if (!l || !vl || !__builtin_isfinite(l[0])) return;
+static void MduWarp(uint64_t now, const float *vl)
+{
+    float lb[16];
+    const float *l = Uc4MyLoc(lb);
+    if (!l || !vl || !__builtin_isfinite(l[0]))
+        return;
     // (the swing went through the body of a dodger: 'BODY TURN 4f slot 1 ... +46 deg' at the contact of a dodged hook, the
     // swing's warp closing on the dodger): once the victim's dodge press reached us during this swing, the swing is committed - its line and contact distance are
     // aimed at where the victim stood at that moment, so the blow passes where the dodge left. t2r-dodge-commit-ps49-old.txt = the swing follows the dodger.
-    {   static uint64_t c49_sw; static float c49_v[3]; static int c49_on; static float c49_buf[16];
-        if (c49_sw != g_mdu.sw_t0) { c49_sw = g_mdu.sw_t0; c49_on = 0; }
-        if (!c49_on && mdg49_pressed_in(g_mdu.slot, g_mdu.sw_t0) && !mdu49c_off()) {
-            c49_on = 1; memcpy(c49_v, vl, 12);
-            DULOG("DUEL: u%04x ps49 committed swing %s - slot %d pressed dodge %llu ms into it: the swing goes on toward its spot then (%.2f %.2f), not after its dodge", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, g_mdu.slot, (unsigned long long)(now - g_mdu.sw_t0), (double)vl[0], (double)vl[2]);
+    {
+        static uint64_t c49_sw;
+        static float c49_v[3];
+        static int c49_on;
+        static float c49_buf[16];
+        if (c49_sw != g_mdu.sw_t0) {
+            c49_sw = g_mdu.sw_t0;
+            c49_on = 0;
         }
-        if (c49_on) { memcpy(c49_buf, vl, 8 * sizeof(float)); memcpy(c49_buf, c49_v, 12); vl = c49_buf; }
+        if (!c49_on && Mdg49PressedIn(g_mdu.slot, g_mdu.sw_t0)
+            && !Mdu49cOff()) {
+            c49_on = 1;
+            memcpy(c49_v, vl, 12);
+            DULOG
+                ("DUEL: u%04x ps49 committed swing %s - slot %d pressed dodge %llu ms into it: the swing goes on toward its spot then (%.2f %.2f), not after its dodge",
+                 g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, g_mdu.slot,
+                 (unsigned long long) (now - g_mdu.sw_t0), (double) vl[0],
+                 (double) vl[2]);
+        }
+        if (c49_on) {
+            memcpy(c49_buf, vl, 8 * sizeof(float));
+            memcpy(c49_buf, c49_v, 12);
+            vl = c49_buf;
+        }
     }
-    float dx = vl[0] - l[0], dz = vl[2] - l[2], d = __builtin_sqrtf(dx * dx + dz * dz);
-    if (d < 0.05f) return;
-    float ux = dx / d, uz = dz / d, rem = (float)(int64_t)(g_mdu.sw_tc - now), el = (float)(int64_t)(now - g_mdu.sw_t0);
-    const mdu_row_t *m = &MDU_MOVES[g_mdu.sw_row];
-    int tcm = g_mdfwu.on ? g_mdfwu.im : m->tc_ms;   // v5-finwind: a finisher windup runs on its SP intro's clock (contact = the intro's end)
+    float dx = vl[0] - l[0], dz = vl[2] - l[2], d =
+        __builtin_sqrtf(dx * dx + dz * dz);
+    if (d < 0.05f)
+        return;
+    float ux = dx / d, uz = dz / d, rem =
+        (float) (int64_t) (g_mdu.sw_tc - now), el =
+        (float) (int64_t) (now - g_mdu.sw_t0);
+    const MduRowT *m = &MDU_MOVES[g_mdu.sw_row];
+    int tcm = g_mdfwu.on ? g_mdfwu.im : m->tc_ms;       // v5-finwind: a finisher windup runs on its SP intro's clock (contact = the intro's end)
     // v5-feel: the warp spread evenly over the frames left. A: the victim still recoils from the last blow (~0.03 m a frame away on
     // our screen) and the game runs ~21 ms frames, so the old per-frame share (remaining error / (rem / 16.7)) lagged the moving target and the
     // contact frame took the rest at once: our body stepped 0.15-0.25 m in that one frame on 24 of 24 chained blows ('dtl: SNAP slot 1 0.19-0.25 m
     // ... attacker half', 'psync flicker ... ph 0.40 root stepped 0.15-0.22 m'). Now the victim's own motion along the line is extrapolated to the
     // contact and the frames left come from the measured frame time. Same contact distance. Opt-out t2r-duel-warp-old.txt (re-read every 2 s).
-    static uint64_t w_cfg, w_lt, w_uid; static int w_old; static float w_dt = 16.7f, w_vd = 0.0f, w_lvx, w_lvz, w_maxst; static uint32_t w_n;
-    if (!w_cfg || now - w_cfg >= 2000) { w_cfg = now ? now : 1; int o = GetFileAttributesA("t2r-duel-warp-old.txt") != INVALID_FILE_ATTRIBUTES; if (o != w_old) xlog("DUEL: warp %s", o ? "OLD per-frame share (t2r-duel-warp-old.txt)" : "spread evenly (victim motion extrapolated, measured frame time)"); w_old = o; }
+    static uint64_t w_cfg, w_lt, w_uid;
+    static int w_old;
+    static float w_dt = 16.7f, w_vd = 0.0f, w_lvx, w_lvz, w_maxst;
+    static uint32_t w_n;
+    if (!w_cfg || now - w_cfg >= 2000) {
+        w_cfg = now ? now : 1;
+        int o =
+            GetFileAttributesA("t2r-duel-warp-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != w_old)
+            Xlog("DUEL: warp %s",
+                 o ? "OLD per-frame share (t2r-duel-warp-old.txt)" :
+                 "spread evenly (victim motion extrapolated, measured frame time)");
+        w_old = o;
+    }
     float vproj = 0.0f, nfr = rem > 17.0f ? rem / 16.7f : 1.0f;
-    if (w_uid != g_mdu.sw_t0) { w_uid = g_mdu.sw_t0; w_lt = 0; w_vd = 0.0f; w_maxst = 0.0f; w_n = 0; }
+    if (w_uid != g_mdu.sw_t0) {
+        w_uid = g_mdu.sw_t0;
+        w_lt = 0;
+        w_vd = 0.0f;
+        w_maxst = 0.0f;
+        w_n = 0;
+    }
     if (w_lt && now > w_lt && now - w_lt < 100) {
-        float fdt = (float)(now - w_lt); w_dt += (fdt - w_dt) * 0.25f;
-        float v = ((vl[0] - w_lvx) * ux + (vl[2] - w_lvz) * uz) / fdt;          // m/ms, + = the victim moves away from us
+        float fdt = (float) (now - w_lt);
+        w_dt += (fdt - w_dt) * 0.25f;
+        float v = ((vl[0] - w_lvx) * ux + (vl[2] - w_lvz) * uz) / fdt;  // m/ms, + = the victim moves away from us
         v = v > 0.006f ? 0.006f : v < -0.006f ? -0.006f : v;
         w_vd += (v - w_vd) * 0.5f;
     }
-    w_lt = now; w_lvx = vl[0]; w_lvz = vl[2];
-    if (!w_old) { vproj = w_vd * (rem > 0.0f ? rem : 0.0f); vproj = vproj > 0.30f ? 0.30f : vproj < -0.30f ? -0.30f : vproj;   /* (a recoil that stops: never lead by more than 0.3 m) */ float fd = w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt; nfr = rem > fd ? rem / fd + 1.0f : 1.0f; }
-    float pred = d + vproj - (g_mdu.sw_F[8] - mdu_travel_at(mdu_sw_clip_ms(el), tcm)), err = pred - g_mdu.sw_D, n = nfr, st = err / n;
+    w_lt = now;
+    w_lvx = vl[0];
+    w_lvz = vl[2];
+    if (!w_old) {
+        vproj = w_vd * (rem > 0.0f ? rem : 0.0f);
+        vproj = vproj > 0.30f ? 0.30f : vproj < -0.30f ? -0.30f : vproj;        /* (a recoil that stops: never lead by more than 0.3 m) */
+        float fd = w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt;
+        nfr = rem > fd ? rem / fd + 1.0f : 1.0f;
+    }
+    float pred =
+        d + vproj - (g_mdu.sw_F[8] -
+                     MduTravelAt(MduSwClipMs(el), tcm)), err =
+        pred - g_mdu.sw_D, n = nfr, st = err / n;
     // ONE OWNER: the engine lunge ran alongside our mdu_warp approach on duel swings - two movers on the attacker body. VERIFIED
     // in a log: the step above assumed the engine plays the clip's own root travel (1.84 m to a jab's contact) and corrected the rest - but the engine's
     // melee lunge moves the body by its own amount onto its target: the same jab from 1.13 / 1.24 / 1.37 m ended 0.39 / 1.11 / 0.95 m from the victim
@@ -1970,124 +4440,282 @@ static void mdu_warp(uint64_t now, const float *vl) {
     // approach is the melee move's own, as in SP: the distance to the victim follows the clip's root travel curve warped to land on the contact distance,
     // D(t) = d0 - (d0 - sw_D) * travel(t) / travel(contact), and the body is PUT on it each frame (whatever the engine moved this frame is replaced, not
     // added to). Same contact distance (sw_D). Opt-out t2r-duel-warp-two.txt (re-read every 2 s) = the old correction on top of the engine's motion.
-    static uint64_t o_cfg; static int o_two; static float o_lx, o_lz, o_eng, o_d0, o_x0, o_px, o_pz, o_shown; static int o_ok, o_pok;
-    if (!o_cfg || now - o_cfg >= 2000) { o_cfg = now ? now : 1; int o = GetFileAttributesA("t2r-duel-warp-two.txt") != INVALID_FILE_ATTRIBUTES; if (o != o_two) xlog("DUEL: swing approach %s", o ? "TWO movers (t2r-duel-warp-two.txt: our correction on top of the engine's lunge)" : "ONE owner - the move's own root travel curve warped onto the contact distance, the body put on it every frame (the engine's lunge replaced)"); o_two = o; }
-    if (w_n == 0) { o_ok = 0; o_eng = 0.0f; o_d0 = d; o_x0 = -1.0f; o_pok = 0; o_shown = 0.0f; }   // (A/B v5-int8: the curve starts from where the body IS on its first frame, not the swing note's d0)
+    static uint64_t o_cfg;
+    static int o_two;
+    static float o_lx, o_lz, o_eng, o_d0, o_x0, o_px, o_pz, o_shown;
+    static int o_ok, o_pok;
+    if (!o_cfg || now - o_cfg >= 2000) {
+        o_cfg = now ? now : 1;
+        int o =
+            GetFileAttributesA("t2r-duel-warp-two.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != o_two)
+            Xlog("DUEL: swing approach %s",
+                 o ?
+                 "TWO movers (t2r-duel-warp-two.txt: our correction on top of the engine's lunge)"
+                 :
+                 "ONE owner - the move's own root travel curve warped onto the contact distance, the body put on it every frame (the engine's lunge replaced)");
+        o_two = o;
+    }
+    if (w_n == 0) {
+        o_ok = 0;
+        o_eng = 0.0f;
+        o_d0 = d;
+        o_x0 = -1.0f;
+        o_pok = 0;
+        o_shown = 0.0f;
+    }                           // (A/B v5-int8: the curve starts from where the body IS on its first frame, not the swing note's d0)
     // A/B v5-int8 (one owner, first try): (a) a LETHAL swing with an SP finisher has its contact at the press (sw_tc = now): D(t) was the contact distance
     // on frame 1 - 0.25 m steps for 2-3 frames while the finisher was being gated ('[18488] / [20666] contact-frame step 0.250 m over 1 frames'), and the
     // finisher's own psync run-in pull moves the body too: that pull is the one owner there, the warp keeps out. (b) '[19935] ... at the contact 52.28 m from
     // the victim': the partner's locator jumped (a stale / respawned puppet) and the body chased it at the cap for 19 frames - out of the swing's reach,
     // nothing moves us.
     if (!o_two && !w_old) {
-        if (g_mdu.sw_lethal && g_mdu_fin >= 0 && !g_mdfwu.on) { w_n++; return; }   // (v5-finwind: the windup intro is placed by the one owner like any swing; the -sync pair's pull takes over at the contact)
-        float rch = (g_mdfwu.on ? MDU_LETHAL_MAX + 0.1f : g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH) + 0.2f;   // (v5-finwind: a far lethal engage's intro closes it)
-        if (m->kind == MDUK_FAR && !g_mdfwu.on && !mdu_p31_opener_old() && rch < P31_FAR_MAX + 0.2f) rch = P31_FAR_MAX + 0.2f;   // ps31: a "-far" opener is SP's 3-5 m lunge (its clip's own root travel carries it; the glide cap below still holds)
+        if (g_mdu.sw_lethal && g_mduFin >= 0 && !g_mdfwu.on) {
+            w_n++;
+            return;
+        }                       // (v5-finwind: the windup intro is placed by the one owner like any swing; the -sync pair's pull takes over at the contact)
+        float rch = (g_mdfwu.on ? MDU_LETHAL_MAX + 0.1f : g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH) + 0.2f;      // (v5-finwind: a far lethal engage's intro closes it)
+        if (m->kind == MDUK_FAR && !g_mdfwu.on && !MduP31OpenerOld()
+            && rch < P31_FAR_MAX + 0.2f)
+            rch = P31_FAR_MAX + 0.2f;   // ps31: a "-far" opener is SP's 3-5 m lunge (its clip's own root travel carries it; the glide cap below still holds)
         // (26 / 74 duel swings glided 0.9-2.25 m beyond the clip's own root travel - 2.1 m in 266 ms = ~8 m/s, a visible slide): a non-lethal
         // swing closes at most MDU_GLIDE_MAX beyond its own travel; farther is a real miss (no placement, the contact's reach test rules it). t2r-duel-glide-old.txt = old.
-        if (!g_mdu.sw_lethal && !g_mdfwu.on && GetFileAttributesA("t2r-duel-glide-old.txt") == INVALID_FILE_ATTRIBUTES) { float gr = g_mdu.sw_F[8] + g_mdu.sw_D + MDU_GLIDE_MAX; if (gr < rch) rch = gr; }
-        if (d > rch || o_d0 > rch) { static int nl; if (LOGCAP(nl, 40)) xlog("DUEL: u%04x warp of %s: the partner is %.2f m away (swing start %.2f m, reach %.2f m) - out of the swing's reach, no placement", g_mdu.uid, m->move, (double)d, (double)o_d0, (double)rch); w_n++; return; }
+        if (!g_mdu.sw_lethal && !g_mdfwu.on
+            && GetFileAttributesA("t2r-duel-glide-old.txt") ==
+            INVALID_FILE_ATTRIBUTES) {
+            float gr = g_mdu.sw_F[8] + g_mdu.sw_D + MDU_GLIDE_MAX;
+            if (gr < rch)
+                rch = gr;
+        }
+        if (d > rch || o_d0 > rch) {
+            static int nl;
+            if (LOGCAP(nl, 40))
+                Xlog("DUEL: u%04x warp of %s: the partner is %.2f m away (swing start %.2f m, reach %.2f m) - out of the swing's reach, no placement", g_mdu.uid, m->move, (double) d, (double) o_d0, (double) rch);
+            w_n++;
+            return;
+        }
     }
-    if (o_ok) o_eng += (l[0] - o_lx) * ux + (l[2] - o_lz) * uz;           // what the engine moved us toward the victim since our last placement
+    if (o_ok)
+        o_eng += (l[0] - o_lx) * ux + (l[2] - o_lz) * uz;       // what the engine moved us toward the victim since our last placement
     if (!o_two && !w_old) {
-        float f8 = g_mdu.sw_F[8], tr = mdu_travel_at(mdu_sw_clip_ms(el), tcm), x = rem <= 0.0f ? 1.0f : f8 > 0.05f ? tr / f8 : (tcm > 0 ? mdu_sw_clip_ms(el) / (float)tcm : 1.0f);
+        float f8 = g_mdu.sw_F[8], tr =
+            MduTravelAt(MduSwClipMs(el), tcm), x =
+            rem <= 0.0f ? 1.0f : f8 > 0.05f ? tr / f8 : (tcm >
+                                                         0 ?
+                                                         MduSwClipMs(el)
+                                                         /
+                                                         (float) tcm :
+                                                         1.0f);
         x = x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x;
-        if (f8 <= 0.05f) x = x * x * (3.0f - 2.0f * x);
-        if (o_x0 < 0.0f) o_x0 = x < 0.95f ? x : 0.95f;                     // the curve's point on our first frame = where the body is (no jump at the start)
-        float xr = x >= 1.0f ? 1.0f : (x - o_x0) / (1.0f - o_x0); xr = xr < 0.0f ? 0.0f : xr;
+        if (f8 <= 0.05f)
+            x = x * x * (3.0f - 2.0f * x);
+        if (o_x0 < 0.0f)
+            o_x0 = x < 0.95f ? x : 0.95f;       // the curve's point on our first frame = where the body is (no jump at the start)
+        float xr = x >= 1.0f ? 1.0f : (x - o_x0) / (1.0f - o_x0);
+        xr = xr < 0.0f ? 0.0f : xr;
         float D = o_d0 - (o_d0 - g_mdu.sw_D) * xr;
-        st = d - D;                                                          // + = toward the victim
-        n = rem > 17.0f ? rem / (w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt) + 1.0f : 1.0f;
+        st = d - D;             // + = toward the victim
+        n = rem > 17.0f ? rem / (w_dt < 8.0f ? 8.0f : w_dt >
+                                 40.0f ? 40.0f : w_dt) + 1.0f : 1.0f;
     }
     float cap = !o_two && !w_old ? MDU_OWN_MAX_STEP : MDU_MAX_STEP;
-    if (g_mdu.sw_d0 < MDU_MIN_D || g_mdu.sw_d0 > (g_mdfwu.on ? MDU_LETHAL_MAX + 0.1f : m->kind == MDUK_FAR && !mdu_p31_opener_old() ? P31_FAR_MAX : g_mdu.slot >= 0 ? MDU_FAR_M : MDU_REACH) + 0.2f) st = 0.0f;   // (ps31: a "-far" opener starts at 3-5 m)
+    if (g_mdu.sw_d0 < MDU_MIN_D
+        || g_mdu.sw_d0 > (g_mdfwu.on ? MDU_LETHAL_MAX + 0.1f : m->kind ==
+                          MDUK_FAR
+                          && !MduP31OpenerOld()? P31_FAR_MAX : g_mdu.
+                          slot >= 0 ? MDU_FAR_M : MDU_REACH) + 0.2f)
+        st = 0.0f;              // (ps31: a "-far" opener starts at 3-5 m)
     st = st > cap ? cap : st < -cap ? -cap : st;
     // night82 (B [20742] 'dtl: SNAP slot 1 0.32 m in 1 frame ... set-object-locator from ext', the kick's 'contact-frame step 0.250 m'; [20952]-[20954] 0.29-0.34 m
     // a frame after a 903 ms stall): the last frame dumped the whole residual. The contact frame (and any frame after a stall) moves at most MDU_CF_STEP; what is left
     // is the pair's anchor residual, which psync's 0.20 s pull eases out. t2r-duel-cf-step-old.txt = the old dump.
-    if ((rem <= 17.0f || w_dt > 40.0f) && !o_two && !w_old && GetFileAttributesA("t2r-duel-cf-step-old.txt") == INVALID_FILE_ATTRIBUTES) st = st > MDU_CF_STEP ? MDU_CF_STEP : st < -MDU_CF_STEP ? -MDU_CF_STEP : st;
-    if (__builtin_fabsf(st) > w_maxst) w_maxst = __builtin_fabsf(st);
+    if ((rem <= 17.0f || w_dt > 40.0f) && !o_two && !w_old
+        && GetFileAttributesA("t2r-duel-cf-step-old.txt") ==
+        INVALID_FILE_ATTRIBUTES)
+        st = st > MDU_CF_STEP ? MDU_CF_STEP : st <
+            -MDU_CF_STEP ? -MDU_CF_STEP : st;
+    if (__builtin_fabsf(st) > w_maxst)
+        w_maxst = __builtin_fabsf(st);
     w_n++;
-    if (rem <= 17.0f) { static int nl; if (LOGCAP(nl, 200)) xlog("DUEL: u%04x warp of %s: contact-frame step %.3f m, largest step %.3f m over %u frames (victim %+.1f m/s along the line, frame %.0f ms)%s | %s: at the contact %.2f m from the victim (contact distance %.2f m, start %.2f m), the engine's own lunge %+.2f m toward the victim %s",
-                         g_mdu.uid, m->move, (double)__builtin_fabsf(st), (double)w_maxst, w_n, (double)(w_vd * 1000.0f), (double)w_dt, w_old ? " [old warp]" : "",
-                         !o_two && !w_old ? "one owner" : "two movers", (double)(d - st), (double)g_mdu.sw_D, (double)o_d0, (double)o_eng, !o_two && !w_old ? "(replaced)" : "(added to ours)");
-                         xlog("DUEL: u%04x warp of %s: shown body step max %.3f m per frame (our placement frame to frame, the engine's own step taken out)", g_mdu.uid, m->move, (double)o_shown); }
-    float want = __builtin_atan2f(ux, uz), cur = uc4_yaw(l) / 57.29578f;
+    if (rem <= 17.0f) {
+        static int nl;
+        if (LOGCAP(nl, 200))
+            Xlog("DUEL: u%04x warp of %s: contact-frame step %.3f m, largest step %.3f m over %u frames (victim %+.1f m/s along the line, frame %.0f ms)%s | %s: at the contact %.2f m from the victim (contact distance %.2f m, start %.2f m), the engine's own lunge %+.2f m toward the victim %s", g_mdu.uid, m->move, (double) __builtin_fabsf(st), (double) w_maxst, w_n, (double) (w_vd * 1000.0f), (double) w_dt, w_old ? " [old warp]" : "", !o_two && !w_old ? "one owner" : "two movers", (double) (d - st), (double) g_mdu.sw_D, (double) o_d0, (double) o_eng, !o_two && !w_old ? "(replaced)" : "(added to ours)");
+        Xlog("DUEL: u%04x warp of %s: shown body step max %.3f m per frame (our placement frame to frame, the engine's own step taken out)", g_mdu.uid, m->move, (double) o_shown);
+    }
+    float want = __builtin_atan2f(ux, uz), cur = Uc4Yaw(l) / 57.29578f;
     // ps23: the yaw owner (see mdu_swing_yaw_old above). y_base = the yaw we showed last frame (the facing before the swing on its first frame); y_eng = what the
     // engine turned the body since our last write (replaced, logged as the engine's own yaw step)
-    static float y_shown, y_off, y_eng; static uint64_t y_sw, y_f; static int y_seeded;
-    int y_old = mdu_swing_yaw_old();
+    static float y_shown, y_off, y_eng;
+    static uint64_t y_sw, y_f;
+    static int y_seeded;
+    int y_old = MduSwingYawOld();
     float y_base = cur;
     if (!y_old) {
         if (y_sw != g_mdu.sw_t0) {
-            y_sw = g_mdu.sw_t0; y_off = 0.0f; y_eng = 0.0f; y_seeded = 0;
+            y_sw = g_mdu.sw_t0;
+            y_off = 0.0f;
+            y_eng = 0.0f;
+            y_seeded = 0;
             // ps39 B5 (rec38a A [14005] 'YAW SNAP -165 deg ... no ext writer', '-157 deg off its facing at the swing start', 'the engine's own yaw step was up to 151.9
             // deg a frame (replaced)', then [14029]-[14031] 108 / -73 / -77 deg; frames 99.2 / 170.1 s: the body drawn flipped, then flipped back twice): the
             // engine's swing start turns the body ONTO the victim in one frame (-165 against the -157 we then turned ourselves) and keeps its own heading - our write
             // of the old facing + a 600 deg/s turn was overwritten by it every frame for 16 frames, and whichever came last was drawn. The engine's start facing is
             // the right one and is drawn in any case: the turn starts from the yaw the body HAS on the swing's first frame. t2r-swing-yaw-restore-ps38.txt = the
             // ps23 restore of the facing before the swing.
-            static int rs39 = -1; static uint64_t rs39at; if (rs39 < 0 || now - rs39at > 3000) { rs39at = now; rs39 = GetFileAttributesA("t2r-swing-yaw-restore-ps38.txt") != INVALID_FILE_ATTRIBUTES; }
-            if (!rs39 && g_mdu_sw_yaw0_ok && w_n <= 1) {
-                float snap0 = __builtin_remainderf(cur - g_mdu_sw_yaw0, 6.2831853f) * 57.29578f;
-                if (__builtin_fabsf(snap0) > 20.0f) { static int nl39; if (LOGCAP(nl39, 60)) xlog("DUEL: u%04x swing start: the engine turned us %+.0f deg onto its target in one frame - kept (the turn runs on from it, no restore of the old facing; ps39)", g_mdu.uid, (double)snap0); }
+            static int rs39 = -1;
+            static uint64_t rs39at;
+            if (rs39 < 0 || now - rs39at > 3000) {
+                rs39at = now;
+                rs39 =
+                    GetFileAttributesA("t2r-swing-yaw-restore-ps38.txt") !=
+                    INVALID_FILE_ATTRIBUTES;
             }
-            if (rs39 && g_mdu_sw_yaw0_ok && w_n <= 1) {   // (only on the swing's first placed frame: a later start keeps the yaw the body has)
-                float snap = __builtin_remainderf(cur - g_mdu_sw_yaw0, 6.2831853f) * 57.29578f;
-                y_base = g_mdu_sw_yaw0; y_seeded = 1;
-                if (__builtin_fabsf(snap) > 20.0f) { static int nls; if (LOGCAP(nls, 60)) xlog("DUEL: u%04x swing start: the engine turned us %+.0f deg in one frame (stick / target direction) - the turn starts from the facing before the swing, <= %.0f deg/s (ps23)", g_mdu.uid, (double)snap, (double)MDU_TURN_CAP_DPS); }
+            if (!rs39 && g_mduSwYaw0Ok && w_n <= 1) {
+                float snap0 =
+                    __builtin_remainderf(cur - g_mdu_sw_yaw0,
+                                         6.2831853f) * 57.29578f;
+                if (__builtin_fabsf(snap0) > 20.0f) {
+                    static int nl39;
+                    if (LOGCAP(nl39, 60))
+                        Xlog("DUEL: u%04x swing start: the engine turned us %+.0f deg onto its target in one frame - kept (the turn runs on from it, no restore of the old facing; ps39)", g_mdu.uid, (double) snap0);
+                }
+            }
+            if (rs39 && g_mduSwYaw0Ok && w_n <= 1) { // (only on the swing's first placed frame: a later start keeps the yaw the body has)
+                float snap =
+                    __builtin_remainderf(cur - g_mdu_sw_yaw0,
+                                         6.2831853f) * 57.29578f;
+                y_base = g_mdu_sw_yaw0;
+                y_seeded = 1;
+                if (__builtin_fabsf(snap) > 20.0f) {
+                    static int nls;
+                    if (LOGCAP(nls, 60))
+                        Xlog("DUEL: u%04x swing start: the engine turned us %+.0f deg in one frame (stick / target direction) - the turn starts from the facing before the swing, <= %.0f deg/s (ps23)", g_mdu.uid, (double) snap, (double) MDU_TURN_CAP_DPS);
+                }
             }
             // the -hit pair's authored attacker yaw off the line to the victim (pair data, both halves at phase 0); not for a finisher windup (another pair)
-            int ycd = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N ? g_mdu.mv_cd[g_mdu.sw_row] : -1; uint64_t yh = g_mdu.slot >= 0 ? puppet_handle((uint32_t)g_mdu.slot) : 0; float ycv[8], yca[8];
-            if (!g_mdfwu.on && !(g_mdu.sw_lethal && g_mdu_fin >= 0) && ycd >= 0 && yh && cd_offset_at(yh, CD_VIC0(ycd), 0.0f, ycv) && cd_offset_at(SID_PLAYER, CD_ATT0(ycd), 0.0f, yca)) {
+            int ycd = g_mdu.sw_row >= 0
+                && g_mdu.sw_row <
+                (int) MDU_MOVES_N ? g_mdu.mv_cd[g_mdu.sw_row] : -1;
+            uint64_t yh =
+                g_mdu.slot >= 0 ? PuppetHandle((uint32_t) g_mdu.slot) : 0;
+            float ycv[8], yca[8];
+            if (!g_mdfwu.on && !(g_mdu.sw_lethal && g_mduFin >= 0)
+                && ycd >= 0 && yh
+                && CdOffsetAt(yh, CD_VIC0(ycd), 0.0f, ycv)
+                && CdOffsetAt(SID_PLAYER, CD_ATT0(ycd), 0.0f, yca)) {
                 float bx = ycv[0] - yca[0], bz = ycv[2] - yca[2];
-                if (bx * bx + bz * bz > 0.04f) { float o = cd_wrap180(uc4_yaw(yca) - __builtin_atan2f(bx, bz) * 57.29578f); if (__builtin_fabsf(o) <= 30.0f) y_off = o / 57.29578f; }
-                static int nlo; if (LOGCAP(nlo, 60)) xlog("DUEL: u%04x swing facing = the -hit pair's authored attacker yaw: %+.1f deg off the line to the victim (%s; ps23)", g_mdu.uid, (double)(y_off * 57.29578f), CD_PAIRS[ycd].name);
+                if (bx * bx + bz * bz > 0.04f) {
+                    float o =
+                        CdWrap180(Uc4Yaw(yca) -
+                                   __builtin_atan2f(bx, bz) * 57.29578f);
+                    if (__builtin_fabsf(o) <= 30.0f)
+                        y_off = o / 57.29578f;
+                }
+                static int nlo;
+                if (LOGCAP(nlo, 60))
+                    Xlog("DUEL: u%04x swing facing = the -hit pair's authored attacker yaw: %+.1f deg off the line to the victim (%s; ps23)", g_mdu.uid, (double) (y_off * 57.29578f), CD_PAIRS[ycd].name);
             }
         } else if (y_f && g_frame - y_f <= 2) {
-            float e = __builtin_fabsf(__builtin_remainderf(cur - y_shown, 6.2831853f)) * 57.29578f; if (e > y_eng) y_eng = e;
+            float e =
+                __builtin_fabsf(__builtin_remainderf
+                                (cur - y_shown, 6.2831853f)) * 57.29578f;
+            if (e > y_eng)
+                y_eng = e;
             y_base = y_shown;
             // ps43 N3 measurement (rec42a A [8392] 'YAW SNAP slot 1 turned 99 deg in 1 frame ... set-object-locator (duel.mdu_warp)' 297 ms into a fist swing whose
             // turn line says '+10 deg off at the start ... the engine's own yaw step was up to 175.8 deg a frame (replaced)': which side stepped is not in the log)
-            if (e > 15.0f) { static int nl43; if (LOGCAP(nl43, 200)) xlog("DUEL: u%04x warp yaw +%.0f ms: the body reads %+.0f deg, our last write (%llu frame(s) ago) was %+.0f, the line to the victim wants %+.0f - the engine turned it %.0f deg since; written back from our own yaw (ps43 measurement)",
-                                                                       g_mdu.uid, (double)el, (double)(cur * 57.29578f), (unsigned long long)(g_frame - y_f), (double)(y_shown * 57.29578f), (double)(want * 57.29578f), (double)e); }
+            if (e > 15.0f) {
+                static int nl43;
+                if (LOGCAP(nl43, 200))
+                    Xlog("DUEL: u%04x warp yaw +%.0f ms: the body reads %+.0f deg, our last write (%llu frame(s) ago) was %+.0f, the line to the victim wants %+.0f - the engine turned it %.0f deg since; written back from our own yaw (ps43 measurement)", g_mdu.uid, (double) el, (double) (cur * 57.29578f), (unsigned long long) (g_frame - y_f), (double) (y_shown * 57.29578f), (double) (want * 57.29578f), (double) e);
+            }
         } else if (y_f) {
-            float e = __builtin_fabsf(__builtin_remainderf(cur - y_shown, 6.2831853f)) * 57.29578f;
-            if (e > 15.0f) { static int nl43b; if (LOGCAP(nl43b, 200)) xlog("DUEL: u%04x warp yaw +%.0f ms: our last yaw write is %llu frames old (%+.0f deg), the body reads %+.0f now (%.0f deg off it) - the turn goes on from the body's yaw: a step nobody of ours wrote stays on screen (ps43 measurement)",
-                                                                        g_mdu.uid, (double)el, (unsigned long long)(g_frame - y_f), (double)(y_shown * 57.29578f), (double)(cur * 57.29578f), (double)e); }
+            float e =
+                __builtin_fabsf(__builtin_remainderf
+                                (cur - y_shown, 6.2831853f)) * 57.29578f;
+            if (e > 15.0f) {
+                static int nl43b;
+                if (LOGCAP(nl43b, 200))
+                    Xlog("DUEL: u%04x warp yaw +%.0f ms: our last yaw write is %llu frames old (%+.0f deg), the body reads %+.0f now (%.0f deg off it) - the turn goes on from the body's yaw: a step nobody of ours wrote stays on screen (ps43 measurement)", g_mdu.uid, (double) el, (unsigned long long) (g_frame - y_f), (double) (y_shown * 57.29578f), (double) (cur * 57.29578f), (double) e);
+            }
         }
         want += y_off;
     }
     float dy = want - y_base;
     dy = __builtin_remainderf(dy, 6.2831853f);
-    float k = n <= 2.0f ? 1.0f : 2.0f / n;                                   // (half the turn left per frame, all of it on the last two)
+    float k = n <= 2.0f ? 1.0f : 2.0f / n;      // (half the turn left per frame, all of it on the last two)
     // v5-feel3 (a15_cam60 f869-885: the opener thrown facing ~the camera, then a spin onto the victim). VERIFIED A: every opener
     // from neutral starts with NO engine melee target ('melee lockon: engine target 0 = slot -1' 29 / 29; combo steps 28 / 28 have slot 1), so the
     // engine's own turn-to-target does not run; the clip's root yaw moves the body, and the share above took back only 2 / frames-left of that each
     // frame (~9 % on the first frame of a 366 ms windup): the facing error carried on to the last frames. SP: the turn is done early in the swing
     // (median 14 deg, max 113, spec section 1). Now the turn is finished within MDU_TURN_MS of the swing start and the facing is held exact after.
     // Opt-out t2r-duel-turn-old.txt (re-read every 2 s).
-    {   static uint64_t t_cfg, t_sw; static int t_old = -1; static float t_first, t_late; static uint32_t t_n;
-        if (t_old < 0 || now - t_cfg >= 2000) { t_cfg = now; int o = GetFileAttributesA("t2r-duel-turn-old.txt") != INVALID_FILE_ATTRIBUTES; if (o != t_old) xlog("DUEL: swing turn %s", o ? "OLD share over the whole windup (t2r-duel-turn-old.txt)" : "to the victim within " MDU_TURN_STR " ms of the swing start, held exact after"); t_old = o; }
-        if (t_sw != g_mdu.sw_t0) { t_sw = g_mdu.sw_t0; t_first = dy * 57.29578f; t_late = 0.0f; t_n = 0; }
-        else if (el > (float)MDU_TURN_MS && __builtin_fabsf(dy) * 57.29578f > t_late) t_late = __builtin_fabsf(dy) * 57.29578f;   // (after the turn: the engine's own yaw step per frame, taken back)
-        if (!t_old) {
-            float fd = w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt, left = (float)MDU_TURN_MS - el;
-            float kt = left <= fd ? 1.0f : fd / left;
-            if (kt > k) k = kt;
+    {
+        static uint64_t t_cfg, t_sw;
+        static int t_old = -1;
+        static float t_first, t_late;
+        static uint32_t t_n;
+        if (t_old < 0 || now - t_cfg >= 2000) {
+            t_cfg = now;
+            int o =
+                GetFileAttributesA("t2r-duel-turn-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+            if (o != t_old)
+                Xlog("DUEL: swing turn %s",
+                     o ?
+                     "OLD share over the whole windup (t2r-duel-turn-old.txt)"
+                     : "to the victim within " MDU_TURN_STR
+                     " ms of the swing start, held exact after");
+            t_old = o;
         }
-        if (rem <= 17.0f && t_n++ == 0) { static int nl; if (LOGCAP(nl, 200)) {
-            if (y_old) xlog("DUEL: u%04x turn of %s: %+.0f deg off the victim at the swing start, %s; after %d ms the engine's own yaw moved us up to %.1f deg a frame (taken back)",
-                                         g_mdu.uid, m->move, (double)t_first, t_old ? "old share over the windup" : "turned within " MDU_TURN_STR " ms", MDU_TURN_MS, (double)t_late);
-            else xlog("DUEL: u%04x turn of %s: %+.0f deg off its facing at the swing start (%s), %s, <= %.0f deg/s; %.1f deg left at the contact; the engine's own yaw step was up to %.1f deg a frame (replaced; ps23 yaw owner)",
-                      g_mdu.uid, m->move, (double)t_first, y_seeded ? "from the facing before the swing" : "from the body's yaw", t_old ? "old share over the windup" : "turned within " MDU_TURN_STR " ms", (double)MDU_TURN_CAP_DPS, (double)(__builtin_fabsf(dy) * 57.29578f), (double)y_eng); } }
+        if (t_sw != g_mdu.sw_t0) {
+            t_sw = g_mdu.sw_t0;
+            t_first = dy * 57.29578f;
+            t_late = 0.0f;
+            t_n = 0;
+        } else if (el > (float) MDU_TURN_MS
+                   && __builtin_fabsf(dy) * 57.29578f > t_late)
+            t_late = __builtin_fabsf(dy) * 57.29578f;   // (after the turn: the engine's own yaw step per frame, taken back)
+        if (!t_old) {
+            float fd =
+                w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt, left =
+                (float) MDU_TURN_MS - el;
+            float kt = left <= fd ? 1.0f : fd / left;
+            if (kt > k)
+                k = kt;
+        }
+        if (rem <= 17.0f && t_n++ == 0) {
+            static int nl;
+            if (LOGCAP(nl, 200)) {
+                if (y_old)
+                    Xlog("DUEL: u%04x turn of %s: %+.0f deg off the victim at the swing start, %s; after %d ms the engine's own yaw moved us up to %.1f deg a frame (taken back)", g_mdu.uid, m->move, (double) t_first, t_old ? "old share over the windup" : "turned within " MDU_TURN_STR " ms", MDU_TURN_MS, (double) t_late);
+                else
+                    Xlog("DUEL: u%04x turn of %s: %+.0f deg off its facing at the swing start (%s), %s, <= %.0f deg/s; %.1f deg left at the contact; the engine's own yaw step was up to %.1f deg a frame (replaced; ps23 yaw owner)", g_mdu.uid, m->move, (double) t_first, y_seeded ? "from the facing before the swing" : "from the body's yaw", t_old ? "old share over the windup" : "turned within " MDU_TURN_STR " ms", (double) MDU_TURN_CAP_DPS, (double) (__builtin_fabsf(dy) * 57.29578f), (double) y_eng);
+            }
+        }
     }
     float tstep = dy * k;
-    {   // (bot run at 80 ms ping: 'duel lock grabbing an opponent behind / beside: 90-180 deg body flip in 1-3 frames, 94 deg one-frame own turn'): the turn to the victim
+    {                           // (bot run at 80 ms ping: 'duel lock grabbing an opponent behind / beside: 90-180 deg body flip in 1-3 frames, 94 deg one-frame own turn'): the turn to the victim
         // above finishes within 100 ms whatever the angle - 94 deg = 940 deg/s. The per-frame step is capped (MDU_TURN_CAP_DPS), so a big turn takes longer than 100 ms but never flips.
         // TUNING (SP's median turn is 14 deg, max 113). t2r-duel-turn-cap-old.txt = uncapped.
-        static int cold = -1; static uint64_t cchk; if (cold < 0 || now - cchk >= 2000) { cchk = now; cold = GetFileAttributesA("t2r-duel-turn-cap-old.txt") != INVALID_FILE_ATTRIBUTES; }
-        float fdt = w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt, mx = MDU_TURN_CAP_DPS * 0.01745329f * fdt / 1000.0f;
-        if (!cold && __builtin_fabsf(tstep) > mx) { static int nlc; if (LOGCAP(nlc, 40)) xlog("DUEL: u%04x swing turn %+.0f deg in one frame held to %.0f deg (%.0f deg/s cap: no body flip)", g_mdu.uid, (double)(tstep * 57.29578f), (double)(mx * 57.29578f), (double)MDU_TURN_CAP_DPS); tstep = tstep > 0 ? mx : -mx; }
+        static int cold = -1;
+        static uint64_t cchk;
+        if (cold < 0 || now - cchk >= 2000) {
+            cchk = now;
+            cold =
+                GetFileAttributesA("t2r-duel-turn-cap-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        float fdt = w_dt < 8.0f ? 8.0f : w_dt > 40.0f ? 40.0f : w_dt, mx =
+            MDU_TURN_CAP_DPS * 0.01745329f * fdt / 1000.0f;
+        if (!cold && __builtin_fabsf(tstep) > mx) {
+            static int nlc;
+            if (LOGCAP(nlc, 40))
+                Xlog("DUEL: u%04x swing turn %+.0f deg in one frame held to %.0f deg (%.0f deg/s cap: no body flip)", g_mdu.uid, (double) (tstep * 57.29578f), (double) (mx * 57.29578f), (double) MDU_TURN_CAP_DPS);
+            tstep = tstep > 0 ? mx : -mx;
+        }
     }
     float yaw = y_base + tstep;
     float px = l[0] + ux * st, pz = l[2] + uz * st;
@@ -2097,117 +4725,255 @@ static void mdu_warp(uint64_t now, const float *vl) {
     // the victim onto the bearing the pair is authored at from the victim's facing (the -sync attacker spot seen from the victim half's frame-0 facing): at most
     // MDU_FW_SIDE_STEP m a frame and MDU_FW_SIDE_MAX rad in all, shared over the frames left. The victim then needs no turn. t2r-fin-intro-side-ps38.txt = the
     // straight line only.
-    if (g_mdfwu.on && !g_mdfwu.punch && g_mdfwu.fin >= 0 && g_mdfwu.fin < (int)CD_N && GetFileAttributesA("t2r-fin-intro-side-ps38.txt") == INVALID_FILE_ATTRIBUTES) {
-        static uint64_t a_sw; static float a0, a_acc, a_want0; static int a_ok;
+    if (g_mdfwu.on && !g_mdfwu.punch && g_mdfwu.fin >= 0
+        && g_mdfwu.fin < (int) CD_N
+        && GetFileAttributesA("t2r-fin-intro-side-ps38.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        static uint64_t a_sw;
+        static float a0, a_acc, a_want0;
+        static int a_ok;
         if (a_sw != g_mdu.sw_t0) {
-            a_sw = g_mdu.sw_t0; a_ok = 0; a_acc = 0.0f; a_want0 = 0.0f;
-            float fcv[8], fcs[8]; int fin = g_mdfwu.fin; uint64_t fh = g_mdu.slot >= 0 ? puppet_handle((uint32_t)g_mdu.slot) : 0;
-            if (fh && CD_PAIRS[fin].nseg > 1 && cd_offset_at(fh, CD_VIC0(fin), 0.0f, fcv) && cd_offset_at(SID_PLAYER, CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg - 1].att, 0.0f, fcs)) {
-                a0 = __builtin_atan2f(fcs[0] - fcv[0], fcs[2] - fcv[2]) - uc4_yaw(fcv) / 57.29578f; a_ok = 1;
+            a_sw = g_mdu.sw_t0;
+            a_ok = 0;
+            a_acc = 0.0f;
+            a_want0 = 0.0f;
+            float fcv[8], fcs[8];
+            int fin = g_mdfwu.fin;
+            uint64_t fh =
+                g_mdu.slot >= 0 ? PuppetHandle((uint32_t) g_mdu.slot) : 0;
+            if (fh && CD_PAIRS[fin].nseg > 1
+                && CdOffsetAt(fh, CD_VIC0(fin), 0.0f, fcv)
+                && CdOffsetAt(SID_PLAYER,
+                                CD_PAIRS[fin].seg[CD_PAIRS[fin].nseg -
+                                                  1].att, 0.0f, fcs)) {
+                a0 = __builtin_atan2f(fcs[0] - fcv[0],
+                                      fcs[2] - fcv[2]) -
+                    Uc4Yaw(fcv) / 57.29578f;
+                a_ok = 1;
             }
         }
         if (a_ok) {
-            float bw = uc4_yaw(vl) / 57.29578f + a0, bc = __builtin_atan2f(-ux, -uz), da = __builtin_remainderf(bw - bc, 6.2831853f);
-            if (w_n <= 1) a_want0 = da;
+            float bw = Uc4Yaw(vl) / 57.29578f + a0, bc =
+                __builtin_atan2f(-ux, -uz), da =
+                __builtin_remainderf(bw - bc, 6.2831853f);
+            if (w_n <= 1)
+                a_want0 = da;
             float room = MDU_FW_SIDE_MAX - __builtin_fabsf(a_acc);
-            if (da > room) da = room; if (da < -room) da = -room;
-            float share = da / (n > 1.0f ? n : 1.0f), mxa = MDU_FW_SIDE_STEP / (d > 0.3f ? d : 0.3f);
-            if (share > mxa) share = mxa; if (share < -mxa) share = -mxa;
-            float rx = px - vl[0], rz = pz - vl[2], cs_ = __builtin_cosf(share), sn_ = __builtin_sinf(share);
-            px = vl[0] + rx * cs_ + rz * sn_; pz = vl[2] + rz * cs_ - rx * sn_;
+            if (da > room)
+                da = room;
+            if (da < -room)
+                da = -room;
+            float share = da / (n > 1.0f ? n : 1.0f), mxa =
+                MDU_FW_SIDE_STEP / (d > 0.3f ? d : 0.3f);
+            if (share > mxa)
+                share = mxa;
+            if (share < -mxa)
+                share = -mxa;
+            float rx = px - vl[0], rz = pz - vl[2], cs_ =
+                __builtin_cosf(share), sn_ = __builtin_sinf(share);
+            px = vl[0] + rx * cs_ + rz * sn_;
+            pz = vl[2] + rz * cs_ - rx * sn_;
             a_acc += share;
-            if (rem <= 17.0f) { static int nla; if (LOGCAP(nla, 60)) xlog("DUEL: u%04x finisher intro walked us %+.0f deg round the victim (it stood %+.0f deg off the pair's authored bearing at the start, %+.0f deg left; <= %.2f m a frame; ps39)",
-                                         g_mdu.uid, (double)(a_acc * 57.29578f), (double)(a_want0 * 57.29578f), (double)(__builtin_remainderf(bw - bc, 6.2831853f) * 57.29578f - share * 57.29578f), (double)MDU_FW_SIDE_STEP); }
+            if (rem <= 17.0f) {
+                static int nla;
+                if (LOGCAP(nla, 60))
+                    Xlog("DUEL: u%04x finisher intro walked us %+.0f deg round the victim (it stood %+.0f deg off the pair's authored bearing at the start, %+.0f deg left; <= %.2f m a frame; ps39)", g_mdu.uid, (double) (a_acc * 57.29578f), (double) (a_want0 * 57.29578f), (double) (__builtin_remainderf(bw - bc, 6.2831853f) * 57.29578f - share * 57.29578f), (double) MDU_FW_SIDE_STEP);
+            }
         }
     }
-    float l8[8] = {px, l[1], pz, 1.0f, 0.0f, __builtin_sinf(yaw * 0.5f), 0.0f, __builtin_cosf(yaw * 0.5f)};
-    o_lx = l8[0]; o_lz = l8[2]; o_ok = 1;
-    if (o_pok) { float sx = l8[0] - o_px, sz = l8[2] - o_pz, sv = __builtin_sqrtf(sx * sx + sz * sz); if (sv > o_shown) o_shown = sv; }
-    o_px = l8[0]; o_pz = l8[2]; o_pok = 1;
-    static psync_bf bf;
-    psync_bf_from_loc(&bf, l8);
-    if (g_snapx_block_ms && GetTickCount64() - g_snapx_block_ms < 700 && GetFileAttributesA("t2r-snapx-block-old.txt") == INVALID_FILE_ATTRIBUTES) { static int nlb; if (LOGCAP(nlb, 30)) xlog("duel warp: held - snapcross threw our body back off geometry %llu ms ago (no pull through it)", (unsigned long long)(GetTickCount64() - g_snapx_block_ms)); return; }
-    y_shown = yaw; y_f = g_frame;   // (ps23: the yaw we showed - next frame's turn starts from it)
-    g_mdu_warp_yaw_f = g_frame;     // (ps40: mdu_yaw_adelta - the engine's own turn of this frame is taken out of its anim delta)
+    float l8[8] =
+        { px, l[1], pz, 1.0f, 0.0f, __builtin_sinf(yaw * 0.5f), 0.0f,
+  __builtin_cosf(yaw * 0.5f) };
+    o_lx = l8[0];
+    o_lz = l8[2];
+    o_ok = 1;
+    if (o_pok) {
+        float sx = l8[0] - o_px, sz = l8[2] - o_pz, Sv =
+            __builtin_sqrtf(sx * sx + sz * sz);
+        if (Sv > o_shown)
+            o_shown = Sv;
+    }
+    o_px = l8[0];
+    o_pz = l8[2];
+    o_pok = 1;
+    static PsyncBf bf;
+    PsyncBfFromLoc(&bf, l8);
+    if (g_snapxBlockMs && GetTickCount64() - g_snapxBlockMs < 700
+        && GetFileAttributesA("t2r-snapx-block-old.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        static int nlb;
+        if (LOGCAP(nlb, 30))
+            Xlog("duel warp: held - snapcross threw our body back off geometry %llu ms ago (no pull through it)", (unsigned long long) (GetTickCount64() - g_snapxBlockMs));
+        return;
+    }
+    y_shown = yaw;
+    y_f = g_frame;              // (ps23: the yaw we showed - next frame's turn starts from it)
+    g_mduWarpYawF = g_frame; // (ps40: mdu_yaw_adelta - the engine's own turn of this frame is taken out of its anim delta)
     mo_write(SID_PLAYER, &bf, MO_SRC("duel.mdu_warp"), 0);
 }
+
 // the pair: placement + path gate (asked ahead, cached by pg_gate) + psync START. 1 = started
 // Wall steer (with A placed in a straight line to some low cover the attacks steered left instead of traveling towards it; SP guides the travel to the closest wall / half wall): the -hit clips knock the
 // victim back AND to one side (slash-1 ~23 deg left), so a chain drifted off the cover. SP turns the hit toward the nearest wall / low cover. Here the
 // engine's own contextual probe (the takedowns' wall / low-cover finder, dc_probe) is asked along the clip's recoil and up to +-60 deg off it; the closest
 // surface within 1.6 m turns the whole pair round the victim (the attacker steps with it) so the recoil points at it, at most MDU_STEER_MAX. One answer per
 // swing (the gate's polls and the contact use the same turn). t2r-duel-wall-steer-off.txt = off.
-static float mdu_end_s(const mdu_row_t *m, uint64_t h);
-#define MDU_STEER_MAX 12.0f   // (40 deg: the attacker was yanked ~0.7 m sideways, the camera whipped - "teleporty"; now each blow bends the chain a little)
-static struct { uint32_t key; float rot; } g_mdst;
-static int bq_align_fit(int vic_slot, const float *vl, const float *me, float *vl_o, float *me_o);   // melee_beat.c (smooth:align)
-static int mdu_pair_place(int s, uint64_t h, const float *vl, const float *me, float *ap, float *da) {
+static float MduEndS(const MduRowT * m, uint64_t h);
+#define MDU_STEER_MAX 12.0f     // (40 deg: the attacker was yanked ~0.7 m sideways, the camera whipped - "teleporty"; now each blow bends the chain a little)
+static struct {
+    uint32_t key;
+    float rot;
+} g_mdst;
+static int BqAlignFit(int vic_slot, const float *vl, const float *me, float *vl_o, float *me_o);      // melee_beat.c (smooth:align)
+static int MduPairPlace(int s, uint64_t h, const float *vl,
+                          const float *me, float *ap, float *da)
+{
     float bq_vl[8], bq_me[8];
-    if (bq_align_fit(s, vl, me, bq_vl, bq_me)) { vl = bq_vl; me = bq_me; }   // melee_beat.c smooth:align: the owner's agreed align point (victim spot + bearing) replaces our own view of the two bodies
+    if (BqAlignFit(s, vl, me, bq_vl, bq_me)) {
+        vl = bq_vl;
+        me = bq_me;
+    }                           // melee_beat.c smooth:align: the owner's agreed align point (victim spot + bearing) replaces our own view of the two bodies
     int cd = g_mdu.mv_cd[g_mdu.sw_row];
-    if (cd < 0 || !dc_anchor(cd, h, vl, me, 0.0f, ap, da)) return 0;
-    uint32_t key = ((uint32_t)g_mdu.uid << 8) ^ (uint32_t)g_mdu.sw_row ^ 0x80000000u;
+    if (cd < 0 || !DcAnchor(cd, h, vl, me, 0.0f, ap, da))
+        return 0;
+    uint32_t key =
+        ((uint32_t) g_mdu.uid << 8) ^ (uint32_t) g_mdu.
+        sw_row ^ 0x80000000u;
     if (g_mdst.key != key) {
-        g_mdst.key = key; g_mdst.rot = 0.0f;
-        static int off = -1; static uint64_t chk;
-        if (off < 0 || GetTickCount64() - chk > 2000) { chk = GetTickCount64(); off = GetFileAttributesA("t2r-duel-wall-steer-off.txt") != INVALID_FILE_ATTRIBUTES; }
-        float en[2][8], vd = psync_dur(h, fnv64_rt(CD_VIC0(cd)));
-        float eph = vd > 0.2f ? mdu_end_s(&MDU_MOVES[g_mdu.sw_row], h) / vd : 1.0f;
-        if (!off && psync_pair_end(ap, fnv64(CD_ATT0(cd)), fnv64(CD_VIC0(cd)), eph, 0, en) == 3) {
-            float rx = en[1][0] - vl[0], rz = en[1][2] - vl[2], rl = __builtin_sqrtf(rx * rx + rz * rz);
+        g_mdst.key = key;
+        g_mdst.rot = 0.0f;
+        static int off = -1;
+        static uint64_t chk;
+        if (off < 0 || GetTickCount64() - chk > 2000) {
+            chk = GetTickCount64();
+            off =
+                GetFileAttributesA("t2r-duel-wall-steer-off.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        float en[2][8], vd = PsyncDur(h, Fnv64Rt(CD_VIC0(cd)));
+        float eph =
+            vd > 0.2f ? MduEndS(&MDU_MOVES[g_mdu.sw_row], h) / vd : 1.0f;
+        if (!off
+            && PsyncPairEnd(ap, FNV64(CD_ATT0(cd)), FNV64(CD_VIC0(cd)),
+                              eph, 0, en) == 3) {
+            float rx = en[1][0] - vl[0], rz = en[1][2] - vl[2], rl =
+                __builtin_sqrtf(rx * rx + rz * rz);
             if (rl > 0.25f) {
-                float r0 = __builtin_atan2f(rx, rz), bestd = 9.0f, besta = 0.0f; int got = 0, bh = 0;
+                float r0 = __builtin_atan2f(rx, rz), bestd = 9.0f, besta =
+                    0.0f;
+                int got = 0, bh = 0;
                 float fx = vl[0] - g_mdwf.o[0], fz = vl[2] - g_mdwf.o[2];
-                if (g_mdwf.slot == s && g_mdwf.ms && GetTickCount64() - g_mdwf.ms < 400 && fx * fx + fz * fz < 0.4f * 0.4f)
+                if (g_mdwf.slot == s && g_mdwf.ms
+                    && GetTickCount64() - g_mdwf.ms < 400
+                    && fx * fx + fz * fz < 0.4f * 0.4f)
                     for (int k = 0; k < MDW_N; k++) {
-                        float a = (float)k * (6.2831853f / MDW_N), off = cd_wrap180((a - r0) * 57.29578f);
-                        if (__builtin_fabsf(off) > 76.0f || g_mdwf.d[k] > 2.5f) continue;
-                        if (g_mdwf.d[k] < bestd) { bestd = g_mdwf.d[k]; besta = a; got = 1; }
+                        float a = (float) k * (6.2831853f / MDW_N), off =
+                            CdWrap180((a - r0) * 57.29578f);
+                        if (__builtin_fabsf(off) > 76.0f
+                            || g_mdwf.d[k] > 2.5f)
+                            continue;
+                        if (g_mdwf.d[k] < bestd) {
+                            bestd = g_mdwf.d[k];
+                            besta = a;
+                            got = 1;
+                        }
                     }
                 if (got) {
-                    float d = cd_wrap180((besta - r0) * 57.29578f);
-                    if (d > MDU_STEER_MAX) d = MDU_STEER_MAX; if (d < -MDU_STEER_MAX) d = -MDU_STEER_MAX;
+                    float d = CdWrap180((besta - r0) * 57.29578f);
+                    if (d > MDU_STEER_MAX)
+                        d = MDU_STEER_MAX;
+                    if (d < -MDU_STEER_MAX)
+                        d = -MDU_STEER_MAX;
                     g_mdst.rot = d;
-                    DULOG("DUEL: u%04x wall steer for %s: %s %.2f m from the victim at %+.0f deg off the clip's recoil (%.2f m) - pair turned %+.0f deg round the victim",
-                          g_mdu.uid, CD_PAIRS[cd].name, bh ? "surface (knee-height ray)" : "surface (knee-height ray)", (double)bestd, (double)cd_wrap180((besta - r0) * 57.29578f), (double)rl, (double)d);
+                    DULOG
+                        ("DUEL: u%04x wall steer for %s: %s %.2f m from the victim at %+.0f deg off the clip's recoil (%.2f m) - pair turned %+.0f deg round the victim",
+                         g_mdu.uid, CD_PAIRS[cd].name,
+                         bh ? "surface (knee-height ray)" :
+                         "surface (knee-height ray)", (double) bestd,
+                         (double) CdWrap180((besta - r0) * 57.29578f),
+                         (double) rl, (double) d);
                 }
             }
         }
     }
-    if (__builtin_fabsf(g_mdst.rot) < 2.0f) return 1;
+    if (__builtin_fabsf(g_mdst.rot) < 2.0f)
+        return 1;
     // dc_anchor points the authored attacker spot at `me`: turning `me` round the victim by -rot turns the pair (and its recoil) by -rot ... sign: the pair's
     // yaw follows the victim->me bearing one to one, so the recoil turns with it: rotate me by +rot to turn the recoil by +rot.
-    float r = g_mdst.rot * 0.0174533f, cs = __builtin_cosf(r), sn = __builtin_sinf(r), dx = me[0] - vl[0], dz = me[2] - vl[2];
-    float m2[8]; memcpy(m2, me, sizeof m2);
-    m2[0] = vl[0] + dx * cs + dz * sn; m2[2] = vl[2] - dx * sn + dz * cs;
+    float r = g_mdst.rot * 0.0174533f, cs = __builtin_cosf(r), sn =
+        __builtin_sinf(r), dx = me[0] - vl[0], dz = me[2] - vl[2];
+    float m2[8];
+    memcpy(m2, me, sizeof m2);
+    m2[0] = vl[0] + dx * cs + dz * sn;
+    m2[2] = vl[2] - dx * sn + dz * cs;
     float ap2[7], da2;
-    if (!dc_anchor(cd, h, vl, m2, 0.0f, ap2, &da2)) return 1;
+    if (!DcAnchor(cd, h, vl, m2, 0.0f, ap2, &da2))
+        return 1;
     memcpy(ap, ap2, sizeof ap2);
-    *da = __builtin_sqrtf((g_dc_sa[0] - me[0]) * (g_dc_sa[0] - me[0]) + (g_dc_sa[2] - me[2]) * (g_dc_sa[2] - me[2]));
+    *da =
+        __builtin_sqrtf((g_dcSa[0] - me[0]) * (g_dcSa[0] - me[0]) +
+                        (g_dcSa[2] - me[2]) * (g_dcSa[2] - me[2]));
     return 1;
 }
-static float mdu_end_s(const mdu_row_t *m, uint64_t h) {
-    float vl = psync_dur(h, fnv64_rt(CD_VIC0(g_mdu.mv_cd[m - MDU_MOVES]))), e;
-    if (m->next) { e = (m->combo1 ? m->combo1 : 833) / 1000.0f + 0.10f; if (e < 0.6f) e = 0.6f; if (e > 1.4f) e = 1.4f; }
+
+static float MduEndS(const MduRowT *m, uint64_t h)
+{
+    float vl =
+        PsyncDur(h, Fnv64Rt(CD_VIC0(g_mdu.mv_cd[m - MDU_MOVES]))), e;
+    if (m->next) {
+        e = (m->combo1 ? m->combo1 : 833) / 1000.0f + 0.10f;
+        if (e < 0.6f)
+            e = 0.6f;
+        if (e > 1.4f)
+            e = 1.4f;
+    }
     // ps32: blow 6's victim half (abby-fist-stun-hammerfist-2-hit--npc-f) is 4.73 s long - SP's stun state: the enemy stays doubled over. No stun state in MP: the
     // victim is handed its body back at MDU_VIC_FREE_S like after any chained blow, whatever the chain count (the rule below would give an unchained blow 1.6 s).
-    else if (mdu_p32_row((int)(m - MDU_MOVES)) == 2 || mdu_p32_row((int)(m - MDU_MOVES)) == 4) e = MDU_VIC_FREE_S;   // (ps33: the 1h blunt blow 6 too - its victim half is 1.7 s)
-    else { e = vl > 0.3f ? vl - 0.15f : 1.2f; if (e < 0.6f) e = 0.6f; if (e > 1.6f) e = 1.6f; }
-    if (vl > 0.3f && e > vl - 0.05f) e = vl - 0.05f;
+    else if (MduP32Row((int) (m - MDU_MOVES)) == 2
+             || MduP32Row((int) (m - MDU_MOVES)) == 4)
+        e = MDU_VIC_FREE_S;     // (ps33: the 1h blunt blow 6 too - its victim half is 1.7 s)
+    else {
+        e = vl > 0.3f ? vl - 0.15f : 1.2f;
+        if (e < 0.6f)
+            e = 0.6f;
+        if (e > 1.6f)
+            e = 1.6f;
+    }
+    if (vl > 0.3f && e > vl - 0.05f)
+        e = vl - 0.05f;
     return e;
 }
-static void mdu_gate_poll(int s, uint64_t h, const float *vl, const float *me) {
-    if (g_mdu.gate >= 0 || g_mdu.gate_tries > 20) return;
-    float ap[7], da = 0.0f; g_mdu.gate_tries++;
-    if (!mdu_pair_place(s, h, vl, me, ap, &da)) return;
+
+static void MduGatePoll(int s, uint64_t h, const float *vl,
+                          const float *me)
+{
+    if (g_mdu.gate >= 0 || g_mdu.gate_tries > 20)
+        return;
+    float ap[7], da = 0.0f;
+    g_mdu.gate_tries++;
+    if (!MduPairPlace(s, h, vl, me, ap, &da))
+        return;
     int cd = g_mdu.mv_cd[g_mdu.sw_row];
-    float vd = psync_dur(h, fnv64_rt(CD_VIC0(cd)));
-    { float es = mdu_end_s(&MDU_MOVES[g_mdu.sw_row], h); if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < es) es = g_mdu.gate_short_s; g_pg_end_ph = vd > 0.2f ? es / vd : 0.0f; }
-    g_pg_react = 1;   // the victim's recoil must not enter collision: a wall within the body radius of the end spot blocks too
-    int g = pg_gate((uint32_t)s, CD_ATT0(cd), CD_VIC0(cd), ap, vl, me, 0, "melee duel");
-    g_pg_react = 0;
-    g_pg_end_ph = 0.0f;
-    if (g != 2) { g_mdu.gate = g; DULOG("DUEL: u%04x REACT space for %s: %s (recoil path + 0.30 m body radius, blocked = plain engine hit reaction; asked %d ms before the contact)", g_mdu.uid, CD_PAIRS[cd].name, g ? "clear" : "BLOCKED", (int)(int64_t)(g_mdu.sw_tc - GetTickCount64())); }
+    float vd = PsyncDur(h, Fnv64Rt(CD_VIC0(cd)));
+    {
+        float es = MduEndS(&MDU_MOVES[g_mdu.sw_row], h);
+        if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < es)
+            es = g_mdu.gate_short_s;
+        g_pgEndPh = vd > 0.2f ? es / vd : 0.0f;
+    }
+    g_pgReact = 1;             // the victim's recoil must not enter collision: a wall within the body radius of the end spot blocks too
+    int g =
+        PgGate((uint32_t) s, CD_ATT0(cd), CD_VIC0(cd), ap, vl, me, 0,
+                "melee duel");
+    g_pgReact = 0;
+    g_pgEndPh = 0.0f;
+    if (g != 2) {
+        g_mdu.gate = g;
+        DULOG
+            ("DUEL: u%04x REACT space for %s: %s (recoil path + 0.30 m body radius, blocked = plain engine hit reaction; asked %d ms before the contact)",
+             g_mdu.uid, CD_PAIRS[cd].name, g ? "clear" : "BLOCKED",
+             (int) (int64_t) (g_mdu.sw_tc - GetTickCount64()));
+    }
     // v5-geo2 (A [15299] / [15305]: 'REACT space ... BLOCKED' -> 'CONTACT ... without a pair (path blocked) - plain hit', an almost invisible upper-body flinch on ~31% of
     // the contacts): only a wall on the VICTIM's recoil (attacker path and both floors fine) - the pair still plays, its victim half handed off before the body
     // reaches the wall: the latest phase whose victim placement stays 0.30 m (body radius) short of it, at least 0.30 s in (the impact). That shorter path is gated again.
@@ -2217,64 +4983,135 @@ static void mdu_gate_poll(int s, uint64_t h, const float *vl, const float *me) {
     // shorter path is gated again (floor included), so a real step at the new end still blocks.
     // (A 14:31 [26821] blow 2: 'floor 19.11 vs 18.60, a step up at the end spot', no wall = bad 8 alone: the recoil ends on a slope / root 0.51 m up. Cut to 60 % of
     //  that travel; the re-gate checks the floor at the nearer end spot.)
-    int vic_only = g == 0 && g_pg_last_bad && !(g_pg_last_bad & ~(2 | 8)) && ((g_pg_last_bad & 2) ? g_pg_last_vwall > 0.0f : 1);
+    int vic_only = g == 0 && g_pgLastBad && !(g_pgLastBad & ~(2 | 8))
+        && ((g_pgLastBad & 2) ? g_pgLastVwall > 0.0f : 1);
     float step_room = -1.0f;
-    if (vic_only && !(g_pg_last_bad & 2) && vd > 0.2f) {
+    if (vic_only && !(g_pgLastBad & 2) && vd > 0.2f) {
         float en0[2][8];
-        if (psync_pair_end(ap, fnv64(CD_ATT0(cd)), fnv64(CD_VIC0(cd)), mdu_end_s(&MDU_MOVES[g_mdu.sw_row], h) / vd, 0, en0) == 3)
-            step_room = 0.6f * __builtin_sqrtf((en0[1][0] - vl[0]) * (en0[1][0] - vl[0]) + (en0[1][2] - vl[2]) * (en0[1][2] - vl[2]));
-        if (!(step_room > 0.05f)) vic_only = 0;
+        if (PsyncPairEnd
+            (ap, FNV64(CD_ATT0(cd)), FNV64(CD_VIC0(cd)),
+             MduEndS(&MDU_MOVES[g_mdu.sw_row], h) / vd, 0, en0) == 3)
+            step_room =
+                0.6f * __builtin_sqrtf((en0[1][0] - vl[0]) *
+                                       (en0[1][0] - vl[0]) + (en0[1][2] -
+                                                              vl[2]) *
+                                       (en0[1][2] - vl[2]));
+        if (!(step_room > 0.05f))
+            vic_only = 0;
     }
     if (vic_only && g_mdu.gate_short_s <= 0.0f && vd > 0.2f) {
-        float room = (g_pg_last_bad & 2) ? g_pg_last_vwall - 0.30f : step_room, ph0 = mdu_end_s(&MDU_MOVES[g_mdu.sw_row], h) / vd, got = -1.0f, gd = 0.0f;
+        float room =
+            (g_pgLastBad & 2) ? g_pgLastVwall - 0.30f : step_room,
+            ph0 = MduEndS(&MDU_MOVES[g_mdu.sw_row], h) / vd, got =
+            -1.0f, gd = 0.0f;
         // (soak: the 0.02-phase walk back from the end was ~50 clip samples = 1000-1200 natives, a 6 ms frame; the recoil moves the victim away from
         //  its start, so the latest phase still inside the room is found by bisection - ~8 samples. t2r-react-walk.txt = the old walk.)
-        if (GetFileAttributesA("t2r-react-walk.txt") == INVALID_FILE_ATTRIBUTES) {
+        if (GetFileAttributesA("t2r-react-walk.txt") ==
+            INVALID_FILE_ATTRIBUTES) {
             float lo = 0.30f / vd, hi = ph0 - 0.02f, en[2][8], dd;
-            #define MDU_VDIST(ph) (psync_pair_end(ap, fnv64(CD_ATT0(cd)), fnv64(CD_VIC0(cd)), (ph), 0, en) == 3 ?                                    __builtin_sqrtf((en[1][0] - vl[0]) * (en[1][0] - vl[0]) + (en[1][2] - vl[2]) * (en[1][2] - vl[2])) : -1.0f)
+#define MDU_VDIST(ph) (PsyncPairEnd(ap, FNV64(CD_ATT0(cd)), FNV64(CD_VIC0(cd)), (ph), 0, en) == 3 ?                                    __builtin_sqrtf((en[1][0] - vl[0]) * (en[1][0] - vl[0]) + (en[1][2] - vl[2]) * (en[1][2] - vl[2])) : -1.0f)
             if (lo <= hi && (dd = MDU_VDIST(lo)) >= 0.0f && dd <= room) {
-                got = lo; gd = dd;
-                if ((dd = MDU_VDIST(hi)) >= 0.0f && dd <= room) { got = hi; gd = dd; }
-                else for (int it = 0; it < 8 && hi - lo > 0.01f; it++) {
-                    float mid = 0.5f * (lo + hi);
-                    dd = MDU_VDIST(mid);
-                    if (dd < 0.0f) break;
-                    if (dd <= room) { lo = mid; got = mid; gd = dd; } else hi = mid;
+                got = lo;
+                gd = dd;
+                if ((dd = MDU_VDIST(hi)) >= 0.0f && dd <= room) {
+                    got = hi;
+                    gd = dd;
+                } else
+                    for (int it = 0; it < 8 && hi - lo > 0.01f; it++) {
+                        float mid = 0.5f * (lo + hi);
+                        dd = MDU_VDIST(mid);
+                        if (dd < 0.0f)
+                            break;
+                        if (dd <= room) {
+                            lo = mid;
+                            got = mid;
+                            gd = dd;
+                        } else
+                            hi = mid;
+                    }
+            }
+#undef MDU_VDIST
+        } else
+            for (float ph = ph0 - 0.02f; ph * vd >= 0.30f; ph -= 0.02f) {
+                float en[2][8];
+                if (PsyncPairEnd
+                    (ap, FNV64(CD_ATT0(cd)), FNV64(CD_VIC0(cd)), ph, 0,
+                     en) != 3)
+                    break;
+                float dx = en[1][0] - vl[0], dz = en[1][2] - vl[2], dd =
+                    __builtin_sqrtf(dx * dx + dz * dz);
+                if (dd <= room) {
+                    got = ph;
+                    gd = dd;
+                    break;
                 }
             }
-            #undef MDU_VDIST
-        } else
-        for (float ph = ph0 - 0.02f; ph * vd >= 0.30f; ph -= 0.02f) {
-            float en[2][8];
-            if (psync_pair_end(ap, fnv64(CD_ATT0(cd)), fnv64(CD_VIC0(cd)), ph, 0, en) != 3) break;
-            float dx = en[1][0] - vl[0], dz = en[1][2] - vl[2], dd = __builtin_sqrtf(dx * dx + dz * dz);
-            if (dd <= room) { got = ph; gd = dd; break; }
-        }
         if (got > 0.0f) {
-            g_mdu.gate_short_s = got * vd; g_mdu.gate = -1;
-            DULOG("DUEL: u%04x REACT space for %s: %s %.2f m along the victim's recoil - recoil cut to a %.2f s hand-off (%.2f m, was %.2f s), gating that path", g_mdu.uid, CD_PAIRS[cd].name,
-                  (g_pg_last_bad & 2) ? "the wall" : "a step at the end spot; room", (double)((g_pg_last_bad & 2) ? g_pg_last_vwall : room), (double)g_mdu.gate_short_s, (double)gd, (double)(ph0 * vd));
-        } else DULOG("DUEL: u%04x REACT space for %s: the wall %.2f m along the victim's recoil is closer than its first 0.30 s - no room for the pair", g_mdu.uid, CD_PAIRS[cd].name, (double)g_pg_last_vwall);
+            g_mdu.gate_short_s = got * vd;
+            g_mdu.gate = -1;
+            DULOG
+                ("DUEL: u%04x REACT space for %s: %s %.2f m along the victim's recoil - recoil cut to a %.2f s hand-off (%.2f m, was %.2f s), gating that path",
+                 g_mdu.uid, CD_PAIRS[cd].name,
+                 (g_pgLastBad & 2) ? "the wall" :
+                 "a step at the end spot; room",
+                 (double) ((g_pgLastBad & 2) ? g_pgLastVwall : room),
+                 (double) g_mdu.gate_short_s, (double) gd,
+                 (double) (ph0 * vd));
+        } else
+            DULOG
+                ("DUEL: u%04x REACT space for %s: the wall %.2f m along the victim's recoil is closer than its first 0.30 s - no room for the pair",
+                 g_mdu.uid, CD_PAIRS[cd].name, (double) g_pgLastVwall);
     }
 }
+
 // (kick: 'REACT space ... the wall 2.29 m along the victim's recoil - recoil cut to a 0.87 s hand-off (1.97 m), gating that path' in the
 // SAME frame as 'CONTACT ... without a pair (path gate never answered) - plain hit': the shortened recoil was found at the contact and its gate had no frame to
 // answer, so the kick lost its knock-back pair to a wall 2.3 m away). The contact now waits up to MDU48_REGATE_F frames for that re-gate (only then).
 // t2r-regate-wait-ps48-old.txt = old. Proof line "ps48 re-gate".
-#define MDU48_REGATE_F 5   /* [TUNING ps48] frames (83 ms at 60 fps); pg_gate's shift rounds took 1 frame each in B [32190]-[32195] */
-static int mdu_regate48_hold(uint64_t now) {
-    static uint64_t sw0, f0; static int off = -1; static uint64_t at;
-    if (off < 0 || now - at > 2000) { at = now; off = GetFileAttributesA("t2r-regate-wait-ps48-old.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off || !g_mdu.sw_on || g_mdu.gate >= 0 || !(g_mdu.gate_short_s > 0.0f) || g_mdfwu.on || g_mdu.sw_lethal) return 0;
-    if (sw0 != g_mdu.sw_t0) { sw0 = g_mdu.sw_t0; f0 = g_frame; }
-    if (g_frame - f0 >= MDU48_REGATE_F) { DULOG("DUEL: ps48 re-gate u%04x: the shortened recoil got no answer in %d frames - contact now", g_mdu.uid, MDU48_REGATE_F); return 0; }
-    int s = g_mdu.slot; uint64_t h = s >= 0 ? puppet_handle((uint32_t)s) : 0;
-    float vb[16], mb[16]; const float *vl = h ? puppet_locator(h, vb) : NULL, *me = player_locator(mb);
-    if (!vl || !me) return 0;
-    g_mdu.gate_tries = 0; mdu_gate_poll(s, h, vl, me);
-    if (g_mdu.gate >= 0) { DULOG("DUEL: ps48 re-gate u%04x: shortened recoil answered %s after %d frame(s) of contact hold", g_mdu.uid, g_mdu.gate == 1 ? "CLEAR" : "blocked", (int)(g_frame - f0)); return 0; }
+#define MDU48_REGATE_F 5        /* [TUNING ps48] frames (83 ms at 60 fps); pg_gate's shift rounds took 1 frame each in B [32190]-[32195] */
+static int MduRegate48Hold(uint64_t now)
+{
+    static uint64_t sw0, f0;
+    static int off = -1;
+    static uint64_t at;
+    if (off < 0 || now - at > 2000) {
+        at = now;
+        off =
+            GetFileAttributesA("t2r-regate-wait-ps48-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off || !g_mdu.sw_on || g_mdu.gate >= 0
+        || !(g_mdu.gate_short_s > 0.0f) || g_mdfwu.on || g_mdu.sw_lethal)
+        return 0;
+    if (sw0 != g_mdu.sw_t0) {
+        sw0 = g_mdu.sw_t0;
+        f0 = g_frame;
+    }
+    if (g_frame - f0 >= MDU48_REGATE_F) {
+        DULOG
+            ("DUEL: ps48 re-gate u%04x: the shortened recoil got no answer in %d frames - contact now",
+             g_mdu.uid, MDU48_REGATE_F);
+        return 0;
+    }
+    int s = g_mdu.slot;
+    uint64_t h = s >= 0 ? PuppetHandle((uint32_t) s) : 0;
+    float vb[16], mb[16];
+    const float *vl = h ? PuppetLocator(h, vb) : NULL, *me =
+        PlayerLocator(mb);
+    if (!vl || !me)
+        return 0;
+    g_mdu.gate_tries = 0;
+    MduGatePoll(s, h, vl, me);
+    if (g_mdu.gate >= 0) {
+        DULOG
+            ("DUEL: ps48 re-gate u%04x: shortened recoil answered %s after %d frame(s) of contact hold",
+             g_mdu.uid, g_mdu.gate == 1 ? "CLEAR" : "blocked",
+             (int) (g_frame - f0));
+        return 0;
+    }
     return 1;
 }
+
 // ---- Durability ledger (during a duel sequence the weapon's durability was only used up on the first hit): every landed duel blow with a melee
 // weapon costs exactly one durability point, like a normal hit. The engine takes its point at ITS own contact, and the duel drops / replaces those contacts
 // (mdu_contact_drop; cancel-melee-action at the -hit pair start): dlog crowbar chains - u6b97 3 blows / 2 engine contacts, u270f 2 / 2, u19eb 4 / 4 - and blows 2-3
@@ -2282,470 +5119,1182 @@ static int mdu_regate48_hold(uint64_t now) {
 // durability at the swing start (mdw_swing), minus one per landed blow (mdw_blow); 400 ms after the blow (the engine's own decrement, if any, has happened) the held
 // weapon's health is set to the ledger (up when the engine took two for one blow, down when it took none). The last point (0 = the break, wpnbreak.c) waits for the
 // attacker's release, as ctxdown's weapon takedown wear does. Machete (never breaks) and one-tap refunds are left alone. t2r-duel-no-wear-ledger.txt = off.
-static struct { uint64_t w, sw_w, sw_ms, sw_t0, last_ms, due_ms; int64_t L, sw_hp; int live, owed, n; } g_mdw;
-static void wb_break_hit(uint64_t w, const char *why); static int wb_hold(void); static int wb_lent(uint64_t w); static void wb_lend_take(uint64_t w);   // wpnbreak.c (v5-pinfix3 4): the break at the hit, health 0 at the gesture's drop frame
-static int mdw_off(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-no-wear-ledger.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int64_t mdw_hp(void) { uint64_t n = 0, h = dc_call(SID_GET_WEAPON_HEALTH2, 0, &n); return h == ~0ULL || (int64_t)h < 0 || (int64_t)h >= 1000 ? -1 : (int64_t)h; }
-static uint64_t mdw_held(void) { uint64_t w = current_weapon(); return w && w != ~0ULL && melee_dur_w(w) && melee_class_of(w, NULL) != MC_MACHETE ? w : 0; }
-static int mdw_set_wears(int set) { return set == MDU_1HBLUNT || set == MDU_1HBLADE || set == MDU_2H; }
-static void mdw_swing(uint64_t now) {          // a duel swing / pin blow starts: the weapon + its durability before this swing's contact
-    uint64_t w = mdw_held(); int64_t h = w ? mdw_hp() : -1;
-    if (!w || h <= 0) return;
-    h -= wb_lent(w);                                 // (wpnbreak.c's lent last point is not real durability)
-    g_mdw.sw_w = w; g_mdw.sw_hp = h; g_mdw.sw_ms = now;
+static struct {
+    uint64_t w, sw_w, sw_ms, sw_t0, last_ms, due_ms;
+    int64_t L, sw_hp;
+    int live, owed, n;
+} g_mdw;
+static void WbBreakHit(uint64_t w, const char *why);
+static int WbHold(void);
+static int WbLent(uint64_t w);
+static void WbLendTake(uint64_t w);   // wpnbreak.c (v5-pinfix3 4): the break at the hit, health 0 at the gesture's drop frame
+static int MdwOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-no-wear-ledger.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return v;
 }
+
+static int64_t MdwHp(void)
+{
+    uint64_t n = 0, h = DcCall(SID_GET_WEAPON_HEALTH2, 0, &n);
+    return h == ~0ULL || (int64_t) h < 0
+        || (int64_t) h >= 1000 ? -1 : (int64_t) h;
+}
+
+static uint64_t MdwHeld(void)
+{
+    uint64_t w = CurrentWeapon();
+    return w && w != ~0ULL && MeleeDurW(w)
+        && MeleeClassOf(w, NULL) != MC_MACHETE ? w : 0;
+}
+
+static int MdwSetWears(int set)
+{
+    return set == MDU_1HBLUNT || set == MDU_1HBLADE || set == MDU_2H;
+}
+
+static void MdwSwing(uint64_t now)
+{                               // a duel swing / pin blow starts: the weapon + its durability before this swing's contact
+    uint64_t w = MdwHeld();
+    int64_t h = w ? MdwHp() : -1;
+    if (!w || h <= 0)
+        return;
+    h -= WbLent(w);            // (wpnbreak.c's lent last point is not real durability)
+    g_mdw.sw_w = w;
+    g_mdw.sw_hp = h;
+    g_mdw.sw_ms = now;
+}
+
 // v5-sfx (hammer finisher; A [27214] / B [47098] "TLOU2 one-shot mf-... (weapon 0)"): dc_weapon() read at the finisher windup's contact answered the
 // fists - the SP intro animate_ on our body - so the pair's START carried weapon 0 and both screens played the FIST kill sound. A weapon row's blow is the weapon this
 // swing started with (mdw_swing's sw_w: the held melee item at the swing start; the machete, which mdw_held leaves out, through the carried melee weapon).
-static uint64_t mdu_blow_weapon(void) {
-    uint64_t w = dc_weapon();
+static uint64_t MduBlowWeapon(void)
+{
+    uint64_t w = DcWeapon();
     // (melee hit sounds stopped after the first hit; A [26874] / [26944] blows 3-4 of a wrench chain: 'swing read as the fists
     // mid-pair' in mdu_deliver, 'sound impact ... fired' but no 'melee weapon sfx' line): the contact clears sw_on before its cues ask for the weapon, so this
     // returned abby-unarmed and melee_hit_fx found no melee class - a silent impact. The swing's row and the 3 s swing-weapon ledger are enough.
-    if (w != fnv64("abby-unarmed") || g_mdu.sw_row < 0 || g_mdu.sw_row >= (int)MDU_MOVES_N || MDU_MOVES[g_mdu.sw_row].set == MDU_FIST) return w;
-    uint64_t now = GetTickCount64(), x = g_mdw.sw_w && now - g_mdw.sw_ms < 3000 ? g_mdw.sw_w : 0;
-    if (!x) { uint64_t cw = current_weapon(); x = cw && cw != ~0ULL && melee_class_of(base_weapon(cw), NULL) >= 0 ? cw : xr_melee_weapon(cw == ~0ULL ? 0 : cw); }
-    if (x && x != ~0ULL && melee_class_of(base_weapon(x), NULL) >= 0) {
-        static int nl; if (LOGCAP(nl, 30)) DULOG("DUEL: u%04x the held weapon reads as the fists mid-swing (%s) - the blow is this swing's weapon %016llx", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, (unsigned long long)x);
+    if (w != FNV64("abby-unarmed") || g_mdu.sw_row < 0
+        || g_mdu.sw_row >= (int) MDU_MOVES_N
+        || MDU_MOVES[g_mdu.sw_row].set == MDU_FIST)
+        return w;
+    uint64_t now = GetTickCount64(), x = g_mdw.sw_w
+        && now - g_mdw.sw_ms < 3000 ? g_mdw.sw_w : 0;
+    if (!x) {
+        uint64_t cw = CurrentWeapon();
+        x = cw && cw != ~0ULL
+            && MeleeClassOf(BaseWeapon(cw),
+                              NULL) >= 0 ? cw : XrMeleeWeapon(cw ==
+                                                                ~0ULL ? 0 :
+                                                                cw);
+    }
+    if (x && x != ~0ULL && MeleeClassOf(BaseWeapon(x), NULL) >= 0) {
+        static int nl;
+        if (LOGCAP(nl, 30))
+            DULOG
+                ("DUEL: u%04x the held weapon reads as the fists mid-swing (%s) - the blow is this swing's weapon %016llx",
+                 g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move,
+                 (unsigned long long) x);
         return x;
     }
     return w;
 }
-static void mdw_blow(const char *why, int settle_ms) {   // a duel / pin blow with the melee weapon landed; settle_ms: when the engine's own decrement is surely in
-    if (mdw_off() || (g_ot_refund_until && g_t60 < g_ot_refund_until)) return;
-    uint64_t now = GetTickCount64(), held = mdw_held();
+
+static void MdwBlow(const char *why, int settle_ms)
+{                               // a duel / pin blow with the melee weapon landed; settle_ms: when the engine's own decrement is surely in
+    if (MdwOff() || (g_otRefundUntil && g_t60 < g_otRefundUntil))
+        return;
+    uint64_t now = GetTickCount64(), held = MdwHeld();
     int fresh = g_mdw.sw_w && now - g_mdw.sw_ms < 3000;
     uint64_t w = fresh ? g_mdw.sw_w : held;
-    if (!w) return;
-    int lent = wb_lent(w); wb_lend_take(w);
-    if (!g_mdw.live || g_mdw.w != w || now - g_mdw.last_ms > 2500) {      // a new chain: from this swing's start durability
+    if (!w)
+        return;
+    int lent = WbLent(w);
+    WbLendTake(w);
+    if (!g_mdw.live || g_mdw.w != w || now - g_mdw.last_ms > 2500) {    // a new chain: from this swing's start durability
         int64_t base = fresh ? g_mdw.sw_hp : -1;
-        if (base <= 0) { int64_t h = held == w ? mdw_hp() : -1; if (h <= 0) return; base = h - lent + (g_mdu.eng_contact ? 1 : 0); }
-        g_mdw.live = 1; g_mdw.w = w; g_mdw.L = base; g_mdw.n = 0;
+        if (base <= 0) {
+            int64_t h = held == w ? MdwHp() : -1;
+            if (h <= 0)
+                return;
+            base = h - lent + (g_mdu.eng_contact ? 1 : 0);
+        }
+        g_mdw.live = 1;
+        g_mdw.w = w;
+        g_mdw.L = base;
+        g_mdw.n = 0;
     }
-    if (g_mdw.L <= 0) return;
+    if (g_mdw.L <= 0)
+        return;
     // Bladed weapons have less durability since they kill outright: a blade's killing (lethal / finisher) blow is its
     // last point - SP's break at this hit, the item gone after the gesture. Its class durability is the blows of one kill (4), so a chain that downs a full-
     // health player ends on the last point anyway. t2r-blade-dur-old.txt = the old 8 points, no break on the kill.
-    if ((g_mdu.sw_lethal || strstr(why, "finisher") || strstr(why, "lethal")) && melee_class_of(w, NULL) == MC_1HBLADE && GetFileAttributesA("t2r-blade-dur-old.txt") == INVALID_FILE_ATTRIBUTES && g_mdw.L > 1) {
-        DULOG("DUEL: blade %016llx - the killing blow (%s) breaks it (%lld point(s) left before)", (unsigned long long)w, why, (long long)g_mdw.L); g_mdw.L = 1; }
-    g_mdw.L--; g_mdw.n++; g_mdw.owed = 1; g_mdw.last_ms = now; g_mdw.due_ms = now + (uint64_t)settle_ms;
-    if (g_mdw.L == 0) {             // v5-pinfix3 4: the last point - SP's break at this hit (sound now, the drop gesture after our pair), the item leaves at the drop frame
-        g_mdw.L = 1; wb_break_hit(w, "a duel blow on the last durability point");
-        if (!wb_hold()) g_mdw.L = 0;                                        // (break sound off / another break running: the plain 0 after the release)
+    if ((g_mdu.sw_lethal || strstr(why, "finisher")
+         || strstr(why, "lethal")) && MeleeClassOf(w, NULL) == MC_1HBLADE
+        && GetFileAttributesA("t2r-blade-dur-old.txt") ==
+        INVALID_FILE_ATTRIBUTES && g_mdw.L > 1) {
+        DULOG
+            ("DUEL: blade %016llx - the killing blow (%s) breaks it (%lld point(s) left before)",
+             (unsigned long long) w, why, (long long) g_mdw.L);
+        g_mdw.L = 1;
     }
-    DULOG("DUEL: wear: blow %d of the chain with %llx (%s) - durability -> %lld (set %d ms after the blow; engine contacts this swing %d)", g_mdw.n, (unsigned long long)w, why, (long long)g_mdw.L, settle_ms, g_mdu.eng_contact);
+    g_mdw.L--;
+    g_mdw.n++;
+    g_mdw.owed = 1;
+    g_mdw.last_ms = now;
+    g_mdw.due_ms = now + (uint64_t) settle_ms;
+    if (g_mdw.L == 0) {         // v5-pinfix3 4: the last point - SP's break at this hit (sound now, the drop gesture after our pair), the item leaves at the drop frame
+        g_mdw.L = 1;
+        WbBreakHit(w, "a duel blow on the last durability point");
+        if (!WbHold())
+            g_mdw.L = 0;        // (break sound off / another break running: the plain 0 after the release)
+    }
+    DULOG
+        ("DUEL: wear: blow %d of the chain with %llx (%s) - durability -> %lld (set %d ms after the blow; engine contacts this swing %d)",
+         g_mdw.n, (unsigned long long) w, why, (long long) g_mdw.L,
+         settle_ms, g_mdu.eng_contact);
 }
-static void mdw_tick(uint64_t now) {
-    if (!g_mdw.owed || now < g_mdw.due_ms) return;
-    if (now - g_mdw.last_ms > 6000) { DULOG("DUEL: wear: %llx not back in the hand within 6 s of the blow - ledger %lld not applied", (unsigned long long)g_mdw.w, (long long)g_mdw.L); g_mdw.owed = 0; return; }
-    if (g_fin_health >= 0 || g_cd_wear_at || (g_ot_refund_until && g_t60 < g_ot_refund_until)) return;
-    if (wb_hold() && g_mdw.L <= 1) { g_mdw.owed = 0; return; }           // the break holds the last point until its drop frame     // another health hold runs (finisher / takedown wear / one-tap refund)
-    if (mdw_held() != g_mdw.w) return;                                    // not the item in the hand now (mid-pair the engine may answer the fists): later
-    int64_t h = mdw_hp(); if (h < 0) return;
-    if (h == g_mdw.L) { g_mdw.owed = 0; return; }                          // the engine's own contact took exactly this point
-    if (g_mdw.L == 0 && (g_ps.role == 1 || g_mdu.pair_on)) return;        // the break waits for the attacker's release (0 mid-clip breaks it in the swing)
-    uint64_t nh = (uint64_t)g_mdw.L; dc_call(SID_SET_WEAPON_HEALTH2, 1, &nh); g_mdw.owed = 0;
-    DULOG("DUEL: wear: %llx health %lld -> %lld (%s)%s", (unsigned long long)g_mdw.w, (long long)h, (long long)g_mdw.L, h > g_mdw.L ? "the duel blow's point the engine never took" : "the engine took more than one point for the blows",
-          g_mdw.L == 0 ? " - the last point: the weapon breaks (wpnbreak.c)" : "");
+
+static void MdwTick(uint64_t now)
+{
+    if (!g_mdw.owed || now < g_mdw.due_ms)
+        return;
+    if (now - g_mdw.last_ms > 6000) {
+        DULOG
+            ("DUEL: wear: %llx not back in the hand within 6 s of the blow - ledger %lld not applied",
+             (unsigned long long) g_mdw.w, (long long) g_mdw.L);
+        g_mdw.owed = 0;
+        return;
+    }
+    if (g_finHealth >= 0 || g_cd_wear_at
+        || (g_otRefundUntil && g_t60 < g_otRefundUntil))
+        return;
+    if (WbHold() && g_mdw.L <= 1) {
+        g_mdw.owed = 0;
+        return;
+    }                           // the break holds the last point until its drop frame     // another health hold runs (finisher / takedown wear / one-tap refund)
+    if (MdwHeld() != g_mdw.w)
+        return;                 // not the item in the hand now (mid-pair the engine may answer the fists): later
+    int64_t h = MdwHp();
+    if (h < 0)
+        return;
+    if (h == g_mdw.L) {
+        g_mdw.owed = 0;
+        return;
+    }                           // the engine's own contact took exactly this point
+    if (g_mdw.L == 0 && (g_ps.role == 1 || g_mdu.pair_on))
+        return;                 // the break waits for the attacker's release (0 mid-clip breaks it in the swing)
+    uint64_t nh = (uint64_t) g_mdw.L;
+    DcCall(SID_SET_WEAPON_HEALTH2, 1, &nh);
+    g_mdw.owed = 0;
+    DULOG("DUEL: wear: %llx health %lld -> %lld (%s)%s",
+          (unsigned long long) g_mdw.w, (long long) h, (long long) g_mdw.L,
+          h >
+          g_mdw.
+          L ? "the duel blow's point the engine never took" :
+          "the engine took more than one point for the blows",
+          g_mdw.L ==
+          0 ? " - the last point: the weapon breaks (wpnbreak.c)" : "");
 }
+
 // the blow's damage through the normal path (directhit_hook: dodge / downed / one-tap rules; its fx lines skip themselves while our pair runs)
-static void mdu_deliver(int s, const char *why) {
-    uint8_t *peer = mdg_peer((uint32_t)s);
-    if (!peer) return;
-    uint64_t w = dc_weapon(); float dmg = w == fnv64("abby-unarmed") ? FIST_DAMAGE : melee_dmg_now();
-    int wset = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N && mdw_set_wears(MDU_MOVES[g_mdu.sw_row].set);
-    if (wset && w == fnv64("abby-unarmed") && g_mdw.sw_w && GetTickCount64() - g_mdw.sw_ms < 3000) {   // (v5-pinfix3 3: dlog u6b97 blows 2-3 - a weapon swing read as the fists mid-pair, 20 instead of 34)
-        int c = melee_class_of(g_mdw.sw_w, NULL);
-        w = g_mdw.sw_w; dmg = c >= 0 ? melee_dmg_w(w) : melee_dmg_now();      // (v5-dmg: the table with the carried melee's upgrade)
-        DULOG("DUEL: u%04x %s swing read as the fists mid-pair: the blow is the weapon's %llx (%.0f)", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, (unsigned long long)w, (double)dmg);
+static void MduDeliver(int s, const char *why)
+{
+    uint8_t *peer = MdgPeer((uint32_t) s);
+    if (!peer)
+        return;
+    uint64_t w = DcWeapon();
+    float dmg = w == FNV64("abby-unarmed") ? FIST_DAMAGE : MeleeDmgNow();
+    int wset = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int) MDU_MOVES_N
+        && MdwSetWears(MDU_MOVES[g_mdu.sw_row].set);
+    if (wset && w == FNV64("abby-unarmed") && g_mdw.sw_w && GetTickCount64() - g_mdw.sw_ms < 3000) {    // (v5-pinfix3 3: dlog u6b97 blows 2-3 - a weapon swing read as the fists mid-pair, 20 instead of 34)
+        int c = MeleeClassOf(g_mdw.sw_w, NULL);
+        w = g_mdw.sw_w;
+        dmg = c >= 0 ? MeleeDmgW(w) : MeleeDmgNow();        // (v5-dmg: the table with the carried melee's upgrade)
+        DULOG
+            ("DUEL: u%04x %s swing read as the fists mid-pair: the blow is the weapon's %llx (%.0f)",
+             g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move,
+             (unsigned long long) w, (double) dmg);
     }
-    if (mdu_dc_swing() && g_mdu.sw_row == g_mdu_dc.row) { DULOG("DUEL: u%04x the dodge counter's blow: %.0f (the weapon's %.0f)", g_mdu.uid, (double)DC_COUNTER_DMG, (double)dmg); dmg = DC_COUNTER_DMG; g_mdu_dc.ms = 0; }
-    if (wset) mdw_blow(why, 400);
-    float nh = !IsBadReadPtr(peer + 0xa5, 4) ? *(float *)(peer + 0xa5) : -1.0f, nh_net = nh;
-    nh = mled47_eff(s, nh);                   // ps47: our blows the net hp does not show yet
-    mled47_sent(s, nh_net, dmg);
-    if (g_send_tramp && nh > 0.0f && nh - dmg <= 1.0f) {   // a would-kill blow through directhit_hook killed the standing victim.
-        uint8_t msg[0x16]; uint64_t ammo = 0;                 // Like the knockdown path: our own type 3 hit, lethal 0 - their recv_hit_hook cuts it to 1 hp and DOWNS them
-        memcpy(msg, &w, 8); memcpy(msg + 8, &ammo, 8); memcpy(msg + 16, &dmg, 4); msg[20] = 0; msg[21] = 0;
-        hr_send_hit(msg, sizeof msg, (uint8_t)s);
-        DULOG("DUEL: u%04x would-kill blow (%.0f on %.0f hp) to slot %d sent as a DOWN hit, lethal 0 (%s)", g_mdu.uid, (double)dmg, (double)nh, s, why);
+    if (MduDcSwing() && g_mdu.sw_row == g_mduDc.row) {
+        DULOG
+            ("DUEL: u%04x the dodge counter's blow: %.0f (the weapon's %.0f)",
+             g_mdu.uid, (double) DC_COUNTER_DMG, (double) dmg);
+        dmg = DC_COUNTER_DMG;
+        g_mduDc.ms = 0;
+    }
+    if (wset)
+        MdwBlow(why, 400);
+    float nh =
+        !IsBadReadPtr(peer + 0xa5, 4) ? *(float *) (peer + 0xa5) : -1.0f,
+        nh_net = nh;
+    nh = Mled47Eff(s, nh);     // ps47: our blows the net hp does not show yet
+    Mled47Sent(s, nh_net, dmg);
+    if (g_sendTramp && nh > 0.0f && nh - dmg <= 1.0f) {        // a would-kill blow through directhit_hook killed the standing victim.
+        uint8_t msg[0x16];
+        uint64_t ammo = 0;      // Like the knockdown path: our own type 3 hit, lethal 0 - their recv_hit_hook cuts it to 1 hp and DOWNS them
+        memcpy(msg, &w, 8);
+        memcpy(msg + 8, &ammo, 8);
+        memcpy(msg + 16, &dmg, 4);
+        msg[20] = 0;
+        msg[21] = 0;
+        HrSendHit(msg, sizeof msg, (uint8_t) s);
+        DULOG
+            ("DUEL: u%04x would-kill blow (%.0f on %.0f hp) to slot %d sent as a DOWN hit, lethal 0 (%s)",
+             g_mdu.uid, (double) dmg, (double) nh, s, why);
     } else {
-    g_mdu.synthing = 1; g_mdmg_authored = 1;      // (v5-dmg: the blow already carries the table's value - directhit_hook's raw conversion leaves it)
-    g_mdg_ruled_blow = 1;                         // ps23: the duel contact ruled this blow - melee_dodge.c mdg_contact_dodged does not rule it again
-    directhit_hook(peer, w, 0, dmg, 0);
-    g_mdg_ruled_blow = 0;
-    g_mdu.synthing = 0; g_mdmg_authored = 0;
+        g_mdu.synthing = 1;
+        g_mdmgAuthored = 1;    // (v5-dmg: the blow already carries the table's value - directhit_hook's raw conversion leaves it)
+        g_mdgRuledBlow = 1;   // ps23: the duel contact ruled this blow - melee_dodge.c mdg_contact_dodged does not rule it again
+        DirecthitHook(peer, w, 0, dmg, 0);
+        g_mdgRuledBlow = 0;
+        g_mdu.synthing = 0;
+        g_mdmgAuthored = 0;
     }
-    ev_hit_note((uint32_t)s);
-    DULOG("DUEL: u%04x damage %.0f (weapon %llx) to slot %d through the normal hit path (%s)", g_mdu.uid, (double)dmg, (unsigned long long)w, s, why);
+    EvHitNote((uint32_t) s);
+    DULOG
+        ("DUEL: u%04x damage %.0f (weapon %llx) to slot %d through the normal hit path (%s)",
+         g_mdu.uid, (double) dmg, (unsigned long long) w, s, why);
 }
+
 // ps46 D1: the damage mdu_deliver books for this blow (the same weapon rules, no side effects)
-static float md46_blow_dmg(void) {
-    uint64_t w = dc_weapon(); float dmg = w == fnv64("abby-unarmed") ? FIST_DAMAGE : melee_dmg_now();
-    int wset = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N && mdw_set_wears(MDU_MOVES[g_mdu.sw_row].set);
-    if (wset && w == fnv64("abby-unarmed") && g_mdw.sw_w && GetTickCount64() - g_mdw.sw_ms < 3000) dmg = melee_class_of(g_mdw.sw_w, NULL) >= 0 ? melee_dmg_w(g_mdw.sw_w) : melee_dmg_now();
-    if (mdu_dc_swing() && g_mdu.sw_row == g_mdu_dc.row) dmg = DC_COUNTER_DMG;
+static float Md46BlowDmg(void)
+{
+    uint64_t w = DcWeapon();
+    float dmg = w == FNV64("abby-unarmed") ? FIST_DAMAGE : MeleeDmgNow();
+    int wset = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int) MDU_MOVES_N
+        && MdwSetWears(MDU_MOVES[g_mdu.sw_row].set);
+    if (wset && w == FNV64("abby-unarmed") && g_mdw.sw_w
+        && GetTickCount64() - g_mdw.sw_ms < 3000)
+        dmg =
+            MeleeClassOf(g_mdw.sw_w,
+                           NULL) >=
+            0 ? MeleeDmgW(g_mdw.sw_w) : MeleeDmgNow();
+    if (MduDcSwing() && g_mdu.sw_row == g_mduDc.row)
+        dmg = DC_COUNTER_DMG;
     return dmg;
 }
+
 // ps46 D1 / D2, at the contact (once per swing), before the lethal branch of mdu_contact
-static int md46_contact_arm(int s) {   // 2 = D1 with no finisher row: the surface plan takes the blow (the caller runs cd_try)
-    if (md46_off() || g_md46.arm_sw == g_mdu.sw_t0) return 0;
+static int Md46ContactArm(int s)
+{                               // 2 = D1 with no finisher row: the surface plan takes the blow (the caller runs cd_try)
+    if (Md46Off() || g_md46.arm_sw == g_mdu.sw_t0)
+        return 0;
     g_md46.arm_sw = g_mdu.sw_t0;
     int d1 = 0;
     if (!g_mdu.sw_lethal) {
-        uint8_t *vp = mdg_peer((uint32_t)s); float nh = vp && !IsBadReadPtr(vp + 0xa5, 4) ? *(float *)(vp + 0xa5) : -1.0f, dmg = md46_blow_dmg();
-        if (!(nh > 0.0f && nh - dmg <= 1.0f)) return 0;
-        d1 = 1; g_mdu.sw_lethal = 1; g_mdu_fin = -1;
-        DULOG("DUEL: ps46 D1 u%04x %s DOWNS slot %d at its contact (%.0f on %.0f hp) - the swing start read it as not lethal: the finisher / surface takedown is decided now (no -hit pair, no T9 back reaction, no plain down)", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, s, (double)dmg, (double)nh);
+        uint8_t *vp = MdgPeer((uint32_t) s);
+        float nh = vp
+            && !IsBadReadPtr(vp + 0xa5,
+                             4) ? *(float *) (vp + 0xa5) : -1.0f, dmg =
+            Md46BlowDmg();
+        if (!(nh > 0.0f && nh - dmg <= 1.0f))
+            return 0;
+        d1 = 1;
+        g_mdu.sw_lethal = 1;
+        g_mduFin = -1;
+        DULOG
+            ("DUEL: ps46 D1 u%04x %s DOWNS slot %d at its contact (%.0f on %.0f hp) - the swing start read it as not lethal: the finisher / surface takedown is decided now (no -hit pair, no T9 back reaction, no plain down)",
+             g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, s, (double) dmg,
+             (double) nh);
     }
-    if (g_mdu_fin >= 0) return 0;
-    mdu_fin_arm(s);
-    if (g_mdu_fin >= 0) { g_md46.late_sw = g_mdu.sw_t0; DULOG("DUEL: ps46 D2 u%04x finisher %s armed at the contact on slot %d (none at the swing start%s) - its SP intro is passed over (the blow already landed)", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, s, d1 ? ": not lethal then" : ""); return 0; }
-    if (d1 && g_cd.plan_ok && g_cd.plan_slot == s) { DULOG("DUEL: ps46 D1 u%04x no finisher row for slot %d - the surface plan %s takes the lethal blow", g_mdu.uid, s, CD_PAIRS[g_cd.plan_pair].name); return 2; }
-    if (d1) { g_mdu.sw_lethal = 0; DULOG("DUEL: ps46 D1 u%04x no finisher row and no surface plan for slot %d - the blow goes the old way (its contact downs them)", g_mdu.uid, s); return 0; }
-    DULOG("DUEL: ps46 D2 u%04x still no finisher row for slot %d at the contact - the surface plan / the engine's down contact (cd_try, contact finisher) as before", g_mdu.uid, s);
+    if (g_mduFin >= 0)
+        return 0;
+    MduFinArm(s);
+    if (g_mduFin >= 0) {
+        g_md46.late_sw = g_mdu.sw_t0;
+        DULOG
+            ("DUEL: ps46 D2 u%04x finisher %s armed at the contact on slot %d (none at the swing start%s) - its SP intro is passed over (the blow already landed)",
+             g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, s,
+             d1 ? ": not lethal then" : "");
+        return 0;
+    }
+    if (d1 && g_cd.plan_ok && g_cd.plan_slot == s) {
+        DULOG
+            ("DUEL: ps46 D1 u%04x no finisher row for slot %d - the surface plan %s takes the lethal blow",
+             g_mdu.uid, s, CD_PAIRS[g_cd.plan_pair].name);
+        return 2;
+    }
+    if (d1) {
+        g_mdu.sw_lethal = 0;
+        DULOG
+            ("DUEL: ps46 D1 u%04x no finisher row and no surface plan for slot %d - the blow goes the old way (its contact downs them)",
+             g_mdu.uid, s);
+        return 0;
+    }
+    DULOG
+        ("DUEL: ps46 D2 u%04x still no finisher row for slot %d at the contact - the surface plan / the engine's down contact (cd_try, contact finisher) as before",
+         g_mdu.uid, s);
     return 0;
 }
+
 // ps46 D3: the newest path gate verdict of row p's -sync pair on slot s (its bad bits, the victim root's farthest reach); -1 = none in the cache
-static int md46_gate_bad(uint32_t s, int p, float *vfar) {
-    const char *a = CD_ATT0(p), *v = CD_VIC0(p); int bi = -1; uint64_t bf = 0;
+static int Md46GateBad(uint32_t s, int p, float *vfar)
+{
+    const char *a = CD_ATT0(p), *v = CD_VIC0(p);
+    int bi = -1;
+    uint64_t bf = 0;
     for (int i = 0; i < 16; i++) {
-        const pg_ent *e = &g_pg[i];
-        if (e->state != 2 || e->slot != s || !e->lie || g_frame - e->done_f > 90 || strncmp(e->att, a, sizeof e->att - 1) || strncmp(e->vic, v, sizeof e->vic - 1)) continue;
-        if (bi < 0 || e->done_f > bf) { bi = i; bf = e->done_f; }
+        const PgEnt *e = &g_pg[i];
+        if (e->state != 2 || e->slot != s || !e->lie
+            || g_frame - e->done_f > 90
+            || strncmp(e->att, a, sizeof e->att - 1)
+            || strncmp(e->vic, v, sizeof e->vic - 1))
+            continue;
+        if (bi < 0 || e->done_f > bf) {
+            bi = i;
+            bf = e->done_f;
+        }
     }
-    if (bi < 0) return -1;
-    *vfar = g_pg[bi].vfar; return g_pg[bi].bad;
+    if (bi < 0)
+        return -1;
+    *vfar = g_pg[bi].vfar;
+    return g_pg[bi].bad;
 }
+
 // ps46 D3: the last resort before the plain down blow - 1 = a finisher started (g_mdu_fin = its row)
-static int md46_last_resort(int s, uint64_t mel) {
-    if (md46_off() || g_md46.d3_sw == g_mdu.sw_t0) return 0;
+static int Md46LastResort(int s, uint64_t mel)
+{
+    if (Md46Off() || g_md46.d3_sw == g_mdu.sw_t0)
+        return 0;
     g_md46.d3_sw = g_mdu.sw_t0;
-    int rows[CD_N]; float gp[CD_N]; int n = cd_fin_all((uint32_t)s, rows, gp, (int)CD_N), best = -1, best_d = -1; float best_room = -9.0f;
-    uint64_t vmk = mdk_vm(s);                                        // ps46k: a qualifying disarm row beats any non-disarm row
-    char l[900]; int o = 0; l[0] = 0;
+    int rows[CD_N];
+    float gp[CD_N];
+    int n = CdFinAll((uint32_t) s, rows, gp, (int) CD_N), best =
+        -1, best_d = -1;
+    float best_room = -9.0f;
+    uint64_t vmk = MdkVm(s);   // ps46k: a qualifying disarm row beats any non-disarm row
+    char l[900];
+    int o = 0;
+    l[0] = 0;
     for (int k = 0; k < n; k++) {
-        int p = rows[k]; float fr = 0.0f, wall = 9.0f, vfar = 0.0f;
-        int fb = mdu_fin_fan_blocked(s, p, &fr, &wall), bad = md46_gate_bad((uint32_t)s, p, &vfar);
+        int p = rows[k];
+        float fr = 0.0f, wall = 9.0f, vfar = 0.0f;
+        int fb = MduFinFanBlocked(s, p, &fr, &wall), bad =
+            Md46GateBad((uint32_t) s, p, &vfar);
         float root = fmaxf(fr - 0.9f, vfar), room = wall - root;
-        int ok = fr > 0.5f && bad > 0 && !(bad & ~2) && room >= MD46_ROOT_CLEAR;
-        if (o < (int)sizeof l - 120) o += snprintf(l + o, sizeof l - (size_t)o, "%s%s gate bits %d, root %.2f m, fan wall %.2f m (%s)%s", k ? ", " : "", CD_PAIRS[p].name + 3, bad, (double)root, (double)wall, fb ? "lying body meets it" : "clear", ok ? " OK" : "");
-        int dk = mdk_is_dis(p, vmk);
-        if (ok && (dk > best_d || (dk == best_d && room > best_room))) { best_room = room; best = p; best_d = dk; }
+        int ok = fr > 0.5f && bad > 0 && !(bad & ~2)
+            && room >= MD46_ROOT_CLEAR;
+        if (o < (int) sizeof l - 120)
+            o += snprintf(l + o, sizeof l - (size_t) o,
+                          "%s%s gate bits %d, root %.2f m, fan wall %.2f m (%s)%s",
+                          k ? ", " : "", CD_PAIRS[p].name + 3, bad,
+                          (double) root, (double) wall,
+                          fb ? "lying body meets it" : "clear",
+                          ok ? " OK" : "");
+        int dk = MdkIsDis(p, vmk);
+        if (ok && (dk > best_d || (dk == best_d && room > best_room))) {
+            best_room = room;
+            best = p;
+            best_d = dk;
+        }
     }
-    DULOG("DUEL: ps46 D3 u%04x every finisher row refused by the room, no wall / half-wall plan for slot %d - rows: %s -> %s", g_mdu.uid, s, o ? l : "none", best >= 0 ? CD_PAIRS[best].name + 3 : "none qualifies (a floor / drop / attacker / exit bit, no cached verdict, or the root path meets the wall): the plain down blow");
-    if (best < 0) return 0;
-    g_cd_fin_gate_keep = best + 1;
-    int r = mdu_fin_try_row(s, mel, best, 0);
-    g_cd_fin_gate_keep = 0;
-    if (r != 1) { DULOG("DUEL: ps46 D3 u%04x %s with its gate kept - cd_upg_go %d (the 'melee upgrade' line above: spot / turn guard / locators): the plain down blow", g_mdu.uid, CD_PAIRS[best].name + 3, r); return 0; }
-    if (g_mdfwu.on && !mdu_fin_same_intro(best)) g_mdfwu.fin = best;
-    g_mdu_fin = best;
-    DULOG("DUEL: ps46 D3 u%04x FINISHER %s on slot %d with its path gate kept: only the victim's path wall blocked it, the root stays %.2f m off the wall (the lying body may touch it)", g_mdu.uid, CD_PAIRS[best].name + 3, s, (double)best_room);
+    DULOG
+        ("DUEL: ps46 D3 u%04x every finisher row refused by the room, no wall / half-wall plan for slot %d - rows: %s -> %s",
+         g_mdu.uid, s, o ? l : "none",
+         best >=
+         0 ? CD_PAIRS[best].name +
+         3 :
+         "none qualifies (a floor / drop / attacker / exit bit, no cached verdict, or the root path meets the wall): the plain down blow");
+    if (best < 0)
+        return 0;
+    g_cdFinGateKeep = best + 1;
+    int r = MduFinTryRow(s, mel, best, 0);
+    g_cdFinGateKeep = 0;
+    if (r != 1) {
+        DULOG
+            ("DUEL: ps46 D3 u%04x %s with its gate kept - cd_upg_go %d (the 'melee upgrade' line above: spot / turn guard / locators): the plain down blow",
+             g_mdu.uid, CD_PAIRS[best].name + 3, r);
+        return 0;
+    }
+    if (g_mdfwu.on && !MduFinSameIntro(best))
+        g_mdfwu.fin = best;
+    g_mduFin = best;
+    DULOG
+        ("DUEL: ps46 D3 u%04x FINISHER %s on slot %d with its path gate kept: only the victim's path wall blocked it, the root stays %.2f m off the wall (the lying body may touch it)",
+         g_mdu.uid, CD_PAIRS[best].name + 3, s, (double) best_room);
     return 1;
 }
+
 // One verdict per exchange (a hit with no reaction): the blow's damage + durability point were booked at
 // the attacker's contact, before the victim had accepted the pair - a busy / refusing victim (ABORT BUSY / REFUSED / NOPLAY, or no answer) took the damage with no reaction.
 // Now the victim's own client is the arbiter: the damage is delivered when its ACK for the pair START arrives (= it plays the hit; one round trip, the same moment its
 // impact frame shows) and not at all when the pair ends first. No ACK-capable peer / no pair = at the contact as before. Opt-out: t2r-duel-verdict-old.txt. Log "DUEL: ... verdict".
-static struct { int on, slot, row; uint32_t ps_uid; uint16_t uid; uint64_t at, deadline; char why[40]; int cue, cset, chz; uint64_t ch, cw; } g_mdv;   // cue: the impact sounds wait for the verdict (C1b)
-static int mdv_off(void) {
-    static int off = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (off < 0 || n - at > 2000) { int o = GetFileAttributesA("t2r-duel-verdict-old.txt") != INVALID_FILE_ATTRIBUTES; if (o != off) DULOG("DUEL: verdict (damage on the victim's ACK) %s", o ? "OFF (t2r-duel-verdict-old.txt): damage at the attacker's contact" : "ON"); at = n; off = o; }
+static struct {
+    int on, slot, row;
+    uint32_t ps_uid;
+    uint16_t uid;
+    uint64_t at, deadline;
+    char why[40];
+    int cue, cset, chz;
+    uint64_t ch, cw;
+} g_mdv;                        // cue: the impact sounds wait for the verdict (C1b)
+static int MdvOff(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        int o =
+            GetFileAttributesA("t2r-duel-verdict-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+        if (o != off)
+            DULOG("DUEL: verdict (damage on the victim's ACK) %s",
+                  o ?
+                  "OFF (t2r-duel-verdict-old.txt): damage at the attacker's contact"
+                  : "ON");
+        at = n;
+        off = o;
+    }
     return off;
 }
-static int hof47_off(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-handoff-floor-ps47-old.txt") != INVALID_FILE_ATTRIBUTES; } return off; }
-static void mdu_deliver(int s, const char *why);
-static void mdu_deliver_hit(int s, const char *why) {
-    if (mdv_off() || !(g_ps.role == 1 && g_ps.ack_cap && g_ps.vic == s && g_ps.kind == PS_CTXDOWN)) { mdu_deliver(s, why); return; }
-    if (g_mdv.on) { DULOG("DUEL: u%04x verdict: the previous blow (%s) was never confirmed by slot %d - no damage", g_mdv.uid, g_mdv.why, g_mdv.slot); g_mdv.on = 0; }
-    g_mdv.on = 1; g_mdv.slot = s; g_mdv.row = g_mdu.sw_row; g_mdv.ps_uid = g_ps.uid; g_mdv.uid = g_mdu.uid; g_mdv.at = GetTickCount64(); g_mdv.deadline = g_mdv.at + 350;
+
+static int Hof47Off(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-handoff-floor-ps47-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return off;
+}
+
+static void MduDeliver(int s, const char *why);
+static void MduDeliverHit(int s, const char *why)
+{
+    if (MdvOff()
+        || !(g_ps.role == 1 && g_ps.ack_cap && g_ps.vic == s
+             && g_ps.kind == PS_CTXDOWN)) {
+        MduDeliver(s, why);
+        return;
+    }
+    if (g_mdv.on) {
+        DULOG
+            ("DUEL: u%04x verdict: the previous blow (%s) was never confirmed by slot %d - no damage",
+             g_mdv.uid, g_mdv.why, g_mdv.slot);
+        g_mdv.on = 0;
+    }
+    g_mdv.on = 1;
+    g_mdv.slot = s;
+    g_mdv.row = g_mdu.sw_row;
+    g_mdv.ps_uid = g_ps.uid;
+    g_mdv.uid = g_mdu.uid;
+    g_mdv.at = GetTickCount64();
+    g_mdv.deadline = g_mdv.at + 350;
     snprintf(g_mdv.why, sizeof g_mdv.why, "%s", why);
 }
-static int mdv_fin_wide(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-duel-fin-verdict-old.txt") != INVALID_FILE_ATTRIBUTES; } return !off; }
-static int g_dtl_trim_hold = 140;   // C2: the attacker's hit-confirm hold the victim's window trim is measured against (a finisher: 260 with mdv_fin_wide)
-static void mdv_tick(uint64_t now) {
-    if (!g_mdv.on) return;
-    int mine = g_ps.role == 1 && g_ps.uid == g_mdv.ps_uid;
-    if (!mine) { DULOG("DUEL: u%04x verdict NO HIT: the pair ended before slot %d confirmed it (see the psync ABORT line) after %d ms - no damage, no durability point", g_mdv.uid, g_mdv.slot, (int)(now - g_mdv.at));
-        if (g_mdv.cue) { g_mdv.cue = 0; if (mdv_off() == 0) { mdg_whiff_whoosh(SID_PLAYER, mdu_blow_weapon(), T2R_MAX_PEERS); DULOG("DUEL: u%04x verdict NO HIT: the impact sounds are dropped, our swing's whiff plays instead", g_mdv.uid); } }
-        g_mdv.on = 0; return; }
-    if (!g_ps.acked && now < g_mdv.deadline) return;
-    int row = g_mdu.sw_row; g_mdu.sw_row = g_mdv.row; g_mdv.on = 0;
-    DULOG("DUEL: u%04x verdict HIT: %s after %d ms - the damage lands with the victim's reaction", g_mdv.uid, g_ps.acked ? "slot confirmed the pair" : "no answer yet (deadline)", (int)(now - g_mdv.at));
-    mdu_deliver(g_mdv.slot, g_mdv.why);
-    g_mdu.sw_row = row;
-    if (g_mdv.cue) { g_mdv.cue = 0; g_mdu_hz = g_mdv.chz; mdu_contact_cues(now, g_mdv.ch, g_mdv.cw, g_mdv.cset, 1); DULOG("DUEL: u%04x verdict HIT: pain / impact sounds now - one event with the damage and the victim's reaction", g_mdv.uid); }
+
+static int MdvFinWide(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-duel-fin-verdict-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return !off;
 }
+
+static int g_dtlTrimHold = 140;       // C2: the attacker's hit-confirm hold the victim's window trim is measured against (a finisher: 260 with mdv_fin_wide)
+static void MdvTick(uint64_t now)
+{
+    if (!g_mdv.on)
+        return;
+    int mine = g_ps.role == 1 && g_ps.uid == g_mdv.ps_uid;
+    if (!mine) {
+        DULOG
+            ("DUEL: u%04x verdict NO HIT: the pair ended before slot %d confirmed it (see the psync ABORT line) after %d ms - no damage, no durability point",
+             g_mdv.uid, g_mdv.slot, (int) (now - g_mdv.at));
+        if (g_mdv.cue) {
+            g_mdv.cue = 0;
+            if (MdvOff() == 0) {
+                MdgWhiffWhoosh(SID_PLAYER, MduBlowWeapon(),
+                                 T2R_MAX_PEERS);
+                DULOG
+                    ("DUEL: u%04x verdict NO HIT: the impact sounds are dropped, our swing's whiff plays instead",
+                     g_mdv.uid);
+            }
+        }
+        g_mdv.on = 0;
+        return;
+    }
+    if (!g_ps.acked && now < g_mdv.deadline)
+        return;
+    int row = g_mdu.sw_row;
+    g_mdu.sw_row = g_mdv.row;
+    g_mdv.on = 0;
+    DULOG
+        ("DUEL: u%04x verdict HIT: %s after %d ms - the damage lands with the victim's reaction",
+         g_mdv.uid,
+         g_ps.
+         acked ? "slot confirmed the pair" : "no answer yet (deadline)",
+         (int) (now - g_mdv.at));
+    MduDeliver(g_mdv.slot, g_mdv.why);
+    g_mdu.sw_row = row;
+    if (g_mdv.cue) {
+        g_mdv.cue = 0;
+        g_mduHz = g_mdv.chz;
+        MduContactCues(now, g_mdv.ch, g_mdv.cw, g_mdv.cset, 1);
+        DULOG
+            ("DUEL: u%04x verdict HIT: pain / impact sounds now - one event with the damage and the victim's reaction",
+             g_mdv.uid);
+    }
+}
+
 // A dodged pair must not cost a durability point: the engine's own contact decrement of a swing that was DODGED (the victim's i-frames / ABORT DODGED
 // decide after the engine's contact) is given back - the swing started with mdw_swing's sw_hp and the dodge verdict says no blow landed. A blow the ledger already charged for this
 // swing (damage delivered before the verdict) is taken back out of the ledger. The break holds the last point (wb_hold) and the lent point (wpnbreak.c) are left alone.
 // t2r-dodge-wear-old.txt = off. Log "DUEL: wear: dodged".
-static void mdw_dodged(const char *why) {
-    if (mdw_off() || GetFileAttributesA("t2r-dodge-wear-old.txt") != INVALID_FILE_ATTRIBUTES) return;
+static void MdwDodged(const char *why)
+{
+    if (MdwOff()
+        || GetFileAttributesA("t2r-dodge-wear-old.txt") !=
+        INVALID_FILE_ATTRIBUTES)
+        return;
     uint64_t now = GetTickCount64();
-    if (!g_mdw.sw_w || now - g_mdw.sw_ms > 3000 || mdw_held() != g_mdw.sw_w || wb_hold() || wb_lent(g_mdw.sw_w) || g_fin_health >= 0 || g_cd_wear_at || (g_ot_refund_until && g_t60 < g_ot_refund_until)) return;
-    if (g_mdw.live && g_mdw.w == g_mdw.sw_w && g_mdw.n > 0 && g_mdw.last_ms >= g_mdw.sw_ms) {      // the ledger charged this swing: take it back
-        g_mdw.L++; g_mdw.n--; g_mdw.owed = 1; g_mdw.due_ms = now + 100;
-        DULOG("DUEL: wear: dodged (%s) - the swing's point is taken back out of the ledger (durability -> %lld)", why, (long long)g_mdw.L);
+    if (!g_mdw.sw_w || now - g_mdw.sw_ms > 3000 || MdwHeld() != g_mdw.sw_w
+        || WbHold() || WbLent(g_mdw.sw_w) || g_finHealth >= 0
+        || g_cd_wear_at || (g_otRefundUntil
+                            && g_t60 < g_otRefundUntil))
+        return;
+    if (g_mdw.live && g_mdw.w == g_mdw.sw_w && g_mdw.n > 0 && g_mdw.last_ms >= g_mdw.sw_ms) {   // the ledger charged this swing: take it back
+        g_mdw.L++;
+        g_mdw.n--;
+        g_mdw.owed = 1;
+        g_mdw.due_ms = now + 100;
+        DULOG
+            ("DUEL: wear: dodged (%s) - the swing's point is taken back out of the ledger (durability -> %lld)",
+             why, (long long) g_mdw.L);
         return;
     }
-    int64_t h = mdw_hp();
+    int64_t h = MdwHp();
     if (h >= 0 && h < g_mdw.sw_hp && g_mdw.sw_hp > 0) {
-        uint64_t nh = (uint64_t)g_mdw.sw_hp; dc_call(SID_SET_WEAPON_HEALTH2, 1, &nh);
-        DULOG("DUEL: wear: dodged (%s) - the engine's contact point is given back: %llx health %lld -> %lld", why, (unsigned long long)g_mdw.sw_w, (long long)h, (long long)g_mdw.sw_hp);
+        uint64_t nh = (uint64_t) g_mdw.sw_hp;
+        DcCall(SID_SET_WEAPON_HEALTH2, 1, &nh);
+        DULOG
+            ("DUEL: wear: dodged (%s) - the engine's contact point is given back: %llx health %lld -> %lld",
+             why, (unsigned long long) g_mdw.sw_w, (long long) h,
+             (long long) g_mdw.sw_hp);
         g_mdw.sw_w = 0;
     }
 }
+
 // ('psync: ABORT (duel dodge) ... move time 507 ms', 'dodge on slot 1 0 ms after its psync release - cut in'):
 // a dodge press never cuts the -hit pair on us before the reaction's EXIT point. SP (re/sp-melee-spec-1110.md 7): a player hit reaction is left by a dodge at
 // 648 / 682 ms, never earlier; it runs to its own end otherwise. The exit = MDU_VIC_DODGE_EXIT_MS of reaction clip time (/ the reaction rate) or the pair's
 // hand-off, whichever is first. A press before it is queued (melee_dodge.c g_mdg_qpress) and fires AT the exit when the attacker's follow-up swing is in flight
 // (the SP dodge out of the reaction), else at the hand-off as before. Fairness: the follow-up's contact is never earlier than exit + round trip + 133 ms (SP's
 // latest successful dodge start before a contact) - see the floor in mdu_contact. t2r-duel-dodge-cut-ps22.txt = the ps22 cut at any time of the pair.
-#define MDU_VIC_DODGE_EXIT_MS 650      // SP measured (2 dodges out of a player hit reaction: 648, 682 ms after the contact)
-#define MDU_VIC_DODGE_LEAD_MS 133      // SP measured (latest dodge start that avoided an attack: 133 ms before its contact)
-#define MDU45_FAIR_SLACK_MS 40         // [TUNING ps45] room inside the follow-up's window after the reaction's exit (a queued press fires AT the exit; a fresh press after it gets 40 ms; ps44 local ~70)
-static int mdu_fair45_old(void) { static int v = -1; static uint64_t at; return md45_flag("t2r-duel-fair-ps45-old.txt", &v, &at); }
-static int mdu_dodge_exit_old(void) { static int v = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (v < 0 || n - at > 3000) { at = n; v = GetFileAttributesA("t2r-duel-dodge-cut-ps22.txt") != INVALID_FILE_ATTRIBUTES; } return v; }
-static int mdu_vic_exit_ms(float end_s) { int ex = (int)((float)MDU_VIC_DODGE_EXIT_MS / mdu_react_rate() + 0.5f), ho = (int)(end_s * 1000.0f + 0.5f); return ho > 0 && ho < ex ? ho : ex; }
-static int mdp_beaten(int slot, uint64_t now);   // melee_duel_parry.c
-static int mdp_clash_void(int slot, uint64_t now);   // melee_duel_parry.c (C4)
-static void mdu_contact(uint64_t now) {
-    const mdu_row_t *m = &MDU_MOVES[g_mdu.sw_row];
-    int s = g_mdu.slot, cd = g_mdu.mv_cd[g_mdu.sw_row];
-    g_mdu.sw_on = 0; g_mdu.sw_done = 1;
-    uint64_t h = puppet_handle((uint32_t)s);
-    float vb[16], mb[16]; const float *vl = h ? puppet_locator(h, vb) : NULL, *me = player_locator(mb);
-    float d = vl && me ? __builtin_sqrtf((vl[0] - me[0]) * (vl[0] - me[0]) + (vl[2] - me[2]) * (vl[2] - me[2])) : -1.0f;
-    const char *no = NULL;
-    int bqr = bq_take_ruling();   // melee_beat.c: 0 = old rules, 1 = HIT (the owner ruled: no local dodge / beaten veto), 2 = DODGED, 3 = beaten (parry / clash / lost trade)
-    if (!mdu_partner_ok(s) || !vl || !me) no = "the partner is gone / down";
-    else if (d > (g_mdu_fin >= 0 ? fmaxf(2.6f, fminf(g_mdu.sw_d0 + 0.3f, MDU_LETHAL_MAX + 0.3f)) : g_mdu.sw_D + 0.6f)) {   // (duel timeline: + the partner's own motion over the latency - its puppet shows where it was)
-        float lim = g_mdu_fin >= 0 ? fmaxf(2.6f, fminf(g_mdu.sw_d0 + 0.3f, MDU_LETHAL_MAX + 0.3f)) : g_mdu.sw_D + 0.6f, rb = dtl_reach_bonus(s);   // (v5-lethal: a far lethal engage's start + 0.3 m)
-        if (d > lim + rb) no = "the partner moved out of reach (a real miss)"; else dtl_note_reach(s, d, lim, rb);
+#define MDU_VIC_DODGE_EXIT_MS 650       // SP measured (2 dodges out of a player hit reaction: 648, 682 ms after the contact)
+#define MDU_VIC_DODGE_LEAD_MS 133       // SP measured (latest dodge start that avoided an attack: 133 ms before its contact)
+#define MDU45_FAIR_SLACK_MS 40  // [TUNING ps45] room inside the follow-up's window after the reaction's exit (a queued press fires AT the exit; a fresh press after it gets 40 ms; ps44 local ~70)
+static int MduFair45Old(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    return Md45Flag("t2r-duel-fair-ps45-old.txt", &v, &at);
+}
+
+static int MduDodgeExitOld(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 3000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-dodge-cut-ps22.txt") !=
+            INVALID_FILE_ATTRIBUTES;
     }
-    else if (bqr == 2 || mdg_slot_immune((uint32_t)s)) no = bqr == 2 ? "beat queue: the owner ruled DODGED" : "the partner is in dodge i-frames (HOOK: dodge beat)";
-    else if (bqr == 3) no = "beat queue: the owner ruled our swing consumed (parry / clash / lost trade)";
-    else if (bqr != 1 && mdp_clash_void(s, now)) no = "clash void: both swings met inside the clash window and no SP clash pair exists for these weapons - no damage either way (C4)";
-    else if (bqr != 1 && mdp_beaten(s, now)) no = "beaten: their near-simultaneous swing started first (clash cooldown: first wins, no trade)";
+    return v;
+}
+
+static int MduVicExitMs(float end_s)
+{
+    int ex =
+        (int) ((float) MDU_VIC_DODGE_EXIT_MS / MduReactRate() + 0.5f),
+        ho = (int) (end_s * 1000.0f + 0.5f);
+    return ho > 0 && ho < ex ? ho : ex;
+}
+
+static int MdpBeaten(int slot, uint64_t now);  // melee_duel_parry.c
+static int MdpClashVoid(int slot, uint64_t now);      // melee_duel_parry.c (C4)
+static void MduContact(uint64_t now)
+{
+    const MduRowT *m = &MDU_MOVES[g_mdu.sw_row];
+    int s = g_mdu.slot, cd = g_mdu.mv_cd[g_mdu.sw_row];
+    g_mdu.sw_on = 0;
+    g_mdu.sw_done = 1;
+    uint64_t h = PuppetHandle((uint32_t) s);
+    float vb[16], mb[16];
+    const float *vl = h ? PuppetLocator(h, vb) : NULL, *me =
+        PlayerLocator(mb);
+    float d = vl
+        && me ? __builtin_sqrtf((vl[0] - me[0]) * (vl[0] - me[0]) +
+                                (vl[2] - me[2]) * (vl[2] - me[2])) : -1.0f;
+    const char *no = NULL;
+    int bqr = BqTakeRuling(); // melee_beat.c: 0 = old rules, 1 = HIT (the owner ruled: no local dodge / beaten veto), 2 = DODGED, 3 = beaten (parry / clash / lost trade)
+    if (!MduPartnerOk(s) || !vl || !me)
+        no = "the partner is gone / down";
+    else if (d > (g_mduFin >= 0 ? fmaxf(2.6f, fminf(g_mdu.sw_d0 + 0.3f, MDU_LETHAL_MAX + 0.3f)) : g_mdu.sw_D + 0.6f)) {        // (duel timeline: + the partner's own motion over the latency - its puppet shows where it was)
+        float lim = g_mduFin >= 0 ? fmaxf(2.6f, fminf(g_mdu.sw_d0 + 0.3f, MDU_LETHAL_MAX + 0.3f)) : g_mdu.sw_D + 0.6f, rb = DtlReachBonus(s);        // (v5-lethal: a far lethal engage's start + 0.3 m)
+        if (d > lim + rb)
+            no = "the partner moved out of reach (a real miss)";
+        else
+            DtlNoteReach(s, d, lim, rb);
+    } else if (bqr == 2 || MdgSlotImmune((uint32_t) s))
+        no = bqr ==
+            2 ? "beat queue: the owner ruled DODGED" :
+            "the partner is in dodge i-frames (HOOK: dodge beat)";
+    else if (bqr == 3)
+        no = "beat queue: the owner ruled our swing consumed (parry / clash / lost trade)";
+    else if (bqr != 1 && MdpClashVoid(s, now))
+        no = "clash void: both swings met inside the clash window and no SP clash pair exists for these weapons - no damage either way (C4)";
+    else if (bqr != 1 && MdpBeaten(s, now))
+        no = "beaten: their near-simultaneous swing started first (clash cooldown: first wins, no trade)";
     // (the enemy took no damage nor stagger but the melee item was consumed): role 3 = OUR copy of a third player's move (an interrogation 10 m away)
     // refused every blow of the duel while the engine contact was already dropped and its durability spent. A bystander copy is not ours: no refusal.
-    else if (g_ps.role && g_ps.role != 3 && !(g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) no = "another paired move runs";
+    else if (g_ps.role && g_ps.role != 3
+             && !(g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))
+        no = "another paired move runs";
     // (4 dodges ruled DODGED with the press reaching us 15-40 ms before the contact - the blow visibly landed, the bodies
     // overlapped, then it was a miss and the attacker got the 650 ms MISS lock): a press that reached us less than MDU_LATE_DODGE_MS before the contact came
     // too late for the dodge to have moved the body out of the blow on any screen - the blow lands (SP: a late dodge is hit). Not for an owner ruling (beat queue).
-    if (no && bqr != 2 && vl && me && mdg_slot_immune((uint32_t)s) && GetFileAttributesA("t2r-dodge-late-ok.txt") == INVALID_FILE_ATTRIBUTES) {
-        uint64_t rcv = g_mdg.imm_until[s] > MD_IFRAME_MS + MD_PRESS_MARGIN_MS ? g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) : now;
-        int lim45 = md45_win_old() ? MDU_LATE_DODGE_MS : md45_att_lead(psync_oneway(s));   // SP's lead on the dodger's screen minus the round trip (melee_dodge.c md45_att_lead)
-        if (!md45_win_old() && !md54_off()) lim45 = 0;   // ps54: a press that reached us before the contact dodges (the dodger's window closed 64 ms before its contact showed)
-        if ((int64_t)(now - rcv) < lim45) {
-            DULOG("DUEL: u%04x dodge ruling: slot %d's press reached us only %d ms before our contact (< %d ms%s, one-way %.0f) - TOO LATE, the blow lands", g_mdu.uid, s, (int)(int64_t)(now - rcv), lim45, lim45 == MDU_LATE_DODGE_MS && md45_win_old() ? "" : " ps45", (double)psync_oneway(s));
-            g_mdg.imm_until[s] = 0; no = NULL;
-            mdu_send(MDUO_LATE, NULL, 0);   // (the victim's own estimate said 'in time' and dropped the blow - one ruling, the attacker's)
-            dtl_dodge_cut((uint32_t)s);     // the dodge replica on the puppet started at the press: the blow lands, the hit reaction takes the body
-            if (bqr == 3) no = "beat queue: the owner ruled our swing consumed (parry / clash / lost trade)";
-            else if (bqr != 1 && mdp_clash_void(s, now)) no = "clash void: both swings met inside the clash window and no SP clash pair exists for these weapons - no damage either way (C4)";
-            else if (bqr != 1 && mdp_beaten(s, now)) no = "beaten: their near-simultaneous swing started first (clash cooldown: first wins, no trade)";
-            else if (g_ps.role && g_ps.role != 3 && !(g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) no = "another paired move runs";
+    if (no && bqr != 2 && vl && me && MdgSlotImmune((uint32_t) s)
+        && GetFileAttributesA("t2r-dodge-late-ok.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        uint64_t rcv =
+            g_mdg.imm_until[s] >
+            MD_IFRAME_MS + MD_PRESS_MARGIN_MS ? g_mdg.imm_until[s] -
+            (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) : now;
+        int lim45 = Md45WinOld()? MDU_LATE_DODGE_MS : Md45AttLead(PsyncOneway(s)); // SP's lead on the dodger's screen minus the round trip (melee_dodge.c md45_att_lead)
+        if (!Md45WinOld() && !Md54Off())
+            lim45 = 0;          // ps54: a press that reached us before the contact dodges (the dodger's window closed 64 ms before its contact showed)
+        if ((int64_t) (now - rcv) < lim45) {
+            DULOG
+                ("DUEL: u%04x dodge ruling: slot %d's press reached us only %d ms before our contact (< %d ms%s, one-way %.0f) - TOO LATE, the blow lands",
+                 g_mdu.uid, s, (int) (int64_t) (now - rcv), lim45,
+                 lim45 == MDU_LATE_DODGE_MS
+                 && Md45WinOld()? "" : " ps45",
+                 (double) PsyncOneway(s));
+            g_mdg.imm_until[s] = 0;
+            no = NULL;
+            MduSend(MDUO_LATE, NULL, 0);       // (the victim's own estimate said 'in time' and dropped the blow - one ruling, the attacker's)
+            DtlDodgeCut((uint32_t) s);        // the dodge replica on the puppet started at the press: the blow lands, the hit reaction takes the body
+            if (bqr == 3)
+                no = "beat queue: the owner ruled our swing consumed (parry / clash / lost trade)";
+            else if (bqr != 1 && MdpClashVoid(s, now))
+                no = "clash void: both swings met inside the clash window and no SP clash pair exists for these weapons - no damage either way (C4)";
+            else if (bqr != 1 && MdpBeaten(s, now))
+                no = "beaten: their near-simultaneous swing started first (clash cooldown: first wins, no trade)";
+            else if (g_ps.role && g_ps.role != 3
+                     && !(g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))
+                no = "another paired move runs";
         }
     }
-    if (no && vl && me && (bqr == 2 || mdg_slot_immune((uint32_t)s))) {   // beat 2: the dodge verdict, decided here at once (beat queue: by the owner)
-        uint64_t rcv = g_mdg.imm_until[s] > MD_IFRAME_MS + MD_PRESS_MARGIN_MS ? g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) : now;          // when the press message reached us
-        float ow = psync_oneway(s);
+    if (no && vl && me && (bqr == 2 || MdgSlotImmune((uint32_t) s))) {        // beat 2: the dodge verdict, decided here at once (beat queue: by the owner)
+        uint64_t rcv = g_mdg.imm_until[s] > MD_IFRAME_MS + MD_PRESS_MARGIN_MS ? g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) : now; // when the press message reached us
+        float ow = PsyncOneway(s);
         g_mdu.n_dodged++;
-        DULOG("DUEL: u%04x dodge ruling: slot %d's press reached us %d ms before our contact (sent ~%d ms before it; one-way %.0f ms; limit %d ms%s) - DODGED, the swing is a miss; the dodger's own screen would also have judged a press up to its pair-START arrival", g_mdu.uid, s,
-              (int)(int64_t)(now - rcv), (int)((int64_t)(now - rcv) + (int64_t)ow), (double)ow, md45_win_old() ? MDU_LATE_DODGE_MS : md45_att_lead(ow), md45_win_old() ? "" : " ps45");
-        mdg_attacker_missed("duel contact on a dodger in i-frames", s);
-        mdg_send_res_atk((uint32_t)s);
+        DULOG
+            ("DUEL: u%04x dodge ruling: slot %d's press reached us %d ms before our contact (sent ~%d ms before it; one-way %.0f ms; limit %d ms%s) - DODGED, the swing is a miss; the dodger's own screen would also have judged a press up to its pair-START arrival",
+             g_mdu.uid, s, (int) (int64_t) (now - rcv),
+             (int) ((int64_t) (now - rcv) + (int64_t) ow), (double) ow,
+             Md45WinOld()? MDU_LATE_DODGE_MS : Md45AttLead(ow),
+             Md45WinOld()? "" : " ps45");
+        MdgAttackerMissed("duel contact on a dodger in i-frames", s);
+        MdgSendResAtk((uint32_t) s);
     }
-    if (no) { DULOG("DUEL: u%04x %s - no contact at %d ms: %s (dist %.2f)", g_mdu.uid, m->move, (int)(now - g_mdu.sw_t0), no, (double)d); mdu_fw_end(no, 1); return; }
-    if (md46_contact_arm(s) == 2) {   // ps46 D1 / D2: a blow that downs here has its finisher / surface takedown decided now (2 = D1, no row: the surface plan)
+    if (no) {
+        DULOG("DUEL: u%04x %s - no contact at %d ms: %s (dist %.2f)",
+              g_mdu.uid, m->move, (int) (now - g_mdu.sw_t0), no,
+              (double) d);
+        MduFwEnd(no, 1);
+        return;
+    }
+    if (Md46ContactArm(s) == 2) {     // ps46 D1 / D2: a blow that downs here has its finisher / surface takedown decided now (2 = D1, no row: the surface plan)
         if (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) {
-            if (g_ps.role == 1) psync_abort("duel finisher at a surface (ps46 D1)", 1);
-            if (cd_try(s)) {
-                g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until); g_mdu.hit_ms = now; g_mdu.n_blows++;
-                DULOG("DUEL: u%04x FINISHER at a surface (ps46 D1): %s on slot %d - the blow downs at its contact", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
+            if (g_ps.role == 1)
+                PsyncAbort("duel finisher at a surface (ps46 D1)", 1);
+            if (CdTry(s)) {
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                PadinjBlock("melee-attack", g_mdu.lock_until);
+                g_mdu.hit_ms = now;
+                g_mdu.n_blows++;
+                DULOG
+                    ("DUEL: u%04x FINISHER at a surface (ps46 D1): %s on slot %d - the blow downs at its contact",
+                     g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
                 return;
             }
         }
         g_mdu.sw_lethal = 0;
-        DULOG("DUEL: ps46 D1 u%04x the surface plan did not start on slot %d (cd_try refused / another paired move) - the blow goes the old way", g_mdu.uid, s);
+        DULOG
+            ("DUEL: ps46 D1 u%04x the surface plan did not start on slot %d (cd_try refused / another paired move) - the blow goes the old way",
+             g_mdu.uid, s);
     }
-    if (g_mdu.sw_lethal && g_mdu_fin >= 0) {          // the SP finisher takes the blow: the pair downs the victim at its hand-off (cd_victim_begin), no engine contact
-        uint64_t w = mdu_blow_weapon(), mel = w == fnv64("abby-unarmed") ? 0 : w;
-        if (g_ps.role == 1 && !mdu_in_pair() && g_ps.kind == PS_CTXDOWN && g_ps.vic == s && !cd_mf_row(cd_pair_of_move(g_ps.move))) {   // v5-lethal: cd_swing_start's surface
-            g_mdu_fin = -1; g_mdu.hit_ms = now; g_mdu.n_blows++; g_mdu.next_move = 0;                                                       // takedown replaced this swing (same frame)
-            DULOG("DUEL: u%04x the lethal swing on slot %d was replaced by the surface takedown %s (ctxdown) - no SP finisher on top", g_mdu.uid, s, CD_PAIRS[cd_pair_of_move(g_ps.move)].name);
-            return; }
-        if (!mdu_in_pair() && PS_OURS && g_mdu_fin_try++ < 40) { g_mdu.sw_on = 1; g_mdu.sw_done = 0; return; }   // cutting the 4th hit's pair (ABORT) broke it - wait for its natural end (<= ~0.3 s here), then the finisher
+    if (g_mdu.sw_lethal && g_mduFin >= 0) {    // the SP finisher takes the blow: the pair downs the victim at its hand-off (cd_victim_begin), no engine contact
+        uint64_t w = MduBlowWeapon(), mel =
+            w == FNV64("abby-unarmed") ? 0 : w;
+        if (g_ps.role == 1 && !MduInPair() && g_ps.kind == PS_CTXDOWN && g_ps.vic == s && !CdMfRow(CdPairOfMove(g_ps.move))) {   // v5-lethal: cd_swing_start's surface
+            g_mduFin = -1;
+            g_mdu.hit_ms = now;
+            g_mdu.n_blows++;
+            g_mdu.next_move = 0;        // takedown replaced this swing (same frame)
+            DULOG
+                ("DUEL: u%04x the lethal swing on slot %d was replaced by the surface takedown %s (ctxdown) - no SP finisher on top",
+                 g_mdu.uid, s, CD_PAIRS[CdPairOfMove(g_ps.move)].name);
+            return;
+        }
+        if (!MduInPair() && PS_OURS && g_mdu_fin_try++ < 40) {
+            g_mdu.sw_on = 1;
+            g_mdu.sw_done = 0;
+            return;
+        }                       // cutting the 4th hit's pair (ABORT) broke it - wait for its natural end (<= ~0.3 s here), then the finisher
         // (strikes did not initiate a pin although the victim was right in front of a car): the lethal swing armed its open-ground
         // finisher at the swing start ([43109], car 1.88 m behind = past SP's 1.5 m), the victim recoiled 0.4 m onto the car, ctxdown's wall plan became ready at
         // [43136] one frame BEFORE this contact - and the open finisher still won ([43137] neck-slice in the open, the pin never played). SP finishes a victim
         // that stands at a surface with the surface's own takedown (the open-ground finishers are the fallback, as the code below already does when they are refused).
-        if (g_cd.plan_ok && g_cd.plan_slot == s && (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) && GetFileAttributesA("t2r-duel-fin-open-first.txt") == INVALID_FILE_ATTRIBUTES
-            && !(g_mdfwu.on && mdu_fwstrict_on())) {   // a running windup's finisher is tried first (its own intro already played)
-            if (g_ps.role == 1) psync_abort("duel finisher at a surface", 1);
-            if (cd_try(s)) {
-                mdu_fw_end("the surface takedown takes the lethal blow", 1);
-                g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until); g_mdu.hit_ms = now; g_mdu.n_blows++;
-                DULOG("DUEL: u%04x FINISHER at a surface FIRST: %s on slot %d (plan ready at the lethal contact; the armed open-ground %s dropped)", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s, CD_PAIRS[g_mdu_fin].name + 3);
-                g_mdu_fin = -1; return;
+        if (g_cd.plan_ok && g_cd.plan_slot == s && (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) && GetFileAttributesA("t2r-duel-fin-open-first.txt") == INVALID_FILE_ATTRIBUTES && !(g_mdfwu.on && MduFwstrictOn())) {        // a running windup's finisher is tried first (its own intro already played)
+            if (g_ps.role == 1)
+                PsyncAbort("duel finisher at a surface", 1);
+            if (CdTry(s)) {
+                MduFwEnd("the surface takedown takes the lethal blow",
+                           1);
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                PadinjBlock("melee-attack", g_mdu.lock_until);
+                g_mdu.hit_ms = now;
+                g_mdu.n_blows++;
+                DULOG
+                    ("DUEL: u%04x FINISHER at a surface FIRST: %s on slot %d (plan ready at the lethal contact; the armed open-ground %s dropped)",
+                     g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s,
+                     CD_PAIRS[g_mduFin].name + 3);
+                g_mduFin = -1;
+                return;
             }
-            DULOG("DUEL: u%04x surface plan %s was ready at the lethal contact but cd_try refused it - the open-ground finisher", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name);
+            DULOG
+                ("DUEL: u%04x surface plan %s was ready at the lethal contact but cd_try refused it - the open-ground finisher",
+                 g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name);
         }
         int r = 0;
-        if (g_mwc44.wait && g_mwc44.sw == g_mdu.sw_t0) goto wc44;      // ps44 T10: the forced wall scan is running for this blow (the rows were all refused already)
-        g_cd_fin_gate_keep = mfg_keep(s, g_mdu_fin) ? g_mdu_fin + 1 : 0;   // ps41 gate first (see mfg_keep)
-        {   int sk46 = g_cd_fin_skip_intro, wu46 = g_cd_fin_windup; if (md46_late()) g_cd_fin_skip_intro = g_cd_fin_windup = 1;   // ps46 D2: armed at the contact - the intro is passed over
-            r = cd_upg_go((uint32_t)s, mel, 0, g_mdu_fin);
-            g_cd_fin_skip_intro = sk46; g_cd_fin_windup = wu46; }
-        g_cd_fin_gate_keep = 0;
-        if (r == 2 && g_mdu_fin_try++ < 12) { g_mdu.sw_on = 1; g_mdu.sw_done = 0; return; }       // the path gate has not answered yet: next frame
+        if (g_mwc44.wait && g_mwc44.sw == g_mdu.sw_t0)
+            goto wc44;          // ps44 T10: the forced wall scan is running for this blow (the rows were all refused already)
+        g_cdFinGateKeep = MfgKeep(s, g_mduFin) ? g_mduFin + 1 : 0;        // ps41 gate first (see mfg_keep)
+        {
+            int sk46 = g_cdFinSkipIntro, wu46 = g_cdFinWindup;
+            if (Md46Late())
+                g_cdFinSkipIntro = g_cdFinWindup = 1;      // ps46 D2: armed at the contact - the intro is passed over
+            r = CdUpgGo((uint32_t) s, mel, 0, g_mduFin);
+            g_cdFinSkipIntro = sk46;
+            g_cdFinWindup = wu46;
+        }
+        g_cdFinGateKeep = 0;
+        if (r == 2 && g_mdu_fin_try++ < 12) {
+            g_mdu.sw_on = 1;
+            g_mdu.sw_done = 0;
+            return;
+        }                       // the path gate has not answered yet: next frame
         if (r == 1) {
-            g_mdu.pair_on = 1; g_mdu.pair_role = 1; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = g_mdu_fin; g_mdu.pair_ms = now; g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-            g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until);
-            mdu_fw_hit(now);
-            if (mdw_set_wears(m->set)) mdw_blow("finisher blow", 400);   // the finisher's blow cost no durability (mdw_blow was only on the plain / lethal-engine paths) - 1 per blow; the last point breaks after the clip (wb_hold)
-            DULOG("DUEL: u%04x FINISHER %s on slot %d at %d ms (dist %.2f m, swing %s): %s on us (%s) + %s on them, the victim is DOWN at the hand-off", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, s, (int)(now - g_mdu.sw_t0), (double)d,
-                  MDU_MOVES[g_mdu.sw_row].move, CD_ATT0(g_mdu_fin), CD_PAIRS[g_mdu_fin].nseg > 1 ? "SP intro = the windup, then the -sync pair" : "the -sync pair at once", CD_PAIRS[g_mdu_fin].seg[CD_PAIRS[g_mdu_fin].nseg - 1].vic);
+            g_mdu.pair_on = 1;
+            g_mdu.pair_role = 1;
+            g_mdu.ps_uid = g_ps.uid;
+            g_mdu.pair_row = g_mduFin;
+            g_mdu.pair_ms = now;
+            g_mdu.hit_ms = now;
+            g_mdu.act_ms = now;
+            g_mdu.n_blows++;
+            g_mdu.next_move = 0;
+            g_mdu.lock_until = now + MDU_GAP4_MS;
+            PadinjBlock("melee-attack", g_mdu.lock_until);
+            MduFwHit(now);
+            if (MdwSetWears(m->set))
+                MdwBlow("finisher blow", 400); // the finisher's blow cost no durability (mdw_blow was only on the plain / lethal-engine paths) - 1 per blow; the last point breaks after the clip (wb_hold)
+            DULOG
+                ("DUEL: u%04x FINISHER %s on slot %d at %d ms (dist %.2f m, swing %s): %s on us (%s) + %s on them, the victim is DOWN at the hand-off",
+                 g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, s,
+                 (int) (now - g_mdu.sw_t0), (double) d,
+                 MDU_MOVES[g_mdu.sw_row].move, CD_ATT0(g_mduFin),
+                 CD_PAIRS[g_mduFin].nseg >
+                 1 ? "SP intro = the windup, then the -sync pair" :
+                 "the -sync pair at once",
+                 CD_PAIRS[g_mduFin].seg[CD_PAIRS[g_mduFin].nseg -
+                                         1].vic);
             return;
         }
-        if (!mdu_fin_chain_off()) {   // the fallback chain (mdu_fin_chain_build) - every other row of the weapon, each gated against the room
-            int first = g_mdu_fin, diff = 0;
-            mdu_fin_chain_build(s, mel, first);
+        if (!MduFinChainOff()) {     // the fallback chain (mdu_fin_chain_build) - every other row of the weapon, each gated against the room
+            int first = g_mduFin, diff = 0;
+            MduFinChainBuild(s, mel, first);
             while (g_mfc.i < g_mfc.n) {
-                int nx = g_mfc.c[g_mfc.i], r2 = mdu_fin_try_row(s, mel, nx, 0);
-                if (r2 == 2 && g_mfc.wait++ < 8) { g_mdu.sw_on = 1; g_mdu.sw_done = 0; return; }   // its gate answers next frame
-                if (r2 == 1) { diff = !mdu_fin_same_intro(nx); g_mdu_fin = nx; r = 1; break; }
-                DULOG("DUEL: u%04x fallback finisher %d/%d %s refused (%s)", g_mdu.uid, g_mfc.i + 1, g_mfc.n, CD_PAIRS[nx].name + 3,
-                      r2 == 2 ? "its path gate gave no answer in 8 frames" : "cd_upg_go 0: the reason is the 'melee upgrade' line just above - path gate / spot guard / pair turn");
-                g_mfc.i++; g_mfc.wait = 0;
+                int nx = g_mfc.c[g_mfc.i], r2 =
+                    MduFinTryRow(s, mel, nx, 0);
+                if (r2 == 2 && g_mfc.wait++ < 8) {
+                    g_mdu.sw_on = 1;
+                    g_mdu.sw_done = 0;
+                    return;
+                }               // its gate answers next frame
+                if (r2 == 1) {
+                    diff = !MduFinSameIntro(nx);
+                    g_mduFin = nx;
+                    r = 1;
+                    break;
+                }
+                DULOG
+                    ("DUEL: u%04x fallback finisher %d/%d %s refused (%s)",
+                     g_mdu.uid, g_mfc.i + 1, g_mfc.n,
+                     CD_PAIRS[nx].name + 3,
+                     r2 ==
+                     2 ? "its path gate gave no answer in 8 frames" :
+                     "cd_upg_go 0: the reason is the 'melee upgrade' line just above - path gate / spot guard / pair turn");
+                g_mfc.i++;
+                g_mfc.wait = 0;
             }
             // (finishers always play in SP: every row BLOCKED by crates 0.6-1.3 m behind the
             // victim, the surface takedown rejected the same crates as clutter - the plain down blow): no row fits the room and no surface takedown is planned = the rows
             // whose only problem is a wall (floors fine, room >= CD49_ROOM_M for the victim) play anyway, the travel clamp holding the victim at the wall
             // (paired.c 'pair wall stop'). t2r-fin-force-ps49-old.txt = the plain down blow.
-            if (r != 1 && !(g_cd.plan_ok && g_cd.plan_slot == s) && !cd49_off()) {
-                g_cd49_force = 1;
+            if (r != 1 && !(g_cd.plan_ok && g_cd.plan_slot == s)
+                && !Cd49Off()) {
+                g_cd49Force = 1;
                 for (int k = -1; k < g_mfc.n && r != 1; k++) {
                     int nx = k < 0 ? first : g_mfc.c[k];
-                    if (nx < 0 || (k >= 0 && nx == first)) continue;
-                    int r2 = mdu_fin_try_row(s, mel, nx, 0);
-                    if (r2 == 1) { diff = !mdu_fin_same_intro(nx); g_mdu_fin = nx; r = 1; g_mfc.i = k < 0 ? 0 : k;
-                        DULOG("DUEL: u%04x ps49 FORCED finisher %s on slot %d - every row was refused by the room; this one meets a wall only: it plays, the victim held at the wall", g_mdu.uid, CD_PAIRS[nx].name + 3, s); }
+                    if (nx < 0 || (k >= 0 && nx == first))
+                        continue;
+                    int r2 = MduFinTryRow(s, mel, nx, 0);
+                    if (r2 == 1) {
+                        diff = !MduFinSameIntro(nx);
+                        g_mduFin = nx;
+                        r = 1;
+                        g_mfc.i = k < 0 ? 0 : k;
+                        DULOG
+                            ("DUEL: u%04x ps49 FORCED finisher %s on slot %d - every row was refused by the room; this one meets a wall only: it plays, the victim held at the wall",
+                             g_mdu.uid, CD_PAIRS[nx].name + 3, s);
+                    }
                 }
-                g_cd49_force = 0;
-                if (r != 1) DULOG("DUEL: u%04x ps49 no finisher forced - every row has a floor / drop problem or under %.2f m of room for the victim", g_mdu.uid, (double)CD49_ROOM_M);
+                g_cd49Force = 0;
+                if (r != 1)
+                    DULOG
+                        ("DUEL: u%04x ps49 no finisher forced - every row has a floor / drop problem or under %.2f m of room for the victim",
+                         g_mdu.uid, (double) CD49_ROOM_M);
             }
             if (r == 1) {
-                if (diff) { DULOG("DUEL: u%04x fallback finisher %s plays its own SP intro from frame 0 (the windup's %s intro had no row that fits the room)", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, CD_ATT0(first)); g_mdfwu.fin = g_mdu_fin; }
-                g_mdu.pair_on = 1; g_mdu.pair_role = 1; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = g_mdu_fin; g_mdu.pair_ms = now; g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-                g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until);
-                mdu_fw_hit(now);
-                if (mdw_set_wears(m->set)) mdw_blow("finisher blow (fallback chain)", 400);
-                DULOG("DUEL: u%04x FINISHER %s on slot %d (fallback %d of %d: %s was refused by the room)", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, s, g_mfc.i + 1, g_mfc.n, CD_PAIRS[first].name + 3);
+                if (diff) {
+                    DULOG
+                        ("DUEL: u%04x fallback finisher %s plays its own SP intro from frame 0 (the windup's %s intro had no row that fits the room)",
+                         g_mdu.uid, CD_PAIRS[g_mduFin].name + 3,
+                         CD_ATT0(first));
+                    g_mdfwu.fin = g_mduFin;
+                }
+                g_mdu.pair_on = 1;
+                g_mdu.pair_role = 1;
+                g_mdu.ps_uid = g_ps.uid;
+                g_mdu.pair_row = g_mduFin;
+                g_mdu.pair_ms = now;
+                g_mdu.hit_ms = now;
+                g_mdu.act_ms = now;
+                g_mdu.n_blows++;
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                PadinjBlock("melee-attack", g_mdu.lock_until);
+                MduFwHit(now);
+                if (MdwSetWears(m->set))
+                    MdwBlow("finisher blow (fallback chain)", 400);
+                DULOG
+                    ("DUEL: u%04x FINISHER %s on slot %d (fallback %d of %d: %s was refused by the room)",
+                     g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, s,
+                     g_mfc.i + 1, g_mfc.n, CD_PAIRS[first].name + 3);
                 return;
             }
-            DULOG("DUEL: u%04x finisher fallback chain: none of the %d other row(s) fits the room - the surface takedown next (plan %s)", g_mdu.uid, g_mfc.n,
-                  g_cd.plan_ok && g_cd.plan_slot == s ? CD_PAIRS[g_cd.plan_pair].name : "none: ctxdown saw no wall / cover face at this victim");
-        } else
-        {   // (bat: the first pick's path was blocked by the wall behind the victim - a plain down blow, no finisher): the other loaded finishers of the set first
-            static int alt; static uint64_t alt_sw; if (alt_sw != g_mdu.sw_t0) { alt_sw = g_mdu.sw_t0; alt = 0; }
-            int first = g_mdu_fin; char why[240];
-            while (alt < 6) { alt++; int nx = cd_fin_pick((uint32_t)s, MDU_MOVES[g_mdu.sw_row].move, alt, why, sizeof why); if (nx < 0 || nx == first) break;
+            DULOG
+                ("DUEL: u%04x finisher fallback chain: none of the %d other row(s) fits the room - the surface takedown next (plan %s)",
+                 g_mdu.uid, g_mfc.n, g_cd.plan_ok
+                 && g_cd.plan_slot ==
+                 s ? CD_PAIRS[g_cd.plan_pair].
+                 name :
+                 "none: ctxdown saw no wall / cover face at this victim");
+        } else {                // (bat: the first pick's path was blocked by the wall behind the victim - a plain down blow, no finisher): the other loaded finishers of the set first
+            static int alt;
+            static uint64_t alt_sw;
+            if (alt_sw != g_mdu.sw_t0) {
+                alt_sw = g_mdu.sw_t0;
+                alt = 0;
+            }
+            int first = g_mduFin;
+            char why[240];
+            while (alt < 6) {
+                alt++;
+                int nx =
+                    CdFinPick((uint32_t) s, MDU_MOVES[g_mdu.sw_row].move,
+                                alt, why, sizeof why);
+                if (nx < 0 || nx == first)
+                    break;
                 // (the second half of a finisher was a punch when the first half was the high kick, A [96345]): the windup's SP intro has already played on us -
                 // only a finisher with THE SAME intro may follow it (kick intro -> kick main); a different one's -sync pair is a mismatched second half. None -> the plain down blow.
-                if (g_mdfwu.on && g_mdfwu.fin >= 0 && strcmp(CD_ATT0(nx), CD_ATT0(g_mdfwu.fin))) { DULOG("DUEL: u%04x alternative finisher %s skipped - its intro %s is not the windup's %s", g_mdu.uid, CD_PAIRS[nx].name + 3, CD_ATT0(nx), CD_ATT0(g_mdfwu.fin)); continue; }
-                int r2 = cd_upg_go((uint32_t)s, mel, 0, nx);
-                if (r2 == 2) { g_mdu_fin = nx; g_mdu_fin_try = 0; g_mdu.sw_on = 1; g_mdu.sw_done = 0; return; }
-                if (r2 == 1) { g_mdu_fin = nx; r = 1; break; } }
+                if (g_mdfwu.on && g_mdfwu.fin >= 0
+                    && strcmp(CD_ATT0(nx), CD_ATT0(g_mdfwu.fin))) {
+                    DULOG
+                        ("DUEL: u%04x alternative finisher %s skipped - its intro %s is not the windup's %s",
+                         g_mdu.uid, CD_PAIRS[nx].name + 3, CD_ATT0(nx),
+                         CD_ATT0(g_mdfwu.fin));
+                    continue;
+                }
+                int r2 = CdUpgGo((uint32_t) s, mel, 0, nx);
+                if (r2 == 2) {
+                    g_mduFin = nx;
+                    g_mdu_fin_try = 0;
+                    g_mdu.sw_on = 1;
+                    g_mdu.sw_done = 0;
+                    return;
+                }
+                if (r2 == 1) {
+                    g_mduFin = nx;
+                    r = 1;
+                    break;
+                }
+            }
             if (r == 1) {
-                g_mdu.pair_on = 1; g_mdu.pair_role = 1; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = g_mdu_fin; g_mdu.pair_ms = now; g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-                g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until);
-                mdu_fw_hit(now);   // (v5-finwind: another finisher's -sync pair after our intro - its pull covers the spot difference)
-                if (mdw_set_wears(m->set)) mdw_blow("finisher blow (alternative)", 400);
-                DULOG("DUEL: u%04x FINISHER %s on slot %d (an alternative: %s was refused): %s", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, s, CD_PAIRS[first].name + 3, why);
+                g_mdu.pair_on = 1;
+                g_mdu.pair_role = 1;
+                g_mdu.ps_uid = g_ps.uid;
+                g_mdu.pair_row = g_mduFin;
+                g_mdu.pair_ms = now;
+                g_mdu.hit_ms = now;
+                g_mdu.act_ms = now;
+                g_mdu.n_blows++;
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                PadinjBlock("melee-attack", g_mdu.lock_until);
+                MduFwHit(now);        // (v5-finwind: another finisher's -sync pair after our intro - its pull covers the spot difference)
+                if (MdwSetWears(m->set))
+                    MdwBlow("finisher blow (alternative)", 400);
+                DULOG
+                    ("DUEL: u%04x FINISHER %s on slot %d (an alternative: %s was refused): %s",
+                     g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, s,
+                     CD_PAIRS[first].name + 3, why);
                 return;
             }
         }
         // Finishers were missing where they belong: next to a wall / low cover every open-ground mf- finisher is refused by the
         // path gate (the surface behind the victim) - the victim went down to a plain punch after each pin. SP finishes a victim at a surface with the surface's own
         // takedown: ctxdown's current plan for this victim (cd_try re-checks the bodies) before the plain down blow.
-    wc44:;
+      wc44:;
         // (every open finisher row refused by the room -> wall / half-wall finishers, as SP): ctxdown had no plan for this victim, so its
         // wall / half-wall scan is forced NOW on this victim (cd_force_scan44: every frame, this slot) for up to MDU_WC44_F frames; a plan = the surface takedown below
         // (also after a windup: SP finishes a victim at a surface with the surface's takedown). None = the old path (plain down blow) + a log line.
         // t2r-fin-walled-ctx-old.txt = old (re-read every 2 s).
-#define MDU_WC44_F 12      // [TUNING ps44] frames the lethal contact waits for the forced scan (a scan + its spot ray resolve in 2-3 frames; 12 = several cone directions)
-        {   static int off44 = -1; static uint64_t at44; uint64_t n44 = GetTickCount64();
-            if (off44 < 0 || n44 - at44 > 2000) { at44 = n44; off44 = GetFileAttributesA("t2r-fin-walled-ctx-old.txt") != INVALID_FILE_ATTRIBUTES; }
+#define MDU_WC44_F 12           // [TUNING ps44] frames the lethal contact waits for the forced scan (a scan + its spot ray resolve in 2-3 frames; 12 = several cone directions)
+        {
+            static int off44 = -1;
+            static uint64_t at44;
+            uint64_t n44 = GetTickCount64();
+            if (off44 < 0 || n44 - at44 > 2000) {
+                at44 = n44;
+                off44 =
+                    GetFileAttributesA("t2r-fin-walled-ctx-old.txt") !=
+                    INVALID_FILE_ATTRIBUTES;
+            }
             int have = g_cd.plan_ok && g_cd.plan_slot == s;
-            if (!off44 && (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))) {
+            if (!off44
+                && (!g_ps.role
+                    || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))) {
                 if (g_mwc44.sw != g_mdu.sw_t0) {
-                    g_mwc44.sw = g_mdu.sw_t0; g_mwc44.f0 = g_frame; g_mwc44.wait = !have && !g_ps.role && !(g_mdfwu.on && !fwsc47_off());
-                    if (!have && !g_ps.role && g_mdfwu.on && !fwsc47_off()) DULOG("DUEL: u%04x ps47 every open finisher row refused by the room after the windup's intro: no %d-frame forced wall scan (the intro already holds its last frame; SP never stalls it) - straight on (t2r-fw-scan-ps47-old.txt = old)", g_mdu.uid, MDU_WC44_F);
-                    if (!have && g_ps.role) DULOG("DUEL: u%04x ps44 every open finisher row refused by the room, ctxdown has no plan for slot %d - no forced wall scan: a paired move runs (role %d, cd_scan_tick does not scan then) - the old path, no wait", g_mdu.uid, s, g_ps.role);
-                    else if (!have) { cd_force_scan44(s, MDU_WC44_F); DULOG("DUEL: u%04x ps44 every open finisher row refused by the room, ctxdown has no plan for slot %d - forced wall / half-wall scan for %d frames", g_mdu.uid, s, MDU_WC44_F); }
-                }
-                if (g_mwc44.wait && !have && g_frame - g_mwc44.f0 < MDU_WC44_F) { g_mdu.sw_on = 1; g_mdu.sw_done = 0; return; }
-                if (g_mwc44.wait || (have && g_mwc44.tried != g_mdu.sw_t0)) {
-                    if (g_mwc44.wait) DULOG("DUEL: u%04x ps44 forced scan of slot %d after %d frame(s): %s", g_mdu.uid, s, (int)(g_frame - g_mwc44.f0),
-                                            have ? CD_PAIRS[g_cd.plan_pair].name : "no wall / half-wall plan (old path: the plain down blow)");
-                    else DULOG("DUEL: u%04x ps44 every open finisher row refused by the room - ctxdown's plan %s for slot %d takes it (also after a windup)", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
-                    g_mwc44.wait = 0; g_cd_force44 = -1; g_mwc44.tried = g_mdu.sw_t0;
-                    if (have) {
-                        if (g_ps.role == 1) psync_abort("duel finisher at a surface (ps44 forced scan)", 1);
-                        if (cd_try(s)) {
-                            mdu_fw_end("ps44: the wall / half-wall takedown takes the blow", 1);
-                            g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until); g_mdu.hit_ms = now; g_mdu.n_blows++;
-                            DULOG("DUEL: u%04x FINISHER at a surface (ps44 forced scan): %s on slot %d - every open-ground row was refused by the room", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
-                            g_mdu_fin = -1; return;
-                        }
-                        DULOG("DUEL: u%04x ps44 forced-scan plan %s - cd_try refused it (the old path)", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name);
+                    g_mwc44.sw = g_mdu.sw_t0;
+                    g_mwc44.f0 = g_frame;
+                    g_mwc44.wait = !have && !g_ps.role && !(g_mdfwu.on
+                                                            &&
+                                                            !Fwsc47Off());
+                    if (!have && !g_ps.role && g_mdfwu.on && !Fwsc47Off())
+                        DULOG
+                            ("DUEL: u%04x ps47 every open finisher row refused by the room after the windup's intro: no %d-frame forced wall scan (the intro already holds its last frame; SP never stalls it) - straight on (t2r-fw-scan-ps47-old.txt = old)",
+                             g_mdu.uid, MDU_WC44_F);
+                    if (!have && g_ps.role)
+                        DULOG
+                            ("DUEL: u%04x ps44 every open finisher row refused by the room, ctxdown has no plan for slot %d - no forced wall scan: a paired move runs (role %d, cd_scan_tick does not scan then) - the old path, no wait",
+                             g_mdu.uid, s, g_ps.role);
+                    else if (!have) {
+                        CdForceScan44(s, MDU_WC44_F);
+                        DULOG
+                            ("DUEL: u%04x ps44 every open finisher row refused by the room, ctxdown has no plan for slot %d - forced wall / half-wall scan for %d frames",
+                             g_mdu.uid, s, MDU_WC44_F);
                     }
                 }
-            } else if (!off44 && g_mwc44.sw != g_mdu.sw_t0) { g_mwc44.sw = g_mdu.sw_t0; DULOG("DUEL: u%04x ps44 no forced wall scan: another paired move runs (role %d)", g_mdu.uid, g_ps.role); }
-        }
-        if (g_mdfwu.on && mdu_fwstrict_on()) {   // no row with the windup's intro fits the room - the plain down blow, never a different takedown after the windup
-            DULOG("DUEL: u%04x windup finisher %s refused by the room, no other row shares its intro: the plain down blow (no surface takedown after this windup; t2r-fin-windup-plan-old.txt = old)", g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3);
-            mdu_fw_end("no finisher with the windup's intro fits: the plain down blow", 1);
-            g_mdu_fin = -1; mdu_deliver(s, "finisher refused"); g_mdu.hit_ms = now; g_mdu.n_blows++; return;
-        }
-        if (!(g_cd.plan_ok && g_cd.plan_slot == s) && mpn_fin_restore(s)) DULOG("DUEL: u%04x lethal swing right after a pin: the pin's surface plan stands in", g_mdu.uid);
-        if (g_cd.plan_ok && g_cd.plan_slot == s && (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))) {
-            if (g_ps.role == 1) psync_abort("duel finisher at a surface", 1);
-            if (cd_try(s)) {
-                mdu_fw_end("the surface takedown takes the blow", 1);
-                g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until); g_mdu.hit_ms = now; g_mdu.n_blows++;
-                DULOG("DUEL: u%04x FINISHER at a surface: %s on slot %d (the open-ground finishers were blocked by it)", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
-                g_mdu_fin = -1; return;
+                if (g_mwc44.wait && !have
+                    && g_frame - g_mwc44.f0 < MDU_WC44_F) {
+                    g_mdu.sw_on = 1;
+                    g_mdu.sw_done = 0;
+                    return;
+                }
+                if (g_mwc44.wait || (have && g_mwc44.tried != g_mdu.sw_t0)) {
+                    if (g_mwc44.wait)
+                        DULOG
+                            ("DUEL: u%04x ps44 forced scan of slot %d after %d frame(s): %s",
+                             g_mdu.uid, s, (int) (g_frame - g_mwc44.f0),
+                             have ? CD_PAIRS[g_cd.plan_pair].
+                             name :
+                             "no wall / half-wall plan (old path: the plain down blow)");
+                    else
+                        DULOG
+                            ("DUEL: u%04x ps44 every open finisher row refused by the room - ctxdown's plan %s for slot %d takes it (also after a windup)",
+                             g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
+                    g_mwc44.wait = 0;
+                    g_cdForce44 = -1;
+                    g_mwc44.tried = g_mdu.sw_t0;
+                    if (have) {
+                        if (g_ps.role == 1)
+                            PsyncAbort
+                                ("duel finisher at a surface (ps44 forced scan)",
+                                 1);
+                        if (CdTry(s)) {
+                            MduFwEnd
+                                ("ps44: the wall / half-wall takedown takes the blow",
+                                 1);
+                            g_mdu.next_move = 0;
+                            g_mdu.lock_until = now + MDU_GAP4_MS;
+                            PadinjBlock("melee-attack", g_mdu.lock_until);
+                            g_mdu.hit_ms = now;
+                            g_mdu.n_blows++;
+                            DULOG
+                                ("DUEL: u%04x FINISHER at a surface (ps44 forced scan): %s on slot %d - every open-ground row was refused by the room",
+                                 g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name,
+                                 s);
+                            g_mduFin = -1;
+                            return;
+                        }
+                        DULOG
+                            ("DUEL: u%04x ps44 forced-scan plan %s - cd_try refused it (the old path)",
+                             g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name);
+                    }
+                }
+            } else if (!off44 && g_mwc44.sw != g_mdu.sw_t0) {
+                g_mwc44.sw = g_mdu.sw_t0;
+                DULOG
+                    ("DUEL: u%04x ps44 no forced wall scan: another paired move runs (role %d)",
+                     g_mdu.uid, g_ps.role);
             }
         }
-        if ((!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) && md46_last_resort(s, mel)) {   // ps46 D3: the victim-wall-only row with its gate kept
-            g_mdu.pair_on = 1; g_mdu.pair_role = 1; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = g_mdu_fin; g_mdu.pair_ms = now; g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-            g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until);
-            mdu_fw_hit(now);
-            if (mdw_set_wears(m->set)) mdw_blow("finisher blow (ps46 D3)", 400);
+        if (g_mdfwu.on && MduFwstrictOn()) {  // no row with the windup's intro fits the room - the plain down blow, never a different takedown after the windup
+            DULOG
+                ("DUEL: u%04x windup finisher %s refused by the room, no other row shares its intro: the plain down blow (no surface takedown after this windup; t2r-fin-windup-plan-old.txt = old)",
+                 g_mdu.uid, CD_PAIRS[g_mdfwu.fin].name + 3);
+            MduFwEnd
+                ("no finisher with the windup's intro fits: the plain down blow",
+                 1);
+            g_mduFin = -1;
+            MduDeliver(s, "finisher refused");
+            g_mdu.hit_ms = now;
+            g_mdu.n_blows++;
             return;
         }
-        DULOG("DUEL: u%04x finisher %s not started (cd_upg_go %d) - the plain blow takes the slot down", g_mdu.uid, CD_PAIRS[g_mdu_fin].name + 3, r);
-        mdu_fw_end("no finisher could start: the plain down blow", 1);
-        g_mdu_fin = -1; mdu_deliver(s, "finisher refused"); g_mdu.hit_ms = now; g_mdu.n_blows++; return;
+        if (!(g_cd.plan_ok && g_cd.plan_slot == s) && MpnFinRestore(s))
+            DULOG
+                ("DUEL: u%04x lethal swing right after a pin: the pin's surface plan stands in",
+                 g_mdu.uid);
+        if (g_cd.plan_ok && g_cd.plan_slot == s
+            && (!g_ps.role
+                || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))) {
+            if (g_ps.role == 1)
+                PsyncAbort("duel finisher at a surface", 1);
+            if (CdTry(s)) {
+                MduFwEnd("the surface takedown takes the blow", 1);
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                PadinjBlock("melee-attack", g_mdu.lock_until);
+                g_mdu.hit_ms = now;
+                g_mdu.n_blows++;
+                DULOG
+                    ("DUEL: u%04x FINISHER at a surface: %s on slot %d (the open-ground finishers were blocked by it)",
+                     g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
+                g_mduFin = -1;
+                return;
+            }
+        }
+        if ((!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid)) && Md46LastResort(s, mel)) { // ps46 D3: the victim-wall-only row with its gate kept
+            g_mdu.pair_on = 1;
+            g_mdu.pair_role = 1;
+            g_mdu.ps_uid = g_ps.uid;
+            g_mdu.pair_row = g_mduFin;
+            g_mdu.pair_ms = now;
+            g_mdu.hit_ms = now;
+            g_mdu.act_ms = now;
+            g_mdu.n_blows++;
+            g_mdu.next_move = 0;
+            g_mdu.lock_until = now + MDU_GAP4_MS;
+            PadinjBlock("melee-attack", g_mdu.lock_until);
+            MduFwHit(now);
+            if (MdwSetWears(m->set))
+                MdwBlow("finisher blow (ps46 D3)", 400);
+            return;
+        }
+        DULOG
+            ("DUEL: u%04x finisher %s not started (cd_upg_go %d) - the plain blow takes the slot down",
+             g_mdu.uid, CD_PAIRS[g_mduFin].name + 3, r);
+        MduFwEnd("no finisher could start: the plain down blow", 1);
+        g_mduFin = -1;
+        MduDeliver(s, "finisher refused");
+        g_mdu.hit_ms = now;
+        g_mdu.n_blows++;
+        return;
     }
-    if (g_mdu.sw_lethal && !(g_cd.plan_ok && g_cd.plan_slot == s) && mpn_fin_restore(s) && (!g_ps.role || (g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid))) {
-        if (g_ps.role == 1) psync_abort("duel finisher at a surface", 1);     // (the lethal swing right after a pin: its surface takedown, not a plain Melee Down)
-        if (cd_try(s)) { g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; padinj_block("melee-attack", g_mdu.lock_until); g_mdu.hit_ms = now; g_mdu.n_blows++;
-            DULOG("DUEL: u%04x FINISHER at a surface right after a pin: %s on slot %d", g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s); return; }
+    if (g_mdu.sw_lethal && !(g_cd.plan_ok && g_cd.plan_slot == s)
+        && MpnFinRestore(s) && (!g_ps.role
+                                  || (g_ps.role == 1
+                                      && g_ps.uid == g_mdu.ps_uid))) {
+        if (g_ps.role == 1)
+            PsyncAbort("duel finisher at a surface", 1);       // (the lethal swing right after a pin: its surface takedown, not a plain Melee Down)
+        if (CdTry(s)) {
+            g_mdu.next_move = 0;
+            g_mdu.lock_until = now + MDU_GAP4_MS;
+            PadinjBlock("melee-attack", g_mdu.lock_until);
+            g_mdu.hit_ms = now;
+            g_mdu.n_blows++;
+            DULOG
+                ("DUEL: u%04x FINISHER at a surface right after a pin: %s on slot %d",
+                 g_mdu.uid, CD_PAIRS[g_cd.plan_pair].name, s);
+            return;
+        }
     }
-    if (g_mdu.sw_lethal) { g_mhr_punch_thud = 1; mhr_punch_at(h, 2, "duel lethal blow"); g_mhr_punch_thud = 0;
-        if (mdw_set_wears(m->set)) mdw_blow("lethal blow: the engine contact", 1200);   // (v5-pinfix3 3: in the ledger - its engine contact + Melee Down come after this)   // the final blow was silent (no pair, the duel owned the punch)
-        DULOG("DUEL: u%04x %s - the blow downs slot %d: no pair, the engine contact + Melee Down take it (HOOK: finisher beat)", g_mdu.uid, m->move, s); return; }
-    if (!mdu_pin_ok() && g_cd.plan_ok && g_cd.plan_slot == s) DULOG("pin plan: u%04x %s (step %d) lands with a wall / cover plan, no PIN: mid-combo blow (opener-only rule, t2r-duel-pin-opener-only.txt)", g_mdu.uid, m->move, g_mdu.step);
-    else if (mdu_pin_ok()) { static int nl; if (LOGCAP(nl, 400)) DULOG("pin plan: u%04x %s blow %d on slot %d: pin considered (plan_ok %d kind %d age %d streak %d steady-age %d)", g_mdu.uid, m->move, g_mdu.step, s, g_cd.plan_ok && g_cd.plan_slot == s, g_cd.plan_kind, (int)(g_frame - g_cd.plan_frame), g_cd_plan_streak, (int)(g_frame - g_cd_plan_steady_frame)); }
-    if (mdu_pin_ok() && g_ps.role != 3 && mpn_contact(now, m->set, s, h, vl, me)) return;   // melee_duel_pin.c: a wall / cover behind the victim = the PIN
-    {   // A victim holding a melee weapon: the weapon was put away in an animation, then reappeared in the hand.
+    if (g_mdu.sw_lethal) {
+        g_mhrPunchThud = 1;
+        MhrPunchAt(h, 2, "duel lethal blow");
+        g_mhrPunchThud = 0;
+        if (MdwSetWears(m->set))
+            MdwBlow("lethal blow: the engine contact", 1200);  // (v5-pinfix3 3: in the ledger - its engine contact + Melee Down come after this)   // the final blow was silent (no pair, the duel owned the punch)
+        DULOG
+            ("DUEL: u%04x %s - the blow downs slot %d: no pair, the engine contact + Melee Down take it (HOOK: finisher beat)",
+             g_mdu.uid, m->move, s);
+        return;
+    }
+    if (!MduPinOk() && g_cd.plan_ok && g_cd.plan_slot == s)
+        DULOG
+            ("pin plan: u%04x %s (step %d) lands with a wall / cover plan, no PIN: mid-combo blow (opener-only rule, t2r-duel-pin-opener-only.txt)",
+             g_mdu.uid, m->move, g_mdu.step);
+    else if (MduPinOk()) {
+        static int nl;
+        if (LOGCAP(nl, 400))
+            DULOG
+                ("pin plan: u%04x %s blow %d on slot %d: pin considered (plan_ok %d kind %d age %d streak %d steady-age %d)",
+                 g_mdu.uid, m->move, g_mdu.step, s, g_cd.plan_ok
+                 && g_cd.plan_slot == s, g_cd.plan_kind,
+                 (int) (g_frame - g_cd.plan_frame), g_cdPlanStreak,
+                 (int) (g_frame - g_cdPlanSteadyFrame));
+    }
+    if (MduPinOk() && g_ps.role != 3
+        && MpnContact(now, m->set, s, h, vl, me))
+        return;                 // melee_duel_pin.c: a wall / cover behind the victim = the PIN
+    {                           // A victim holding a melee weapon: the weapon was put away in an animation, then reappeared in the hand.
         // The -hit pairs' victim halves (abby-fist-combo-punch-*-hit--npc-f ...) are authored EMPTY-HANDED - in the recorded clip,
         // +0.8..+1.5 s: the right hand opens flat with the 2x4 lying across the palm, swings low by the hip, then grips it again (= the "put-away"; the engine's own
         // holster anim was refused: "stow fix: PlayerHolsterWeaponAnimAction not begun (victim half)" 29917), and the attacker's screen hid the item for the whole
@@ -2758,7 +6307,7 @@ static void mdu_contact(uint64_t now) {
         // reactions. The defects that sent it plain are taken at their causes (melee_hitreact.c g_p30): the 'put-away' was the engine's begin-holster arm overlay on
         // the victim half (now skipped there), the attacker's screen no longer hides a victim's melee item (cd_pup_hands_empty), the arm hold is
         // released for the half on both screens and the finger layers stay.
-        uint64_t vw = mdu_vic_melee(s);
+        uint64_t vw = MduVicMelee(s);
         // (f5_*_behind / side): a blow from BEHIND or the SIDE played the front -hit pair and psync turned the victim
         // 96-174 deg onto it over 0.5-1.0 s ("victim 0.00 m / 174 deg off their spots"). SP: the victim keeps its facing and plays its directional
         // standing hit reaction (back / left / right). Outside the victim's front arc (+-60 deg) the blow is PLAIN like the armed case: MDUO_PLAIN, the
@@ -2767,190 +6316,444 @@ static void mdu_contact(uint64_t now) {
         // Punching someone from the back no longer turned them towards the attacker (B [47330]-[47466] four blows 167-178 deg "from behind ... plain blow"): the reference build
         // played the -hit pair from every side and the pair turned the victim to face the attacker. That is the default again; the plain side / back
         // blow is opt-in: t2r-duel-side-plain.txt.
-        int side = 0; float side_deg = 0.0f;
+        int side = 0;
+        float side_deg = 0.0f;
         // (a sprint hit turned the victim 148 deg): a blow from outside the
         // victim's +-MDU_SIDE_DEG front arc is the plain blow by DEFAULT (victim keeps its facing, plays the SP directional reaction row: back / left / right). The -hit pair therefore never
         // turns a victim more than MDU_SIDE_DEG; where no directional row exists the pair-start glide keeps its 420 deg/s turn (paired.c). t2r-duel-side-pairs.txt = the old front pair from every side.
         // (every blow felt delayed, with wrong hit reactions playing): the default above made every blow from outside +-30 deg
         // (36-109 deg in fights) a plain directional reaction - not the SP -hit pair, against the rule (pair from every side, the victim
         // turns to face the attacker). Back to that: the plain side / back blow is opt-in again (t2r-duel-side-plain.txt).
-        if (vl && me && GetFileAttributesA("t2r-duel-side-plain.txt") != INVALID_FILE_ATTRIBUTES && GetFileAttributesA("t2r-duel-side-pairs.txt") == INVALID_FILE_ATTRIBUTES) {
-            float vfx = 2.0f * (vl[4] * vl[6] + vl[7] * vl[5]), vfz = 1.0f - 2.0f * (vl[4] * vl[4] + vl[5] * vl[5]), vf = __builtin_sqrtf(vfx * vfx + vfz * vfz);
-            float ax = me[0] - vl[0], az = me[2] - vl[2], ad = __builtin_sqrtf(ax * ax + az * az);
+        if (vl && me
+            && GetFileAttributesA("t2r-duel-side-plain.txt") !=
+            INVALID_FILE_ATTRIBUTES
+            && GetFileAttributesA("t2r-duel-side-pairs.txt") ==
+            INVALID_FILE_ATTRIBUTES) {
+            float vfx = 2.0f * (vl[4] * vl[6] + vl[7] * vl[5]), vfz =
+                1.0f - 2.0f * (vl[4] * vl[4] + vl[5] * vl[5]), vf =
+                __builtin_sqrtf(vfx * vfx + vfz * vfz);
+            float ax = me[0] - vl[0], az = me[2] - vl[2], ad =
+                __builtin_sqrtf(ax * ax + az * az);
             if (vf > 1e-3f && ad > 0.05f) {
-                float c = (vfx * ax + vfz * az) / (vf * ad); c = c > 1.0f ? 1.0f : c < -1.0f ? -1.0f : c;
-                side_deg = __builtin_acosf(c) * 57.29578f; side = c < MDU_SIDE_COS;
+                float c = (vfx * ax + vfz * az) / (vf * ad);
+                c = c > 1.0f ? 1.0f : c < -1.0f ? -1.0f : c;
+                side_deg = __builtin_acosf(c) * 57.29578f;
+                side = c < MDU_SIDE_COS;
             }
         }
         // (a blow from behind over 90 deg = SP's BACK reaction clip, then the victim turns to face the attacker after it): over 90 deg off the
         // victim's facing the blow is PLAIN on every victim (armed or not) - its client plays the back reaction with its facing kept and turns after it (melee_hitreact.c
         // g_mhb44) - instead of the -hit pair that turned the victim up to 170 deg in 2 frames. t2r-hr-back-ps44-old.txt = old (re-read every 2 s).
         int back44 = 0;
-        {   static int off44 = -1; static uint64_t at44; uint64_t n44 = GetTickCount64();
-            if (off44 < 0 || n44 - at44 > 2000) { at44 = n44; off44 = GetFileAttributesA("t2r-hr-back-ps44-old.txt") != INVALID_FILE_ATTRIBUTES; }
-            if (!off44 && vl && me && !mdu_plain_off()) {
-                float vfx = 2.0f * (vl[4] * vl[6] + vl[7] * vl[5]), vfz = 1.0f - 2.0f * (vl[4] * vl[4] + vl[5] * vl[5]), vf = __builtin_sqrtf(vfx * vfx + vfz * vfz);
-                float ax = me[0] - vl[0], az = me[2] - vl[2], ad = __builtin_sqrtf(ax * ax + az * az);
-                if (vf > 1e-3f && ad > 0.05f && (vfx * ax + vfz * az) / (vf * ad) < 0.0f) {      // cos < 0 = over 90 deg
-                    float c = (vfx * ax + vfz * az) / (vf * ad); c = c < -1.0f ? -1.0f : c;
-                    back44 = 1; side = 1; side_deg = __builtin_acosf(c) * 57.29578f;
-                    DULOG("DUEL: u%04x %s CONTACT from behind %.0f deg (> 90) on slot %d%s - ps44: plain blow, the victim plays SP's back reaction and turns to us after it", g_mdu.uid, m->move, (double)side_deg, s, vw ? " (armed: plain too)" : "");
+        {
+            static int off44 = -1;
+            static uint64_t at44;
+            uint64_t n44 = GetTickCount64();
+            if (off44 < 0 || n44 - at44 > 2000) {
+                at44 = n44;
+                off44 =
+                    GetFileAttributesA("t2r-hr-back-ps44-old.txt") !=
+                    INVALID_FILE_ATTRIBUTES;
+            }
+            if (!off44 && vl && me && !MduPlainOff()) {
+                float vfx = 2.0f * (vl[4] * vl[6] + vl[7] * vl[5]), vfz =
+                    1.0f - 2.0f * (vl[4] * vl[4] + vl[5] * vl[5]), vf =
+                    __builtin_sqrtf(vfx * vfx + vfz * vfz);
+                float ax = me[0] - vl[0], az = me[2] - vl[2], ad =
+                    __builtin_sqrtf(ax * ax + az * az);
+                if (vf > 1e-3f && ad > 0.05f && (vfx * ax + vfz * az) / (vf * ad) < 0.0f) {     // cos < 0 = over 90 deg
+                    float c = (vfx * ax + vfz * az) / (vf * ad);
+                    c = c < -1.0f ? -1.0f : c;
+                    back44 = 1;
+                    side = 1;
+                    side_deg = __builtin_acosf(c) * 57.29578f;
+                    DULOG
+                        ("DUEL: u%04x %s CONTACT from behind %.0f deg (> 90) on slot %d%s - ps44: plain blow, the victim plays SP's back reaction and turns to us after it",
+                         g_mdu.uid, m->move, (double) side_deg, s,
+                         vw ? " (armed: plain too)" : "");
                 }
             }
         }
-        if (side && (!vw || back44) && !mdu_plain_off()) {
-            DULOG("DUEL: u%04x %s CONTACT at %.2f m on slot %d from %s (%.0f deg off its facing) - no synced pair: plain blow, the victim keeps its facing and plays the SP directional reaction",
-                  g_mdu.uid, m->move, (double)d, s, side_deg > 120.0f ? "behind" : "the side", (double)side_deg);
-            { uint8_t p[2] = {(uint8_t)g_mdu.sw_row, (uint8_t)g_mdu.step}; mdu_send(MDUO_PLAIN, p, 2); }
-            g_mdu_rec_ms = 0; mdu_plain_rm_arm(); mdu_deliver(s, "side / back blow: plain contact"); g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-            if (m->next) { g_mdu.next_move = fnv64_rt(m->next); g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833); }
-            else { g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; mdu_p31_ender(m, now); }
-            mdu_p31_branch(m);
-            mdu_early_take(now);
-            padinj_block("melee-attack", m->next ? g_mdu.win_end : g_mdu.lock_until);
+        if (side && (!vw || back44) && !MduPlainOff()) {
+            DULOG
+                ("DUEL: u%04x %s CONTACT at %.2f m on slot %d from %s (%.0f deg off its facing) - no synced pair: plain blow, the victim keeps its facing and plays the SP directional reaction",
+                 g_mdu.uid, m->move, (double) d, s,
+                 side_deg > 120.0f ? "behind" : "the side",
+                 (double) side_deg);
+            {
+                uint8_t p[2] =
+                    { (uint8_t) g_mdu.sw_row, (uint8_t) g_mdu.step };
+                MduSend(MDUO_PLAIN, p, 2);
+            }
+            g_mduRecMs = 0;
+            MduPlainRmArm();
+            MduDeliver(s, "side / back blow: plain contact");
+            g_mdu.hit_ms = now;
+            g_mdu.act_ms = now;
+            g_mdu.n_blows++;
+            if (m->next) {
+                g_mdu.next_move = Fnv64Rt(m->next);
+                g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833);
+            } else {
+                g_mdu.next_move = 0;
+                g_mdu.lock_until = now + MDU_GAP4_MS;
+                MduP31Ender(m, now);
+            }
+            MduP31Branch(m);
+            MduEarlyTake(now);
+            PadinjBlock("melee-attack",
+                         m->next ? g_mdu.win_end : g_mdu.lock_until);
             return;
         }
-        if (vw && !mdu_armed_pairs()) {
-            const char *vn = NULL; melee_class_of(base_weapon(vw), &vn); if (!vn) melee_class_of(vw, &vn);
-            DULOG("DUEL: u%04x %s CONTACT at %.2f m on slot %d holding %s (%llx) - no synced pair (SP: an armed defender plays its standing hit reaction, weapon in the hand): plain blow, the victim plays the SP reaction",
-                  g_mdu.uid, m->move, (double)d, s, vn ? vn : "a melee item", (unsigned long long)vw);
-            { uint8_t p[2] = {(uint8_t)g_mdu.sw_row, (uint8_t)g_mdu.step}; mdu_send(MDUO_PLAIN, p, 2); }
-            g_mdu_rec_ms = 0; mdu_plain_rm_arm(); mdu_deliver(s, "armed victim: plain contact"); g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
+        if (vw && !MduArmedPairs()) {
+            const char *vn = NULL;
+            MeleeClassOf(BaseWeapon(vw), &vn);
+            if (!vn)
+                MeleeClassOf(vw, &vn);
+            DULOG
+                ("DUEL: u%04x %s CONTACT at %.2f m on slot %d holding %s (%llx) - no synced pair (SP: an armed defender plays its standing hit reaction, weapon in the hand): plain blow, the victim plays the SP reaction",
+                 g_mdu.uid, m->move, (double) d, s,
+                 vn ? vn : "a melee item", (unsigned long long) vw);
+            {
+                uint8_t p[2] =
+                    { (uint8_t) g_mdu.sw_row, (uint8_t) g_mdu.step };
+                MduSend(MDUO_PLAIN, p, 2);
+            }
+            g_mduRecMs = 0;
+            MduPlainRmArm();
+            MduDeliver(s, "armed victim: plain contact");
+            g_mdu.hit_ms = now;
+            g_mdu.act_ms = now;
+            g_mdu.n_blows++;
             // (an unarmed attacker kept throwing the left jab against an armed victim): this return skipped the combo
             // window below, so every press came from neutral = the left-jab opener again. A plain blow on an armed victim now opens the same combo window as a
             // pair (left-1 -> 1 -> 2 -> 3 / 4-kick). t2r-duel-armed-no-combo.txt = old.
-            if (GetFileAttributesA("t2r-duel-armed-no-combo.txt") == INVALID_FILE_ATTRIBUTES) {
-                if (m->next) { g_mdu.next_move = fnv64_rt(m->next); g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833); }
-                else { g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; mdu_p31_ender(m, now); }
-                mdu_p31_branch(m);
-                mdu_early_take(now);
-                padinj_block("melee-attack", m->next ? g_mdu.win_end : g_mdu.lock_until);
+            if (GetFileAttributesA("t2r-duel-armed-no-combo.txt") ==
+                INVALID_FILE_ATTRIBUTES) {
+                if (m->next) {
+                    g_mdu.next_move = Fnv64Rt(m->next);
+                    g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833);
+                } else {
+                    g_mdu.next_move = 0;
+                    g_mdu.lock_until = now + MDU_GAP4_MS;
+                    MduP31Ender(m, now);
+                }
+                MduP31Branch(m);
+                MduEarlyTake(now);
+                PadinjBlock("melee-attack",
+                             m->next ? g_mdu.win_end : g_mdu.lock_until);
             }
             return;
         }
-        if (vw) DULOG("ps30 armed pair: u%04x %s CONTACT at %.2f m on slot %d holding %llx - not sent plain for its weapon: the synced -hit pair follows when the path gate / anchor allow it (SP: the armed enemy plays the victim half, weapon in one hand)", g_mdu.uid, m->move, (double)d, s, (unsigned long long)vw);
+        if (vw)
+            DULOG
+                ("ps30 armed pair: u%04x %s CONTACT at %.2f m on slot %d holding %llx - not sent plain for its weapon: the synced -hit pair follows when the path gate / anchor allow it (SP: the armed enemy plays the victim half, weapon in one hand)",
+                 g_mdu.uid, m->move, (double) d, s,
+                 (unsigned long long) vw);
     }
     float ap[7], da = 0.0f;
-    if (g_mdu.gate < 0) { g_mdu.gate_tries = 0; mdu_gate_poll(s, h, vl, me); }
-    int ok = g_ps.role != 3 && g_mdu.gate == 1 && mdu_pair_place(s, h, vl, me, ap, &da);
+    if (g_mdu.gate < 0) {
+        g_mdu.gate_tries = 0;
+        MduGatePoll(s, h, vl, me);
+    }
+    int ok = g_ps.role != 3 && g_mdu.gate == 1
+        && MduPairPlace(s, h, vl, me, ap, &da);
     if (!ok) {
-        DULOG("DUEL: u%04x %s CONTACT at %.2f m without a pair (%s) - plain hit%s", g_mdu.uid, m->move, (double)d, g_mdu.gate == 0 ? "path blocked" : g_mdu.gate < 0 ? "path gate never answered" : "no anchor", mdu_plain_off() ? "" : ", the victim plays the SP hit reaction (MDUO_PLAIN)");
-        { uint8_t p[2] = {(uint8_t)g_mdu.sw_row, (uint8_t)g_mdu.step}; if (!mdu_plain_off()) mdu_send(MDUO_PLAIN, p, 2); }
-        mdu_deliver(s, "plain contact"); g_mdu.hit_ms = now; g_mdu.n_blows++;
+        DULOG
+            ("DUEL: u%04x %s CONTACT at %.2f m without a pair (%s) - plain hit%s",
+             g_mdu.uid, m->move, (double) d,
+             g_mdu.gate == 0 ? "path blocked" : g_mdu.gate <
+             0 ? "path gate never answered" : "no anchor",
+             MduPlainOff()? "" :
+             ", the victim plays the SP hit reaction (MDUO_PLAIN)");
+        {
+            uint8_t p[2] =
+                { (uint8_t) g_mdu.sw_row, (uint8_t) g_mdu.step };
+            if (!MduPlainOff())
+                MduSend(MDUO_PLAIN, p, 2);
+        }
+        MduDeliver(s, "plain contact");
+        g_mdu.hit_ms = now;
+        g_mdu.n_blows++;
         // (A [26825]-[26826] blow 2: the engine's contact was dropped for the duel's, and this plain branch played no cue - a silent blow): the
         // plain blow gets the same SP contact sounds on the puppet as a paired one (pain, the weapon's own impact event, second pain)
-        g_mdu_hz = mdu_row_hz(g_mdu.sw_row); mdu_contact_cues(now, h, mdu_blow_weapon(), m->set, 1);
+        g_mduHz = MduRowHz(g_mdu.sw_row);
+        MduContactCues(now, h, MduBlowWeapon(), m->set, 1);
         return;
     }
-    if (g_ps.role == 2) { DULOG("DUEL: u%04x contact dropped: we are the victim half of a running pair (a pin escape / counter) - our press must not cut it", g_mdu.uid); g_mdu.hit_ms = now; return; }   // (the pinner's mashed press aborted the escape pair, 'a new move')
-    float end_s = mdu_end_s(m, h);
-    if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < end_s) { DULOG("DUEL: u%04x %s: victim hand-off %.2f s (was %.2f s) - its recoil stops short of the wall", g_mdu.uid, m->move, (double)g_mdu.gate_short_s, (double)end_s); end_s = g_mdu.gate_short_s; }
-    g_mdu_chain = (g_mdu_chain_slot == s && now - g_mdu_chain_ms < 1300) ? g_mdu_chain + 1 : 1; g_mdu_chain_ms = now; g_mdu_chain_slot = s;
-    if (g_mdu_chain >= MDU_VIC_FREE_STEP && end_s > MDU_VIC_FREE_S) { DULOG("DUEL: u%04x blow %d of the chain: the victim is free at %.2f s (was %.2f) - room to dodge / run", g_mdu.uid, g_mdu_chain, (double)MDU_VIC_FREE_S, (double)end_s); end_s = MDU_VIC_FREE_S; }
+    if (g_ps.role == 2) {
+        DULOG
+            ("DUEL: u%04x contact dropped: we are the victim half of a running pair (a pin escape / counter) - our press must not cut it",
+             g_mdu.uid);
+        g_mdu.hit_ms = now;
+        return;
+    }                           // (the pinner's mashed press aborted the escape pair, 'a new move')
+    float end_s = MduEndS(m, h);
+    if (g_mdu.gate_short_s > 0.0f && g_mdu.gate_short_s < end_s) {
+        DULOG
+            ("DUEL: u%04x %s: victim hand-off %.2f s (was %.2f s) - its recoil stops short of the wall",
+             g_mdu.uid, m->move, (double) g_mdu.gate_short_s,
+             (double) end_s);
+        end_s = g_mdu.gate_short_s;
+    }
+    g_mduChain = (g_mduChainSlot == s
+                   && now - g_mduChainMs < 1300) ? g_mduChain + 1 : 1;
+    g_mduChainMs = now;
+    g_mduChainSlot = s;
+    if (g_mduChain >= MDU_VIC_FREE_STEP && end_s > MDU_VIC_FREE_S) {
+        DULOG
+            ("DUEL: u%04x blow %d of the chain: the victim is free at %.2f s (was %.2f) - room to dodge / run",
+             g_mdu.uid, g_mduChain, (double) MDU_VIC_FREE_S,
+             (double) end_s);
+        end_s = MDU_VIC_FREE_S;
+    }
     // (some hits did nothing - no damage, no hit reaction): a wall cut the
     // victim's recoil to a 0.54 / 0.39 s hand-off (0.49 / 0.35 s after the react rate), the victim's start check refuses a hand-off under 0.50 s ("bad start"),
     // ABORT REFUSED came back and the C1 verdict dropped the blow: no damage, no reaction. A hand-off that short is now the plain contact (the victim's SP hit
     // reaction, MDUO_PLAIN) - the blow lands. The victim's floor for duel pairs is also 0.30 s (older senders). t2r-handoff-floor-ps47-old.txt = old.
-    if (!hof47_off() && end_s / mdu_react_rate() < 0.52f) {
-        DULOG("DUEL: ps47 u%04x %s CONTACT at %.2f m: the victim hand-off would be %.2f s (< 0.52 s, wall-cut recoil) - the plain contact instead of a pair the victim refuses", g_mdu.uid, m->move, (double)d, (double)(end_s / mdu_react_rate()));
-        { uint8_t p[2] = {(uint8_t)g_mdu.sw_row, (uint8_t)g_mdu.step}; if (!mdu_plain_off()) mdu_send(MDUO_PLAIN, p, 2); }
-        mdu_deliver(s, "plain contact (short hand-off, ps47)"); g_mdu.hit_ms = now; g_mdu.n_blows++;
-        g_mdu_hz = mdu_row_hz(g_mdu.sw_row); mdu_contact_cues(now, h, mdu_blow_weapon(), m->set, 1);
+    if (!Hof47Off() && end_s / MduReactRate() < 0.52f) {
+        DULOG
+            ("DUEL: ps47 u%04x %s CONTACT at %.2f m: the victim hand-off would be %.2f s (< 0.52 s, wall-cut recoil) - the plain contact instead of a pair the victim refuses",
+             g_mdu.uid, m->move, (double) d,
+             (double) (end_s / MduReactRate()));
+        {
+            uint8_t p[2] =
+                { (uint8_t) g_mdu.sw_row, (uint8_t) g_mdu.step };
+            if (!MduPlainOff())
+                MduSend(MDUO_PLAIN, p, 2);
+        }
+        MduDeliver(s, "plain contact (short hand-off, ps47)");
+        g_mdu.hit_ms = now;
+        g_mdu.n_blows++;
+        g_mduHz = MduRowHz(g_mdu.sw_row);
+        MduContactCues(now, h, MduBlowWeapon(), m->set, 1);
         return;
     }
-    uint64_t w = mdu_blow_weapon(), mel = w == fnv64("abby-unarmed") ? 0 : w;
+    uint64_t w = MduBlowWeapon(), mel =
+        w == FNV64("abby-unarmed") ? 0 : w;
     // (not proven by a log: the cancel is issued before the -hit half has any weight). Kept as it is by default - every pair start in the tree
     // cancels first, and a cancel after animate_ could stop the new half. t2r-duel-cancel-after.txt = an A/B experiment: the engine swing is cancelled right AFTER
     // the half was started (same frame), so animate_ blends from the swing's layer.
-    int cancel_after = GetFileAttributesA("t2r-duel-cancel-after.txt") != INVALID_FILE_ATTRIBUTES;
-    if (!cancel_after) { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); }
-    g_ps_start_skip_ms = 0.0f;
-    end_s /= mdu_react_rate();                                           // the victim half runs at MDU_REACT_RATE - the hand-off comes with it
-    int ps_ok = psync_start(PS_CTXDOWN, (uint32_t)s, CD_ATT0(cd), CD_VIC0(cd), ap, end_s, 0, 0xff, mel, fnv64_rt(CD_PAIRS[cd].name)) != 0;
-    if (cancel_after) { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); static int nlc; if (LOGCAP(nlc, 20)) DULOG("DUEL: u%04x cancel-melee-action AFTER the -hit half's start (t2r-duel-cancel-after.txt experiment)", g_mdu.uid); }
-    if (!ps_ok) {
-        DULOG("DUEL: u%04x psync refused %s - plain hit", g_mdu.uid, CD_PAIRS[cd].name);
-        { uint8_t p[2] = {(uint8_t)g_mdu.sw_row, (uint8_t)g_mdu.step}; if (!mdu_plain_off()) mdu_send(MDUO_PLAIN, p, 2); }
-        mdu_deliver(s, "psync refused"); g_mdu.hit_ms = now; g_mdu.n_blows++; return;
+    int cancel_after =
+        GetFileAttributesA("t2r-duel-cancel-after.txt") !=
+        INVALID_FILE_ATTRIBUTES;
+    if (!cancel_after) {
+        uint64_t me0 = SID_PLAYER;
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
     }
-    g_cd.ended = 0; g_cd.plan_ok = 0;
-    g_mdu.pair_on = 1; g_mdu.pair_role = 1; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = cd; g_mdu.pair_ms = now; g_mdu.hit_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-    mdu_rec_measure(cd, h, end_s);                                          // the next press waits for the victim's recovery start
-    {   // ps23 fairness floor of the dodge-exit rule (mdu_dodge_press): the next swing's contact never comes before the victim can dodge it out of this reaction =
+    g_psStartSkipMs = 0.0f;
+    end_s /= MduReactRate();  // the victim half runs at MDU_REACT_RATE - the hand-off comes with it
+    int ps_ok =
+        PsyncStart(PS_CTXDOWN, (uint32_t) s, CD_ATT0(cd), CD_VIC0(cd), ap,
+                    end_s, 0, 0xff, mel, Fnv64Rt(CD_PAIRS[cd].name)) != 0;
+    if (cancel_after) {
+        uint64_t me0 = SID_PLAYER;
+        DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1, &me0);
+        static int nlc;
+        if (LOGCAP(nlc, 20))
+            DULOG
+                ("DUEL: u%04x cancel-melee-action AFTER the -hit half's start (t2r-duel-cancel-after.txt experiment)",
+                 g_mdu.uid);
+    }
+    if (!ps_ok) {
+        DULOG("DUEL: u%04x psync refused %s - plain hit", g_mdu.uid,
+              CD_PAIRS[cd].name);
+        {
+            uint8_t p[2] =
+                { (uint8_t) g_mdu.sw_row, (uint8_t) g_mdu.step };
+            if (!MduPlainOff())
+                MduSend(MDUO_PLAIN, p, 2);
+        }
+        MduDeliver(s, "psync refused");
+        g_mdu.hit_ms = now;
+        g_mdu.n_blows++;
+        return;
+    }
+    g_cd.ended = 0;
+    g_cd.plan_ok = 0;
+    g_mdu.pair_on = 1;
+    g_mdu.pair_role = 1;
+    g_mdu.ps_uid = g_ps.uid;
+    g_mdu.pair_row = cd;
+    g_mdu.pair_ms = now;
+    g_mdu.hit_ms = now;
+    g_mdu.act_ms = now;
+    g_mdu.n_blows++;
+    MduRecMeasure(cd, h, end_s);      // the next press waits for the victim's recovery start
+    {                           // ps23 fairness floor of the dodge-exit rule (mdu_dodge_press): the next swing's contact never comes before the victim can dodge it out of this reaction =
         // its dodge exit + the round trip + SP's latest successful dodge start (133 ms before the contact). With the default numbers (exit 580 ms, next press 330,
         // contact 460 ms) this only binds above ~38 ms one-way; it never shortens the gate.
-        int nr = m->next ? mdu_row_of(fnv64_rt(m->next)) : -1, tcn = nr >= 0 ? MDU_MOVES[nr].tc_ms : 0, tcc = m->tc_ms + g_mdu_sw_xtra;
-        if (nr >= 0 && tcn < tcc && tcc <= 700) tcn = tcc;                   // (the next step gets the same wind-up contact time as this one, melee_npcwind.c)
+        int nr = m->next ? MduRowOf(Fnv64Rt(m->next)) : -1, tcn =
+            nr >= 0 ? MDU_MOVES[nr].tc_ms : 0, tcc =
+            m->tc_ms + g_mduSwXtra;
+        if (nr >= 0 && tcn < tcc && tcc <= 700)
+            tcn = tcc;          // (the next step gets the same wind-up contact time as this one, melee_npcwind.c)
         // the lead the victim's press needs is the ps45 rule's (melee_dodge.c md45_vic_lead: round trip included) + MDU45_FAIR_SLACK_MS, not round trip + SP's 133 ms
-        int f45 = !mdu_fair45_old(), lead_f = f45 ? md45_vic_lead(psync_oneway(s)) + MDU45_FAIR_SLACK_MS : (int)(2.0f * psync_oneway(s) + 0.5f) + MDU_VIC_DODGE_LEAD_MS;
-        int fair = mdu_vic_exit_ms(end_s) + lead_f - tcn;
-        { static int nlf; if (f45 && nr >= 0 && LOGCAP(nlf, 60)) DULOG("DUEL: u%04x ps45 fairness floor: exit %d + lead %d ms (ps44: round trip %.0f + %d) - %d = %d ms (gate base %d, recovery %d)", g_mdu.uid, mdu_vic_exit_ms(end_s), lead_f,
-              (double)(2.0f * psync_oneway(s)), MDU_VIC_DODGE_LEAD_MS, tcn, fair, MDU_NEXT_BASE(), g_mdu_rec_ms); }
-        if (nr >= 0 && !mdu_dodge_exit_old() && fair > MDU_NEXT_BASE() && fair > g_mdu_rec_ms) {
-            if (fair > 900) fair = 900;
+        int f45 = !MduFair45Old(), lead_f =
+            f45 ? Md45VicLead(PsyncOneway(s)) +
+            MDU45_FAIR_SLACK_MS : (int) (2.0f * PsyncOneway(s) + 0.5f) +
+            MDU_VIC_DODGE_LEAD_MS;
+        int fair = MduVicExitMs(end_s) + lead_f - tcn;
+        {
+            static int nlf;
+            if (f45 && nr >= 0 && LOGCAP(nlf, 60))
+                DULOG
+                    ("DUEL: u%04x ps45 fairness floor: exit %d + lead %d ms (ps44: round trip %.0f + %d) - %d = %d ms (gate base %d, recovery %d)",
+                     g_mdu.uid, MduVicExitMs(end_s), lead_f,
+                     (double) (2.0f * PsyncOneway(s)),
+                     MDU_VIC_DODGE_LEAD_MS, tcn, fair, MDU_NEXT_BASE(),
+                     g_mduRecMs);
+        }
+        if (nr >= 0 && !MduDodgeExitOld() && fair > MDU_NEXT_BASE()
+            && fair > g_mduRecMs) {
+            if (fair > 900)
+                fair = 900;
             // ps24 (rec15: 'round trip 183 ms' on LAN raised the gate 330 -> 395-485 ms: contact -> next swing start 383 -> 458 ms, SP 333): the floor may add at most MDU_FAIR_MAX_MS
-            if (fair > MDU_NEXT_BASE() + MDU_FAIR_MAX_MS && GetFileAttributesA("t2r-duel-fair-uncapped.txt") == INVALID_FILE_ATTRIBUTES) fair = MDU_NEXT_BASE() + MDU_FAIR_MAX_MS;
-            DULOG("DUEL: u%04x next-press gate %d -> %d ms: slot %d can dodge the follow-up out of this reaction (its dodge exit %d ms + round trip %.0f ms + %d ms before our next contact at +%d ms; ps23)",
-                  g_mdu.uid, g_mdu_rec_ms > MDU_NEXT_BASE() ? g_mdu_rec_ms : MDU_NEXT_BASE(), fair, s, mdu_vic_exit_ms(end_s), (double)(2.0f * psync_oneway(s)), MDU_VIC_DODGE_LEAD_MS, tcn);
-            g_mdu_rec_ms = fair;
+            if (fair > MDU_NEXT_BASE() + MDU_FAIR_MAX_MS
+                && GetFileAttributesA("t2r-duel-fair-uncapped.txt") ==
+                INVALID_FILE_ATTRIBUTES)
+                fair = MDU_NEXT_BASE() + MDU_FAIR_MAX_MS;
+            DULOG
+                ("DUEL: u%04x next-press gate %d -> %d ms: slot %d can dodge the follow-up out of this reaction (its dodge exit %d ms + round trip %.0f ms + %d ms before our next contact at +%d ms; ps23)",
+                 g_mdu.uid,
+                 g_mduRecMs >
+                 MDU_NEXT_BASE()? g_mduRecMs : MDU_NEXT_BASE(), fair, s,
+                 MduVicExitMs(end_s), (double) (2.0f * PsyncOneway(s)),
+                 MDU_VIC_DODGE_LEAD_MS, tcn);
+            g_mduRecMs = fair;
         }
     }
-    cd_hands_begin(cd);
-    g_vis_vic_anim = CD_VIC0(cd); g_vis_vic_puppet = h; g_vis_vic_frame = g_t60;
-    g_mpose_att_frame = g_vis_vic_frame; g_mpose_att_slot = (int32_t)s;
-    finpos_begin(1, s, 0, S60(end_s) + 60, "melee duel, attacker");
-    mdu_deliver_hit(s, "contact");
-    g_mdu_hz = mdu_row_hz(g_mdu.sw_row);                                   // (v5-sfx: the row's SP hit sound)
-    if (g_mdv.on && g_mdv.ps_uid == g_ps.uid) { g_mdv.cue = 1; g_mdv.cset = m->set; g_mdv.chz = g_mdu_hz; g_mdv.ch = h; g_mdv.cw = w; g_mdu_hz = -1; }   // C1b: the verdict plays them
+    CdHandsBegin(cd);
+    g_visVicAnim = CD_VIC0(cd);
+    g_vis_vic_puppet = h;
+    g_vis_vic_frame = g_t60;
+    g_mpose_att_frame = g_vis_vic_frame;
+    g_mposeAttSlot = (int32_t) s;
+    FinposBegin(1, s, 0, S60(end_s) + 60, "melee duel, attacker");
+    MduDeliverHit(s, "contact");
+    g_mduHz = MduRowHz(g_mdu.sw_row);        // (v5-sfx: the row's SP hit sound)
+    if (g_mdv.on && g_mdv.ps_uid == g_ps.uid) {
+        g_mdv.cue = 1;
+        g_mdv.cset = m->set;
+        g_mdv.chz = g_mduHz;
+        g_mdv.ch = h;
+        g_mdv.cw = w;
+        g_mduHz = -1;
+    }                           // C1b: the verdict plays them
     else
-    mdu_contact_cues(now + (uint64_t)sptl_cue_shift(), h, w, m->set, 1);   // (sptl: on the visible impact frame of the hit-confirm wait)
+        MduContactCues(now + (uint64_t) SptlCueShift(), h, w, m->set, 1);   // (sptl: on the visible impact frame of the hit-confirm wait)
     // the combo: next press from the -hit window start (SP 330 ms), buffered before; the 4th hit locks presses for the gap
     // (v5-int22: this was if (m->next) {...} else {...} with the kick-branch block inserted between them by a03d04f0 - the else bound to the kick
     // test, so every blow but light-2 (left-1, light-1, ...) cleared next_move and set the 4th-hit gap: no combo after the opener)
-    if (m->next) { g_mdu.next_move = fnv64_rt(m->next); g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833); }
-    else { g_mdu.next_move = 0; g_mdu.lock_until = now + MDU_GAP4_MS; mdu_p31_ender(m, now); }
-    mdu_early_take(now);
+    if (m->next) {
+        g_mdu.next_move = Fnv64Rt(m->next);
+        g_mdu.win_end = now + (m->combo1 ? m->combo1 : 833);
+    } else {
+        g_mdu.next_move = 0;
+        g_mdu.lock_until = now + MDU_GAP4_MS;
+        MduP31Ender(m, now);
+    }
+    MduEarlyTake(now);
     // v5-var: SP's light-2 combo list holds BOTH light-3 and the step-4 kick (melee-moves.json combo-attack link; SP chain a L291761: left-1, 1, 2, 4-kick) - the only
     // real branch in the duel sets. 1 in 3 the kick (never the same branch 3 times running); its own SP row: tc 437, the 4th-hit gap after it. t2r-duel-no-kick-branch.txt = always 3.
-    if (m->next && !strcmp(m->move, "fist-light-attack-2") && GetFileAttributesA("t2r-duel-no-kick-branch.txt") == INVALID_FILE_ATTRIBUTES) {
-        static int last_k = -1, run; int kr = mdu_row_named("fist-light-attack-4-kick");
-        if (kr >= 0 && (MDU_MOVES[kr].res & 7) == 7 && g_mdu.mv_cd[kr] >= 0 && cd_pair_loaded(g_mdu.mv_cd[kr])) {
-            int k = (hrx_rnd() % 3u) == 0, pk = mdu_p31_kick();
-            if (run >= 2 && k == last_k) k = !k;
-            run = k == last_k ? run + 1 : 1; last_k = k;
+    if (m->next && !strcmp(m->move, "fist-light-attack-2")
+        && GetFileAttributesA("t2r-duel-no-kick-branch.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        static int last_k = -1, run;
+        int kr = MduRowNamed("fist-light-attack-4-kick");
+        if (kr >= 0 && (MDU_MOVES[kr].res & 7) == 7 && g_mdu.mv_cd[kr] >= 0
+            && CdPairLoaded(g_mdu.mv_cd[kr])) {
+            int k = (HrxRnd() % 3u) == 0, pk = MduP31Kick();
+            if (run >= 2 && k == last_k)
+                k = !k;
+            run = k == last_k ? run + 1 : 1;
+            last_k = k;
             // (SP: the kick ended the chains that opened with the left jab - left-1 -> 1 -> 2 -> 4-kick - and 2 -> 3 -> 4-punch followed light-1 / the
             // sprint / the dodge-back attack; MP's random branch gave 4-kick 9 : 4-punch 1): the branch follows the chain's opener. t2r-duel-kick-random-ps30.txt = random.
-            if (pk >= 0) k = pk;
-            if (k) g_mdu.next_move = fnv64_rt(MDU_MOVES[kr].move);
-            DULOG("DUEL: u%04x combo branch after light-2: %s (SP list: 3 or 4-kick; %s)", g_mdu.uid, k ? "fist-light-attack-4-kick" : "fist-light-attack-3",
-                  pk < 0 ? "random 1 in 3, ps30" : pk ? "this chain opened with the left jab: SP ends it with the kick, ps31" : "this chain did not open with the left jab: SP goes 3 -> 4-punch, ps31");
+            if (pk >= 0)
+                k = pk;
+            if (k)
+                g_mdu.next_move = Fnv64Rt(MDU_MOVES[kr].move);
+            DULOG
+                ("DUEL: u%04x combo branch after light-2: %s (SP list: 3 or 4-kick; %s)",
+                 g_mdu.uid,
+                 k ? "fist-light-attack-4-kick" : "fist-light-attack-3",
+                 pk <
+                 0 ? "random 1 in 3, ps30" : pk ?
+                 "this chain opened with the left jab: SP ends it with the kick, ps31"
+                 :
+                 "this chain did not open with the left jab: SP goes 3 -> 4-punch, ps31");
         }
     }
-    padinj_block("melee-attack", m->next ? g_mdu.win_end : g_mdu.lock_until);
-    DULOG("DUEL: u%04x CONTACT %s at %d ms (planned %d): dist at swing start %.2f m, unwarped %.2f m, at contact %.2f m (target %.2f), anchor residual %.2f m; pair %s = %s on us + %s on slot %d, hand-off %.2f s; %s",
-         g_mdu.uid, m->move, (int)(now - g_mdu.sw_t0), m->tc_ms, (double)g_mdu.sw_d0, (double)(g_mdu.sw_d0 - g_mdu.sw_F[8]), (double)d, (double)g_mdu.sw_D, (double)da, CD_PAIRS[cd].name,
-         CD_ATT0(cd), CD_VIC0(cd), s, (double)end_s, m->next ? "next press accepted from +330 ms" : "4th hit: presses dropped for the gap");
+    PadinjBlock("melee-attack",
+                 m->next ? g_mdu.win_end : g_mdu.lock_until);
+    DULOG
+        ("DUEL: u%04x CONTACT %s at %d ms (planned %d): dist at swing start %.2f m, unwarped %.2f m, at contact %.2f m (target %.2f), anchor residual %.2f m; pair %s = %s on us + %s on slot %d, hand-off %.2f s; %s",
+         g_mdu.uid, m->move, (int) (now - g_mdu.sw_t0), m->tc_ms,
+         (double) g_mdu.sw_d0, (double) (g_mdu.sw_d0 - g_mdu.sw_F[8]),
+         (double) d, (double) g_mdu.sw_D, (double) da, CD_PAIRS[cd].name,
+         CD_ATT0(cd), CD_VIC0(cd), s, (double) end_s,
+         m->
+         next ? "next press accepted from +330 ms" :
+         "4th hit: presses dropped for the gap");
 }
+
 // a press inside the combo window: our half blends out, the next SP step starts directly (the engine's own combo was reset by the cancel)
-static void mdu_next(uint64_t now, const char *how) {
-    int s = g_mdu.slot; uint64_t h = puppet_handle((uint32_t)s), mv = g_mdu.next_move;
-    g_mdu.buf_at = 0; g_mdu.win_end = 0; g_mdu.next_move = 0;
-    padinj_block("melee-attack", 0);
+static void MduNext(uint64_t now, const char *how)
+{
+    int s = g_mdu.slot;
+    uint64_t h = PuppetHandle((uint32_t) s), mv = g_mdu.next_move;
+    g_mdu.buf_at = 0;
+    g_mdu.win_end = 0;
+    g_mdu.next_move = 0;
+    PadinjBlock("melee-attack", 0);
     // (at 80 ms ping: a dodge press, then 2 frames later the buffered combo press started light-4 - the swing's warp and the dodge
     // path both wrote the body for 21 frames): while our dodge clip runs the dodge owns the body, the buffered press is dropped. t2r-duel-next-over-dodge.txt = old.
-    if (mdg_own_clip_on() && GetFileAttributesA("t2r-duel-next-over-dodge.txt") == INVALID_FILE_ATTRIBUTES) { DULOG("DUEL: u%04x next press (%s) dropped: our dodge clip runs (the dodge owns the body)", g_mdu.uid, how); return; }
-    if (mdu_p32_row(mdu_row_of(mv)) == 4 && (mdu_p33_b6_off() || mdu_p33_old())) { g_p33_done = 1; DULOG("DUEL: u%04x next press (%s) dropped: the 1h blunt blow 6 is switched off (t2r-duel-1hb-blow6-off.txt) - blow 5 ended the chain (ps33)", g_mdu.uid, how); return; }
-    if (wb_pending()) { DULOG("DUEL: u%04x next press (%s) dropped: the weapon broke on the last blow (drop-broken gesture owns the hand, no engine kill move over it)", g_mdu.uid, how); return; }
-    if (g_mdu.pair_on && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid) { psync_att_out(psync_ms() - g_ps.t0 + g_ps.chain_shift); psync_own_att_free("duel next press"); }
-    uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, mv, 0, 0, 0, 0, 0};
-    if (g_ma_have) for (int i = 3; i < 8; i++) args[i] = g_ma_cache[i];
-    g_mdu_next_ms = now;
-    if (g_start_melee_orig && h && mv) g_start_melee_orig(ret, 8, args, 0);
-    int r = mdu_row_of(mv);
-    DULOG("DUEL: u%04x next press (%s) at +%d ms after the contact: %s started directly -> %llx%s", g_mdu.uid, how, (int)(now - g_mdu.hit_ms), r >= 0 ? MDU_MOVES[r].move : "?", (unsigned long long)ret[0], ret[0] ? "" : " - refused, the press goes to the engine");
-    if (!ret[0]) padinj_press("melee-attack", 120);
+    if (MdgOwnClipOn()
+        && GetFileAttributesA("t2r-duel-next-over-dodge.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        DULOG
+            ("DUEL: u%04x next press (%s) dropped: our dodge clip runs (the dodge owns the body)",
+             g_mdu.uid, how);
+        return;
+    }
+    if (MduP32Row(MduRowOf(mv)) == 4
+        && (MduP33B6Off() || MduP33Old())) {
+        g_p33_done = 1;
+        DULOG
+            ("DUEL: u%04x next press (%s) dropped: the 1h blunt blow 6 is switched off (t2r-duel-1hb-blow6-off.txt) - blow 5 ended the chain (ps33)",
+             g_mdu.uid, how);
+        return;
+    }
+    if (WbPending()) {
+        DULOG
+            ("DUEL: u%04x next press (%s) dropped: the weapon broke on the last blow (drop-broken gesture owns the hand, no engine kill move over it)",
+             g_mdu.uid, how);
+        return;
+    }
+    if (g_mdu.pair_on && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid) {
+        PsyncAttOut(PsyncMs() - g_ps.t0 + g_ps.chain_shift);
+        PsyncOwnAttFree("duel next press");
+    }
+    uint64_t ret[2] = { 0, 0 }, args[8] =
+        { SID_PLAYER, h, mv, 0, 0, 0, 0, 0 };
+    if (g_maHave)
+        for (int i = 3; i < 8; i++)
+            args[i] = g_maCache[i];
+    g_mduNextMs = now;
+    if (g_startMeleeOrig && h && mv)
+        g_startMeleeOrig(ret, 8, args, 0);
+    int r = MduRowOf(mv);
+    DULOG
+        ("DUEL: u%04x next press (%s) at +%d ms after the contact: %s started directly -> %llx%s",
+         g_mdu.uid, how, (int) (now - g_mdu.hit_ms),
+         r >= 0 ? MDU_MOVES[r].move : "?", (unsigned long long) ret[0],
+         ret[0] ? "" : " - refused, the press goes to the engine");
+    if (!ret[0])
+        PadinjPress("melee-attack", 120);
     g_mdu.act_ms = now;
 }
+
 // (g_bot_melee_ms - bot.c: its melee press - is defined with the ps31 block above mdu_swing_note)
 // v5-pinpress: the pad press came only through padinj_blocked_raw() (raw_blk), which melee_pace.c zeroes on every frame of a paired move - the combo window runs
 // during the duel pair, so a pad player's next press was lost there too ("press buffered (0 ms after the contact)" = the stale bit of the starting press).
@@ -2959,126 +6762,292 @@ static void mdu_next(uint64_t now, const char *how) {
 // window) was dropped without a log - the engine started its swing on it, the duel made no blow. Mashing lost every other press. Such a press
 // (100 ms after the swing start, not a repeat of the opener's own press) is kept and counts as buffered when the contact opens the window.
 // t2r-duel-no-early-buffer.txt = the old drop.
-static uint64_t g_mdu_early;
-static void mdu_early_take(uint64_t now) {
-    if (!g_mdu_early || g_mdu_early < g_mdu.sw_t0 + 100 || !g_mdu.next_move || !g_mdu.win_end) { g_mdu_early = 0; return; }
-    if (!g_mdu.buf_at) g_mdu.buf_at = now;
-    DULOG("DUEL: u%04x press %d ms before the contact (in the windup) buffered for the next step", g_mdu.uid, (int)(int64_t)(now - g_mdu_early));
-    g_mdu_early = 0;
+static uint64_t g_mduEarly;
+static void MduEarlyTake(uint64_t now)
+{
+    if (!g_mduEarly || g_mduEarly < g_mdu.sw_t0 + 100 || !g_mdu.next_move
+        || !g_mdu.win_end) {
+        g_mduEarly = 0;
+        return;
+    }
+    if (!g_mdu.buf_at)
+        g_mdu.buf_at = now;
+    DULOG
+        ("DUEL: u%04x press %d ms before the contact (in the windup) buffered for the next step",
+         g_mdu.uid, (int) (int64_t) (now - g_mduEarly));
+    g_mduEarly = 0;
 }
-static int mdu_press_edge(uint64_t now) {
-    static padinj_edge_t t;
+
+static int MduPressEdge(uint64_t now)
+{
+    static PadinjEdgeT t;
     // (v5-pinpress 2, keyboard: + the engine's own melee-attack command - any binding; the block only hides the read joypad's bit, keyboard / mouse
     //  input never showed on it: "pad melee bit ... edges 0" over a whole match)
-    int kb = (game_focused() && (GetAsyncKeyState(0x46) & 0x8000)) || pad_cmd_on("melee-attack"), bot = g_bot_melee_ms && now - g_bot_melee_ms < 80;
-    const char *src = "-"; int e = padinj_mel_edge(&t, now, kb, bot, &src);
+    int kb = (GameFocused() && (GetAsyncKeyState(0x46) & 0x8000))
+        || PadCmdOn("melee-attack"), bot = g_botMeleeMs
+        && now - g_botMeleeMs < 80;
+    const char *src = "-";
+    int e = PadinjMelEdge(&t, now, kb, bot, &src);
     // Melee must not be "spam F, hope for a dodge": a press inside the missed attacker's recovery (mdu_miss_note: melee-attack disabled by mdg_tick for MDU_MISS_LOCK_MS) starts nothing - logged so a test log proves the lock held
     // The dodge counter cannot be parried: a press inside the dodger's
     // priority is swallowed by the MISS lock like any other. t2r-counter-parry-ps50.txt = the earlier narrow parry window again.
-    static int cpar = -1; static uint64_t cpar_at;
-    if (cpar < 0 || now - cpar_at > 3000) { cpar_at = now; cpar = GetFileAttributesA("t2r-counter-parry-ps50.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (e == 1 && cpar && g_mdu.on && g_md50_pri_until > now && g_md50_pri_slot == g_mdu.slot && md50_on()) {   // ps50: the dodger's counter is coming - our press may still parry it (narrow window)
-        int r50 = g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N ? g_mdu.sw_row : 0;
-        DULOG("DUEL: u%04x ps50 press inside the dodger's priority (%d ms left) - parry claim only (window %d ms), no swing", g_mdu.uid, (int)(g_md50_pri_until - now), MD50_PARRY_W_MS);
-        g_md50_narrow = 1; uint64_t lk = g_mdg.atk_lock_until; g_mdg.atk_lock_until = 0; int sw = g_mdu.sw_on; g_mdu.sw_on = 0;
-        mdp_press(r50, now);
-        g_mdu.sw_on = sw; if (!g_mdg.atk_lock_until) g_mdg.atk_lock_until = lk; g_md50_narrow = 0;
+    static int cpar = -1;
+    static uint64_t cpar_at;
+    if (cpar < 0 || now - cpar_at > 3000) {
+        cpar_at = now;
+        cpar =
+            GetFileAttributesA("t2r-counter-parry-ps50.txt") !=
+            INVALID_FILE_ATTRIBUTES;
     }
-    if (e == 1 && g_mdu.on && g_mdg.atk_lock_until > now) { static int nlk; if (LOGCAP(nlk, 200)) DULOG("DUEL: u%04x press (%s) swallowed by the MISS recovery - %d ms of the %d ms lock left, no swing starts", g_mdu.uid, src, (int)(g_mdg.atk_lock_until - now), MDU_MISS_LOCK_MS); }
-    if (e == 1 && g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done && !(g_mdu.win_end > now) && !(g_mdu.lock_until > now) && now >= g_mdu.sw_t0 + 100 && !interact_down()) {
-        static int old = -1; static uint64_t at; if (old < 0 || now - at > 3000) { at = now; old = GetFileAttributesA("t2r-duel-no-early-buffer.txt") != INVALID_FILE_ATTRIBUTES; }
-        if (!old) g_mdu_early = now;
+    if (e == 1 && cpar && g_mdu.on && g_md50PriUntil > now && g_md50PriSlot == g_mdu.slot && Md50On()) {   // ps50: the dodger's counter is coming - our press may still parry it (narrow window)
+        int r50 = g_mdu.sw_row >= 0
+            && g_mdu.sw_row < (int) MDU_MOVES_N ? g_mdu.sw_row : 0;
+        DULOG
+            ("DUEL: u%04x ps50 press inside the dodger's priority (%d ms left) - parry claim only (window %d ms), no swing",
+             g_mdu.uid, (int) (g_md50PriUntil - now), MD50_PARRY_W_MS);
+        g_md50_narrow = 1;
+        uint64_t lk = g_mdg.atk_lock_until;
+        g_mdg.atk_lock_until = 0;
+        int sw = g_mdu.sw_on;
+        g_mdu.sw_on = 0;
+        MdpPress(r50, now);
+        g_mdu.sw_on = sw;
+        if (!g_mdg.atk_lock_until)
+            g_mdg.atk_lock_until = lk;
+        g_md50_narrow = 0;
+    }
+    if (e == 1 && g_mdu.on && g_mdg.atk_lock_until > now) {
+        static int nlk;
+        if (LOGCAP(nlk, 200))
+            DULOG
+                ("DUEL: u%04x press (%s) swallowed by the MISS recovery - %d ms of the %d ms lock left, no swing starts",
+                 g_mdu.uid, src, (int) (g_mdg.atk_lock_until - now),
+                 MDU_MISS_LOCK_MS);
+    }
+    if (e == 1 && g_mdu.on && g_mdu.sw_on && !g_mdu.sw_done
+        && !(g_mdu.win_end > now) && !(g_mdu.lock_until > now)
+        && now >= g_mdu.sw_t0 + 100 && !InteractDown()) {
+        static int old = -1;
+        static uint64_t at;
+        if (old < 0 || now - at > 3000) {
+            at = now;
+            old =
+                GetFileAttributesA("t2r-duel-no-early-buffer.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        if (!old)
+            g_mduEarly = now;
         return 0;
     }
-    if (!e || !(g_mdu.win_end > now || g_mdu.lock_until > now)) return 0;
+    if (!e || !(g_mdu.win_end > now || g_mdu.lock_until > now))
+        return 0;
     static int nl;
-    if (e == 2) { if (LOGCAP(nl, 300)) DULOG("DUEL: u%04x press (%s) ignored: the same press through a second source (< 90 ms)", g_mdu.uid, src); return 0; }
-    if (interact_down()) { if (LOGCAP(nl, 300)) DULOG("DUEL: u%04x press (%s) REFUSED: interact is held (E-contextual)", g_mdu.uid, src); return 0; }
-    if (LOGCAP(nl, 300)) DULOG("DUEL: u%04x press (%s) seen %d ms after the contact (%s)", g_mdu.uid, src, (int)(now - g_mdu.hit_ms), g_mdu.lock_until > now ? "4th-hit gap" : "combo window");
+    if (e == 2) {
+        if (LOGCAP(nl, 300))
+            DULOG
+                ("DUEL: u%04x press (%s) ignored: the same press through a second source (< 90 ms)",
+                 g_mdu.uid, src);
+        return 0;
+    }
+    if (InteractDown()) {
+        if (LOGCAP(nl, 300))
+            DULOG
+                ("DUEL: u%04x press (%s) REFUSED: interact is held (E-contextual)",
+                 g_mdu.uid, src);
+        return 0;
+    }
+    if (LOGCAP(nl, 300))
+        DULOG("DUEL: u%04x press (%s) seen %d ms after the contact (%s)",
+              g_mdu.uid, src, (int) (now - g_mdu.hit_ms),
+              g_mdu.lock_until > now ? "4th-hit gap" : "combo window");
     return 1;
 }
+
 // ---- the hit player
 // ctxdown.c cd_victim_begin: a kind 7 pair START on us. 1 = accepted
-static void mdu_swing_stop(const char *why);
-static uint64_t g_mdu_vic_exit_at;   // ps23: when a dodge may leave the -hit pair running on us (the reaction's exit point, mdu_vic_exit_ms)
-static int mdu_victim_begin(uint32_t slot, float end_s, uint64_t skipf, int pr) {
+static void MduSwingStop(const char *why);
+static uint64_t g_mduVicExitAt;      // ps23: when a dodge may leave the -hit pair running on us (the reaction's exit point, mdu_vic_exit_ms)
+static int MduVictimBegin(uint32_t slot, float end_s, uint64_t skipf,
+                            int pr)
+{
     typedef uint8_t *(*fn_peer)(uint32_t);
     uint64_t now = GetTickCount64();
     const char *no = NULL;
-    if (mpn_vic_gate(slot, pr)) no = "the pin blow we escaped (melee_duel_pin.c)";
-    else if (!mdu_on()) no = "the duel is off here (no t2r-melee-duel.txt)";
-    else if (slot > T2R_MAX_PEERS - 1 || match_substate() != 6 || !__builtin_isfinite(end_s) || end_s < (hof47_off() ? 0.5f : 0.30f) || end_s > 3.0f) no = "bad start";   // (ps47: 0.30 s floor)
-    else if (g_mdu.slot >= 0 && g_mdu.slot != (int)slot) no = "we are in a duel with someone else";
-    else if (g_mdu.slot < 0 && mdu_cooling((int)slot, now)) no = "re-engage cooldown";
-    else if (g_downed || g_down_dying || g_exec_until || g_uc4_dying_until || g_down_at || local_hp() <= 0.0f) no = "we are down / dying / in an execution";
-    else if (g_dcm.on_att || g_dcm.on_vic || g_msq.on) no = "already in a paired move";
-    if (no) { DULOG("DUEL: pair %s on us by slot %u refused: %s", CD_PAIRS[pr].name, slot, no); return 0; }
-    if (g_mdu.slot < 0) mdu_engage((int)slot, "their pair on us", 0);
-    mdu_swing_stop("the partner's pair takes our body (ps22: the warp kept writing the victim half - rec12 B 9.317, 3 SNAPs)");
-    uint8_t *peer = ((fn_peer)t2r_peer)(slot);
-    uint64_t ah = peer ? *(uint64_t *)(peer + 0x60) : 0;
+    if (MpnVicGate(slot, pr))
+        no = "the pin blow we escaped (melee_duel_pin.c)";
+    else if (!MduOn())
+        no = "the duel is off here (no t2r-melee-duel.txt)";
+    else if (slot > T2R_MAX_PEERS - 1 || MatchSubstate() != 6
+             || !__builtin_isfinite(end_s)
+             || end_s < (Hof47Off()? 0.5f : 0.30f) || end_s > 3.0f)
+        no = "bad start";       // (ps47: 0.30 s floor)
+    else if (g_mdu.slot >= 0 && g_mdu.slot != (int) slot)
+        no = "we are in a duel with someone else";
+    else if (g_mdu.slot < 0 && MduCooling((int) slot, now))
+        no = "re-engage cooldown";
+    else if (g_downed || g_downDying || g_execUntil || g_uc4DyingUntil
+             || g_downAt || LocalHp() <= 0.0f)
+        no = "we are down / dying / in an execution";
+    else if (g_dcm.on_att || g_dcm.on_vic || g_msq.on)
+        no = "already in a paired move";
+    if (no) {
+        DULOG("DUEL: pair %s on us by slot %u refused: %s",
+              CD_PAIRS[pr].name, slot, no);
+        return 0;
+    }
+    if (g_mdu.slot < 0)
+        MduEngage((int) slot, "their pair on us", 0);
+    MduSwingStop
+        ("the partner's pair takes our body (ps22: the warp kept writing the victim half - rec12 B 9.317, 3 SNAPs)");
+    uint8_t *peer = ((fn_peer) T2rPeer) (slot);
+    uint64_t ah = peer ? *(uint64_t *) (peer + 0x60) : 0;
     uint64_t left = S60(end_s) > skipf + 3 ? S60(end_s) - skipf : 3;
-    if (g_mhr.on) mhr_end("the duel's synced pair takes the body", 1);
-    g_mhs.on = 0; g_mhs.react = 0;
-    melee_lock_start(1);
-    uc4_ov_off_exec();
-    if (g_uc4_me.cur) uc4_stop(&g_uc4_me);
-    if (g_uc4_pup[slot].cur) uc4_stop(&g_uc4_pup[slot]);
-    finpos_begin(2, (int)slot, 0, left + 60, "melee duel on us");
-    if (ah) xface_start(ah, SID_PLAYER, end_s + 0.6f);
-    g_mdu.pair_on = 1; g_mdu.pair_role = 2; g_mdu.ps_uid = g_ps.uid; g_mdu.pair_row = pr; g_mdu.pair_ms = now; g_mdu.act_ms = now; g_mdu.n_blows++;
-    int skip_ms = (int)(skipf * 1000ull / 60ull), set = CD_PAIRS[pr].style == -1 ? MDU_FIST : CD_PAIRS[pr].style == 3 ? MDU_KNIFE : CD_PAIRS[pr].style == 1 ? MDU_1HBLADE : CD_PAIRS[pr].style == 2 ? MDU_2H : MDU_1HBLUNT;
-    uint64_t w = g_ps.weapon ? g_ps.weapon : fnv64("abby-unarmed");
-    { int ex = mdp_is_pair(pr) ? (int)(end_s * 1000.0f) : mdu_vic_exit_ms(end_s); g_mdu_vic_exit_at = now + (uint64_t)(ex > skip_ms ? ex - skip_ms : 0); }   // ps23 (a parry / clash pair: its hand-off)
+    if (g_mhr.on)
+        MhrEnd("the duel's synced pair takes the body", 1);
+    g_mhs.on = 0;
+    g_mhs.react = 0;
+    MeleeLockStart(1);
+    Uc4OvOffExec();
+    if (g_uc4_me.cur)
+        Uc4Stop(&g_uc4_me);
+    if (g_uc4_pup[slot].cur)
+        Uc4Stop(&g_uc4_pup[slot]);
+    FinposBegin(2, (int) slot, 0, left + 60, "melee duel on us");
+    if (ah)
+        XfaceStart(ah, SID_PLAYER, end_s + 0.6f);
+    g_mdu.pair_on = 1;
+    g_mdu.pair_role = 2;
+    g_mdu.ps_uid = g_ps.uid;
+    g_mdu.pair_row = pr;
+    g_mdu.pair_ms = now;
+    g_mdu.act_ms = now;
+    g_mdu.n_blows++;
+    int skip_ms = (int) (skipf * 1000ull / 60ull), set =
+        CD_PAIRS[pr].style == -1 ? MDU_FIST : CD_PAIRS[pr].style ==
+        3 ? MDU_KNIFE : CD_PAIRS[pr].style ==
+        1 ? MDU_1HBLADE : CD_PAIRS[pr].style == 2 ? MDU_2H : MDU_1HBLUNT;
+    uint64_t w = g_ps.weapon ? g_ps.weapon : FNV64("abby-unarmed");
+    {
+        int ex =
+            MdpIsPair(pr) ? (int) (end_s *
+                                     1000.0f) : MduVicExitMs(end_s);
+        g_mduVicExitAt =
+            now + (uint64_t) (ex > skip_ms ? ex - skip_ms : 0);
+    }                           // ps23 (a parry / clash pair: its hand-off)
     // the recv path played the weapon's blood / sound if the blow arrived before this pair (psync not running yet): no second impact then
-    if (mdp_is_pair(pr)) mdp_victim_cues(now, skip_ms, pr);               // melee_duel_parry.c: a parry / clash pair: no pain, its own clash sounds
-    else { g_mdu_hz = mdu_row_hz(mdu_row_of_cd(pr)); mdu_contact_cues(now - (uint64_t)skip_ms + (mdv_off() ? 0 : (uint64_t)(2.0f * psync_oneway((int)slot))), SID_PLAYER, w, set, set == MDU_FIST || !(g_mdu.vic_fx_ms && now - g_mdu.vic_fx_ms < 400)); }
-    DULOG("DUEL: u%04x pair %s on us by slot %u accepted: %s, phase offset %d ms (one-way latency), hand-off in %.2f s; we face the attacker this frame",
-         g_mdu.uid, CD_PAIRS[pr].name, slot, CD_VIC0(pr), skip_ms, (double)left / 60.0);
+    if (MdpIsPair(pr))
+        MdpVictimCues(now, skip_ms, pr);      // melee_duel_parry.c: a parry / clash pair: no pain, its own clash sounds
+    else {
+        g_mduHz = MduRowHz(MduRowOfCd(pr));
+        MduContactCues(now - (uint64_t) skip_ms +
+                         (MdvOff()? 0
+                          : (uint64_t) (2.0f * PsyncOneway((int) slot))),
+                         SID_PLAYER, w, set, set == MDU_FIST
+                         || !(g_mdu.vic_fx_ms
+                              && now - g_mdu.vic_fx_ms < 400));
+    }
+    DULOG
+        ("DUEL: u%04x pair %s on us by slot %u accepted: %s, phase offset %d ms (one-way latency), hand-off in %.2f s; we face the attacker this frame",
+         g_mdu.uid, CD_PAIRS[pr].name, slot, CD_VIC0(pr), skip_ms,
+         (double) left / 60.0);
     return 1;
 }
+
 // ctxdown.c cd_aborted: the other half went away / refused / was replaced by the next blow. 1 = ours (never the plain down hit: the blow already landed)
-static int mdu_aborted(int role, uint32_t from) {
-    if (!g_mdu.on || (!g_mdu.pair_on && !(g_mdu.pair_ms && GetTickCount64() - g_mdu.pair_ms < 3000)) || (int)from != g_mdu.slot) return 0;
-    DULOG("DUEL: u%04x pair aborted by slot %u (role %d, reason %d)%s", g_mdu.uid, from, role, g_ps_abort_reason, role == 2 ? " - the next blow / a break replaces it" : "");
-    if (g_mdu.pair_role == 2 && g_melee_lock_victim) g_melee_lock_from = 0;
+static int MduAborted(int role, uint32_t from)
+{
+    if (!g_mdu.on
+        || (!g_mdu.pair_on
+            && !(g_mdu.pair_ms && GetTickCount64() - g_mdu.pair_ms < 3000))
+        || (int) from != g_mdu.slot)
+        return 0;
+    DULOG("DUEL: u%04x pair aborted by slot %u (role %d, reason %d)%s",
+          g_mdu.uid, from, role, g_psAbortReason,
+          role == 2 ? " - the next blow / a break replaces it" : "");
+    if (g_mdu.pair_role == 2 && g_meleeLockVictim)
+        g_meleeLockFrom = 0;
     g_mdu.pair_on = 0;
     return 1;
 }
+
 // ctxdown.c cd_contact_fin (v5-lethal): our running duel swing on s is lethal with its SP finisher armed - mdu_contact starts it or delivers the down itself
-static int mdu_owns_lethal(int s) { return g_mdu.on && s >= 0 && g_mdu.slot == s && g_mdu.sw_on && g_mdu.sw_lethal && g_mdu_fin >= 0; }
+static int MduOwnsLethal(int s)
+{
+    return g_mdu.on && s >= 0 && g_mdu.slot == s && g_mdu.sw_on
+        && g_mdu.sw_lethal && g_mduFin >= 0;
+}
+
 // ctxdown.c kd_plain_hit: the duel plays this lethal blow's sound itself (mdu_contact: its lethal punch, no finisher)
-static int mdu_lethal_sound(int s) { return g_mdu.on && s >= 0 && g_mdu.slot == s && g_mdu.sw_lethal && g_mdu_fin < 0; }
+static int MduLethalSound(int s)
+{
+    return g_mdu.on && s >= 0 && g_mdu.slot == s && g_mdu.sw_lethal
+        && g_mduFin < 0;
+}
+
 // paired.c: a duel pair (its blow already landed: the late-dodge test does not apply)
-static int mdu_move(uint64_t move) { int p = cd_pair_of_move(move); return p >= 0 && CD_PAIRS[p].kind == 7; }
+static int MduMove(uint64_t move)
+{
+    int p = CdPairOfMove(move);
+    return p >= 0 && CD_PAIRS[p].kind == 7;
+}
+
 // ---- hooks into the hit paths
 // hitsend_hook / directhit_hook: the engine's own contact on the partner during our duel swing / pair is dropped (the duel's contact carries the blow). 1 = drop
-static int mpn_contact_window(uint32_t slot);   // melee_duel_pin.c: a pin of ours on slot runs / just ended
-static int mdu_contact_drop(uint32_t slot, uint64_t w, float dmg) {
-    (void)w;
-    if (!g_mdu.on || g_mdu.synthing || g_mdu.slot != (int)slot || (g_mdu.sw_on && g_mdu.sw_lethal && g_mdu_fin < 0)) return 0;
+static int MpnContactWindow(uint32_t slot);   // melee_duel_pin.c: a pin of ours on slot runs / just ended
+static int MduContactDrop(uint32_t slot, uint64_t w, float dmg)
+{
+    (void) w;
+    if (!g_mdu.on || g_mdu.synthing || g_mdu.slot != (int) slot
+        || (g_mdu.sw_on && g_mdu.sw_lethal && g_mduFin < 0))
+        return 0;
     uint64_t now = GetTickCount64();
-    if ((g_mdu.sw_on && (!g_mdu.sw_lethal || g_mdu_fin >= 0)) || (g_mdu.hit_ms && now - g_mdu.hit_ms < 600) || mpn_contact_window(slot)) {   // (bat pin: the engine's 40 on the 3rd wall blow downed the victim, no wall finisher)
+    if ((g_mdu.sw_on && (!g_mdu.sw_lethal || g_mduFin >= 0)) || (g_mdu.hit_ms && now - g_mdu.hit_ms < 600) || MpnContactWindow(slot)) {      // (bat pin: the engine's 40 on the 3rd wall blow downed the victim, no wall finisher)
         g_mdu.eng_contact++;
-        DULOG("DUEL: u%04x engine contact on slot %u (dmg %.0f) %s - dropped, the duel's contact carries the blow", g_mdu.uid, slot, (double)dmg, g_mdu.sw_on ? "before the planned contact" : "after the duel's contact");
+        DULOG
+            ("DUEL: u%04x engine contact on slot %u (dmg %.0f) %s - dropped, the duel's contact carries the blow",
+             g_mdu.uid, slot, (double) dmg,
+             g_mdu.
+             sw_on ? "before the planned contact" :
+             "after the duel's contact");
         return 1;
     }
     return 0;
 }
+
 // (a fist blow landed during our finisher windup and our dodge press did not stop it - the dodge mover and the windup warp
 // fought for the body, the finisher still started on a victim that had moved away). SP: being hit or dodging interrupts your own attack. Cancels our lethal swing / finisher windup
 // (the press latch follows g_mdfwu.on; no -sync pair is started). t2r-duel-no-hit-cancel.txt = off.
-static void mdu_own_swing_cancel(const char *why) {
-    if (!g_mdu.on || !(g_mdfwu.on || (g_mdu.sw_on && g_mdu.sw_lethal))) return;
-    static int off = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-duel-no-hit-cancel.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off) return;
-    DULOG("DUEL: u%04x finisher windup cancelled: %s (+%d ms of the windup) - no finisher START, the intro blends out, the press latch is released", g_mdu.uid, why, g_mdfwu.on ? (int)(n - g_mdfwu.t0) : 0);
-    padinj_block("melee-attack", 0);
-    mdu_fw_end(why, 1);
-    g_mdu.sw_on = 0; g_mdu.sw_done = 1; g_mdu.buf_at = 0; g_mdu.win_end = 0; g_mdu.lock_until = 0; g_mdu.next_move = 0; g_mdu.step = 0;
-    g_mdu.act_ms = n; g_mdu.hold_until = n + MDU_HOLD_MS;
+static void MduOwnSwingCancel(const char *why)
+{
+    if (!g_mdu.on || !(g_mdfwu.on || (g_mdu.sw_on && g_mdu.sw_lethal)))
+        return;
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-duel-no-hit-cancel.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off)
+        return;
+    DULOG
+        ("DUEL: u%04x finisher windup cancelled: %s (+%d ms of the windup) - no finisher START, the intro blends out, the press latch is released",
+         g_mdu.uid, why, g_mdfwu.on ? (int) (n - g_mdfwu.t0) : 0);
+    PadinjBlock("melee-attack", 0);
+    MduFwEnd(why, 1);
+    g_mdu.sw_on = 0;
+    g_mdu.sw_done = 1;
+    g_mdu.buf_at = 0;
+    g_mdu.win_end = 0;
+    g_mdu.lock_until = 0;
+    g_mdu.next_move = 0;
+    g_mdu.step = 0;
+    g_mdu.act_ms = n;
+    g_mdu.hold_until = n + MDU_HOLD_MS;
 }
+
 // B took a blow. melee_hitreact.c cancelled B's engine swing
 // ("melee v2: hit mid swing ... our swing cancelled") and played the reaction, but B's ordinary duel swing record stayed on. Its warp moved B and its
 // contact landed a blow on A 16 frames later, so both screens showed a trade. SP rule: a hit reaction interrupts the attack. So a melee blow that
@@ -3092,41 +7061,79 @@ static void mdu_own_swing_cancel(const char *why) {
 // the pair's victim (~1.9 m), so with no pair it slid us 0.30-0.36 m a frame for 10 frames ("no ext writer: the engine"), then the glide added 0.4-0.6 m
 // steps. A plain blow's -hit move plays in place: its horizontal root step is zeroed (adelta_hook) while that move runs (<= 1200 ms); the hit-reaction
 // glide still carries us with the victim's own recoil. t2r-plain-hit-travel-old.txt = the -hit root motion moves us (old).
-#define MDU_PLAIN_DRAIN_M 0.07f   // [TUNING ps23] m a frame (SP's own body step: p90 0.071 m a frame over 22,947 frames, re/sp-melee-spec-1110.md 3)
-static void mdu_plain_rm_arm(void) {
+#define MDU_PLAIN_DRAIN_M 0.07f // [TUNING ps23] m a frame (SP's own body step: p90 0.071 m a frame over 22,947 frames, re/sp-melee-spec-1110.md 3)
+static void MduPlainRmArm(void)
+{
     uint64_t n = GetTickCount64();
-    if (!g_mdu_ehit_move || n - g_mdu_ehit_ms > 600 || g_ms_curmove != g_mdu_ehit_move) return;
-    if (GetFileAttributesA("t2r-plain-hit-travel-old.txt") != INVALID_FILE_ATTRIBUTES) return;
-    g_mdu_plain_rm_move = g_mdu_ehit_move; g_mdu_plain_rm_until = n + 1200;
-    DULOG("DUEL: u%04x plain blow - the engine -hit move %llx plays in place (its root travel is authored for the pair's victim; no pair here)", g_mdu.uid, (unsigned long long)g_mdu_plain_rm_move);
+    if (!g_mdu_ehit_move || n - g_mdu_ehit_ms > 600
+        || g_msCurmove != g_mdu_ehit_move)
+        return;
+    if (GetFileAttributesA("t2r-plain-hit-travel-old.txt") !=
+        INVALID_FILE_ATTRIBUTES)
+        return;
+    g_mdu_plain_rm_move = g_mdu_ehit_move;
+    g_mdu_plain_rm_until = n + 1200;
+    DULOG
+        ("DUEL: u%04x plain blow - the engine -hit move %llx plays in place (its root travel is authored for the pair's victim; no pair here)",
+         g_mdu.uid, (unsigned long long) g_mdu_plain_rm_move);
 }
-static int mdu_plain_adelta(float *r) {
-    if (!g_mdu_plain_rm_until) return 0;
-    if (GetTickCount64() > g_mdu_plain_rm_until || g_ms_curmove != g_mdu_plain_rm_move) { g_mdu_plain_rm_until = 0; return 0; }
+
+static int MduPlainAdelta(float *r)
+{
+    if (!g_mdu_plain_rm_until)
+        return 0;
+    if (GetTickCount64() > g_mdu_plain_rm_until
+        || g_msCurmove != g_mdu_plain_rm_move) {
+        g_mdu_plain_rm_until = 0;
+        return 0;
+    }
     // ('plain blow -hit root step 0.013 .. 0.787 on us zeroed' on 15 frames running - the delta is the engine's wanted spot minus
     // the body (t2r-ext.c adelta_hook), so a zeroed clip step stays pending and GROWS; one frame after it passed 0.8 m the size test below took it for a teleport
     // and let all of it through: 'SNAP 0.73 m in 1 frame' ([17407], named after the last writer, the glide), 0.82 m at [17460]). A teleport / locator write shows as
     // a JUMP of the delta between two frames, the clip's pending travel grows by its per-frame step: only a jump passes at once. Pending travel past 0.8 m is let
     // through at MDU_PLAIN_DRAIN_M a frame (never in one frame). t2r-plain-drain-old.txt = the old size test.
-    {   static float pr[2]; static uint64_t pf, pmv; static int dold = -1; static uint64_t dat; uint64_t dn = GetTickCount64();
-        if (dold < 0 || dn - dat > 3000) { dat = dn; dold = GetFileAttributesA("t2r-plain-drain-old.txt") != INVALID_FILE_ATTRIBUTES; }
+    {
+        static float pr[2];
+        static uint64_t pf, pmv;
+        static int dold = -1;
+        static uint64_t dat;
+        uint64_t dn = GetTickCount64();
+        if (dold < 0 || dn - dat > 3000) {
+            dat = dn;
+            dold =
+                GetFileAttributesA("t2r-plain-drain-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
         float mag = __builtin_sqrtf(r[0] * r[0] + r[2] * r[2]);
         int cont = pf && g_frame - pf <= 1 && pmv == g_mdu_plain_rm_move;
         float jx = r[0] - pr[0], jz = r[2] - pr[1];
         int jump = cont ? jx * jx + jz * jz > 0.8f * 0.8f : mag > 0.8f;
-        pr[0] = r[0]; pr[1] = r[2]; pf = g_frame; pmv = g_mdu_plain_rm_move;
-        if (dold) { if (mag > 0.8f) return 0; }
-        else if (jump) return 0;                                 // (a pending teleport / locator write, not the clip's step)
+        pr[0] = r[0];
+        pr[1] = r[2];
+        pf = g_frame;
+        pmv = g_mdu_plain_rm_move;
+        if (dold) {
+            if (mag > 0.8f)
+                return 0;
+        } else if (jump)
+            return 0;           // (a pending teleport / locator write, not the clip's step)
         else if (mag > 0.8f) {
-            static int nld; if (LOGCAP(nld, 20)) xlog("DUEL: plain blow -hit pending root travel %.2f m on us let through at %.2f m a frame (frame %llu; ps23: no one-frame release)", (double)mag, (double)MDU_PLAIN_DRAIN_M, (unsigned long long)g_frame);
-            r[0] *= MDU_PLAIN_DRAIN_M / mag; r[2] *= MDU_PLAIN_DRAIN_M / mag;
+            static int nld;
+            if (LOGCAP(nld, 20))
+                Xlog("DUEL: plain blow -hit pending root travel %.2f m on us let through at %.2f m a frame (frame %llu; ps23: no one-frame release)", (double) mag, (double) MDU_PLAIN_DRAIN_M, (unsigned long long) g_frame);
+            r[0] *= MDU_PLAIN_DRAIN_M / mag;
+            r[2] *= MDU_PLAIN_DRAIN_M / mag;
             return 1;
         }
     }
-    static int nl; if (LOGCAP(nl, 20)) xlog("DUEL: plain blow -hit root step %.3f %.3f on us zeroed (frame %llu)", (double)r[0], (double)r[2], (unsigned long long)g_frame);
-    r[0] = 0.0f; r[2] = 0.0f;
+    static int nl;
+    if (LOGCAP(nl, 20))
+        Xlog("DUEL: plain blow -hit root step %.3f %.3f on us zeroed (frame %llu)", (double) r[0], (double) r[2], (unsigned long long) g_frame);
+    r[0] = 0.0f;
+    r[2] = 0.0f;
     return 1;
 }
+
 // (our own body turns ~90 deg in one frame at a -hit pair's PLAY on a still camera, about 20
 // times a duel, and the hit-from-behind victim turns ~170 deg within 2 frames (44.733 -> 44.800) - while the locator our writers read back turns slowly: B [13205]
 // 'attacker 0.06 m / 80 deg ... off their spots', 'smooth: glide ... turn <= 420 deg/s', [13207] 'YAW SNAP slot 0 turned 50 deg in 1 frame (clip placement explains
@@ -3140,27 +7147,55 @@ static int mdu_plain_adelta(float *r) {
 // (bisect: with this removal ON 34 one-frame flips / 52 pose pops in 40 s of fighting and 28 'dtl: SNAP' lines,
 // with it OFF 24 / 21 in 31 s and 6 SNAP lines): it made the bodies worse - OFF by default now, opt-IN t2r-duel-yaw-adelta-on.txt (the earlier opt-out file
 // t2r-duel-yaw-adelta-ps39.txt still switches it off when both exist).
-#define MDU_YAW_STEP_DEG 15.0f   // [TUNING ps40] deg / frame (900 deg/s at 60 fps; the coordinator's limit for a turn that is not ours)
-static uint64_t g_mdu_warp_yaw_f;        // the last frame mdu_warp wrote our yaw
-static int mdu_yaw_adelta(float *r) {
-    static int off = -1; static uint64_t chk; uint64_t n = GetTickCount64();
-    if (off < 0 || n - chk > 2000) { chk = n; off = GetFileAttributesA("t2r-duel-yaw-adelta-on.txt") == INVALID_FILE_ATTRIBUTES || GetFileAttributesA("t2r-duel-yaw-adelta-ps39.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off || match_substate() != 6 || g_downed || g_down_dying) return 0;
-    int warp = g_mdu_warp_yaw_f && g_frame - g_mdu_warp_yaw_f <= 1;
-    int drive = g_ps.role && g_ps.kind == PS_CTXDOWN && g_ps.own_drv && (g_ps.ent_att == SID_PLAYER || g_ps.ent_vic == SID_PLAYER) && mdu_move(g_ps.move);
-    if (!warp && !drive && g_mdu.slot < 0) return 0;
-    if (g_tp_frame && g_frame - g_tp_frame <= 2) return 0;                          // (a teleport-player lands through the delta)
-    if (!__builtin_isfinite(r[4] + r[5] + r[6] + r[7]) || __builtin_fabsf(r[4]) + __builtin_fabsf(r[6]) > 0.05f) return 0;   // (not a turn about the up axis)
-    float a = cd_wrap180(2.0f * __builtin_atan2f(r[5], r[7]) * 57.29578f), cap = (warp || drive) ? 0.0f : MDU_YAW_STEP_DEG;
-    if (__builtin_fabsf(a) <= cap + 0.25f) return 0;
+#define MDU_YAW_STEP_DEG 15.0f  // [TUNING ps40] deg / frame (900 deg/s at 60 fps; the coordinator's limit for a turn that is not ours)
+static uint64_t g_mduWarpYawF;       // the last frame mdu_warp wrote our yaw
+static int MduYawAdelta(float *r)
+{
+    static int off = -1;
+    static uint64_t chk;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - chk > 2000) {
+        chk = n;
+        off =
+            GetFileAttributesA("t2r-duel-yaw-adelta-on.txt") ==
+            INVALID_FILE_ATTRIBUTES
+            || GetFileAttributesA("t2r-duel-yaw-adelta-ps39.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off || MatchSubstate() != 6 || g_downed || g_downDying)
+        return 0;
+    int warp = g_mduWarpYawF && g_frame - g_mduWarpYawF <= 1;
+    int drive = g_ps.role && g_ps.kind == PS_CTXDOWN && g_ps.own_drv
+        && (g_ps.ent_att == SID_PLAYER || g_ps.ent_vic == SID_PLAYER)
+        && MduMove(g_ps.move);
+    if (!warp && !drive && g_mdu.slot < 0)
+        return 0;
+    if (g_tpFrame && g_frame - g_tpFrame <= 2)
+        return 0;               // (a teleport-player lands through the delta)
+    if (!__builtin_isfinite(r[4] + r[5] + r[6] + r[7])
+        || __builtin_fabsf(r[4]) + __builtin_fabsf(r[6]) > 0.05f)
+        return 0;               // (not a turn about the up axis)
+    float a =
+        CdWrap180(2.0f * __builtin_atan2f(r[5], r[7]) * 57.29578f), cap =
+        (warp || drive) ? 0.0f : MDU_YAW_STEP_DEG;
+    if (__builtin_fabsf(a) <= cap + 0.25f)
+        return 0;
     float k = (a < 0.0f ? -cap : cap) / 57.29578f;
-    r[4] = 0.0f; r[5] = __builtin_sinf(k * 0.5f); r[6] = 0.0f; r[7] = __builtin_cosf(k * 0.5f);
-    static uint32_t cnt, big; cnt++;
-    if (__builtin_fabsf(a) > MDU_YAW_STEP_DEG) { big++; static int nl; if (LOGCAP(nl, 120)) xlog("DUEL: engine turn of our body %+.0f deg in one frame %s (%s; psync u%08x role %d; frame %llu; #%u over %.0f deg of %u taken; ps40)", (double)a,
-        cap > 0.0f ? "passes at 15 deg a frame, the rest pending" : "taken out - our writer owns the yaw this frame", warp ? "the duel warp wrote it" : drive ? "psync's own drive places us" : "duel engaged, no writer of ours",
-        g_ps.uid, g_ps.role, (unsigned long long)g_frame, big, (double)MDU_YAW_STEP_DEG, cnt); }
+    r[4] = 0.0f;
+    r[5] = __builtin_sinf(k * 0.5f);
+    r[6] = 0.0f;
+    r[7] = __builtin_cosf(k * 0.5f);
+    static uint32_t cnt, big;
+    cnt++;
+    if (__builtin_fabsf(a) > MDU_YAW_STEP_DEG) {
+        big++;
+        static int nl;
+        if (LOGCAP(nl, 120))
+            Xlog("DUEL: engine turn of our body %+.0f deg in one frame %s (%s; psync u%08x role %d; frame %llu; #%u over %.0f deg of %u taken; ps40)", (double) a, cap > 0.0f ? "passes at 15 deg a frame, the rest pending" : "taken out - our writer owns the yaw this frame", warp ? "the duel warp wrote it" : drive ? "psync's own drive places us" : "duel engaged, no writer of ours", g_ps.uid, g_ps.role, (unsigned long long) g_frame, big, (double) MDU_YAW_STEP_DEG, cnt);
+    }
     return 1;
 }
+
 // ps40 D4 (rec39a bodies inside each other outside a pair: 51.7-52.3, 53.3-53.67, 59.0-59.6, 11.77-11.97, 7.6-7.97 s - sheets rev39a s007, s011, s051-s053, s059;
 // A [11541] 'sdodge: puppet slot 0 (attacker's view) travel 0.88 m at 700 ms, 0.51 m at 1000 ms ... spacing to us start 1.41 end 0.40 m': the dodge clip steps back
 // 0.37 m toward us at its end while our missed swing's follow-through carries us on (B [13204] 'the engine's own lunge +0.63 m toward the victim'); the only
@@ -3168,582 +7203,1332 @@ static int mdu_yaw_adelta(float *r) {
 // the engine's delta of our body loses the part that would bring our root closer than MDU_SEP_M to the partner's displayed root (it stays pending, like every
 // refused part of that delta: the body stops at the distance, no push back, no second writer); while our swing warp runs the limit is MDU_SEP_WARP_M (the
 // warp itself aims at the contact distance, 0.95 m and up). Each screen holds its own body. t2r-duel-sep-ps39.txt = old.
-#define MDU_SEP_M 0.70f        // [TUNING ps40] m root to root (two ~0.30 m bodies + 0.10; dtl's puppet push-out is 0.55, SP's duel spacing 1.0-1.2)
-#define MDU_SEP_WARP_M 0.50f   // [TUNING ps40] m while our swing warp places us
-static struct { uint64_t f; float mx, mz, px, pz; } g_mdu_sep;
-static void mdu_sep_note(void) {
-    g_mdu_sep.f = 0;
-    if (g_mdu.slot < 0 || g_ps.role || g_downed) return;
-    uint64_t ph = puppet_handle((uint32_t)g_mdu.slot);
-    float mb[16], pb[16]; const float *l = uc4_my_loc(mb), *p = ph ? puppet_locator(ph, pb) : NULL;
-    if (!l || !p || !__builtin_isfinite(l[0] + l[2] + p[0] + p[2]) || g_peer_downed[g_mdu.slot]) return;
-    g_mdu_sep.mx = l[0]; g_mdu_sep.mz = l[2]; g_mdu_sep.px = p[0]; g_mdu_sep.pz = p[2]; g_mdu_sep.f = g_frame ? g_frame : 1;
+#define MDU_SEP_M 0.70f         // [TUNING ps40] m root to root (two ~0.30 m bodies + 0.10; dtl's puppet push-out is 0.55, SP's duel spacing 1.0-1.2)
+#define MDU_SEP_WARP_M 0.50f    // [TUNING ps40] m while our swing warp places us
+static struct {
+    uint64_t f;
+    float mx, mz, px, pz;
+} g_mduSep;
+static void MduSepNote(void)
+{
+    g_mduSep.f = 0;
+    if (g_mdu.slot < 0 || g_ps.role || g_downed)
+        return;
+    uint64_t ph = PuppetHandle((uint32_t) g_mdu.slot);
+    float mb[16], pb[16];
+    const float *l = Uc4MyLoc(mb), *p =
+        ph ? PuppetLocator(ph, pb) : NULL;
+    if (!l || !p || !__builtin_isfinite(l[0] + l[2] + p[0] + p[2])
+        || g_peerDowned[g_mdu.slot])
+        return;
+    g_mduSep.mx = l[0];
+    g_mduSep.mz = l[2];
+    g_mduSep.px = p[0];
+    g_mduSep.pz = p[2];
+    g_mduSep.f = g_frame ? g_frame : 1;
 }
-static int mdu_sep_adelta(float *r) {
-    static int off = -1; static uint64_t chk; uint64_t n = GetTickCount64();
-    if (off < 0 || n - chk > 2000) { chk = n; off = GetFileAttributesA("t2r-duel-sep-ps39.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off || !g_mdu_sep.f || g_frame - g_mdu_sep.f > 1 || g_ps.role || g_mdu.slot < 0 || (g_tp_frame && g_frame - g_tp_frame <= 2)) return 0;
-    float dx = g_mdu_sep.px - g_mdu_sep.mx, dz = g_mdu_sep.pz - g_mdu_sep.mz, d = __builtin_sqrtf(dx * dx + dz * dz);
-    if (!(d > 0.05f) || d > 3.0f) return 0;
+
+static int MduSepAdelta(float *r)
+{
+    static int off = -1;
+    static uint64_t chk;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - chk > 2000) {
+        chk = n;
+        off =
+            GetFileAttributesA("t2r-duel-sep-ps39.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off || !g_mduSep.f || g_frame - g_mduSep.f > 1 || g_ps.role
+        || g_mdu.slot < 0 || (g_tpFrame && g_frame - g_tpFrame <= 2))
+        return 0;
+    float dx = g_mduSep.px - g_mduSep.mx, dz =
+        g_mduSep.pz - g_mduSep.mz, d =
+        __builtin_sqrtf(dx * dx + dz * dz);
+    if (!(d > 0.05f) || d > 3.0f)
+        return 0;
     float ux = dx / d, uz = dz / d, c = r[0] * ux + r[2] * uz;
-    float lim = g_mdu_warp_yaw_f && g_frame - g_mdu_warp_yaw_f <= 1 ? MDU_SEP_WARP_M : MDU_SEP_M, allow = d > lim ? d - lim : 0.0f;
-    if (!(c > allow) || c > 1.0f) return 0;                    // (not closing past the limit; a step over 1 m is a teleport / locator write, not a walk)
+    float lim = g_mduWarpYawF
+        && g_frame - g_mduWarpYawF <= 1 ? MDU_SEP_WARP_M : MDU_SEP_M,
+        allow = d > lim ? d - lim : 0.0f;
+    if (!(c > allow) || c > 1.0f)
+        return 0;               // (not closing past the limit; a step over 1 m is a teleport / locator write, not a walk)
     float cut = c - allow;
-    r[0] -= ux * cut; r[2] -= uz * cut;
-    static uint32_t cnt; static uint64_t lf; cnt++;
-    if (g_frame - lf > 30) { static int nl; if (LOGCAP(nl, 80)) xlog("DUEL: spacing - our body %.2f m from slot %d's, the engine's step %.3f m toward it cut by %.3f m (limit %.2f m root to root%s; frame %llu, %u cuts so far; ps40)",
-        (double)d, g_mdu.slot, (double)c, (double)cut, (double)lim, lim < MDU_SEP_M ? ", our swing warp runs" : "", (unsigned long long)g_frame, cnt); }
+    r[0] -= ux * cut;
+    r[2] -= uz * cut;
+    static uint32_t cnt;
+    static uint64_t lf;
+    cnt++;
+    if (g_frame - lf > 30) {
+        static int nl;
+        if (LOGCAP(nl, 80))
+            Xlog("DUEL: spacing - our body %.2f m from slot %d's, the engine's step %.3f m toward it cut by %.3f m (limit %.2f m root to root%s; frame %llu, %u cuts so far; ps40)", (double) d, g_mdu.slot, (double) c, (double) cut, (double) lim, lim < MDU_SEP_M ? ", our swing warp runs" : "", (unsigned long long) g_frame, cnt);
+    }
     lf = g_frame;
     return 1;
 }
-static int cd_offset_at(uint64_t ent, const char *clip, float p0, float *c);   // ctxdown.c
-static void mdu_rec_measure(int cd, uint64_t h, float end_s) {
-    g_mdu_rec_ms = 0;
-    if (cd < 0 || cd >= (int)CD_N || !h || h == ~0ULL) return;
-    if (g_mdu_rec_row[cd] == 0) {
-        float p[25][8]; int n = 0, ok = 1;
-        for (int k = 0; k <= 24 && ok; k++) { if (!cd_offset_at(h, CD_VIC0(cd), (float)k * 0.05f, p[k])) ok = 0; else n = k + 1; }
-        if (n < 8) { g_mdu_rec_row[cd] = -1; DULOG("DUEL: next-press gate: the victim half %s of %s is unreadable (%d samples) - SP's %d ms", CD_VIC0(cd), CD_PAIRS[cd].name, n, MDU_NEXT_MS); }
-        else {
+
+static int CdOffsetAt(uint64_t ent, const char *clip, float p0, float *c);    // ctxdown.c
+static void MduRecMeasure(int cd, uint64_t h, float end_s)
+{
+    g_mduRecMs = 0;
+    if (cd < 0 || cd >= (int) CD_N || !h || h == ~0ULL)
+        return;
+    if (g_mduRecRow[cd] == 0) {
+        float p[25][8];
+        int n = 0, ok = 1;
+        for (int k = 0; k <= 24 && ok; k++) {
+            if (!CdOffsetAt(h, CD_VIC0(cd), (float) k * 0.05f, p[k]))
+                ok = 0;
+            else
+                n = k + 1;
+        }
+        if (n < 8) {
+            g_mduRecRow[cd] = -1;
+            DULOG
+                ("DUEL: next-press gate: the victim half %s of %s is unreadable (%d samples) - SP's %d ms",
+                 CD_VIC0(cd), CD_PAIRS[cd].name, n, MDU_NEXT_MS);
+        } else {
             // (attacks felt too slow, about one per second): the first version took the peak over the whole 1.2 s and got 4-7 m/s spikes at 100 / 750 / 800 / 900 ms
             // (the clip's root sampled through the ap reference, not the recoil) -> gates of 950-1200 ms. The recoil is the first MDU_REC_WIN_MS only (samples from 50 ms on);
             // a peak later than that is not a recoil (base timing), and the gate never passes the victim's free time (MDU_VIC_FREE_S).
-            float v[25]; float pk = 0.0f; int ipk = 0; int kmax = MDU_REC_WIN_MS / 50; if (kmax > n - 1) kmax = n - 1;
-            for (int k = 2; k <= kmax; k++) { float dx = p[k][0] - p[k - 1][0], dz = p[k][2] - p[k - 1][2]; v[k] = __builtin_sqrtf(dx * dx + dz * dz) / 0.05f; if (v[k] > pk) { pk = v[k]; ipk = k; } }
+            float v[25];
+            float pk = 0.0f;
+            int ipk = 0;
+            int kmax = MDU_REC_WIN_MS / 50;
+            if (kmax > n - 1)
+                kmax = n - 1;
+            for (int k = 2; k <= kmax; k++) {
+                float dx = p[k][0] - p[k - 1][0], dz =
+                    p[k][2] - p[k - 1][2];
+                v[k] = __builtin_sqrtf(dx * dx + dz * dz) / 0.05f;
+                if (v[k] > pk) {
+                    pk = v[k];
+                    ipk = k;
+                }
+            }
             int rec = -1;
-            for (int k = ipk + 1; k <= kmax; k++) if (v[k] < pk * MDU_REC_FRAC) { rec = k * 50; break; }
-            if (!(pk > 0.3f) || ipk * 50 > MDU_REC_PEAK_MS) rec = MDU_NEXT_MS;   // no recoil in the root / a late spike: SP's timing
-            if (rec < 0) rec = kmax * 50;
-            if (rec > (int)(MDU_VIC_FREE_S * 1000.0f)) rec = (int)(MDU_VIC_FREE_S * 1000.0f);
-            g_mdu_rec_row[cd] = rec < MDU_NEXT_MS ? MDU_NEXT_MS : rec;
-            DULOG("DUEL: next-press gate for %s: victim root recoil peak %.2f m/s at %d ms, under %.0f%% of it from %d ms -> the next swing is accepted from %d ms after the contact (SP 330)",
-                  CD_PAIRS[cd].name, (double)pk, ipk * 50, (double)(MDU_REC_FRAC * 100.0f), rec, g_mdu_rec_row[cd]);
+            for (int k = ipk + 1; k <= kmax; k++)
+                if (v[k] < pk * MDU_REC_FRAC) {
+                    rec = k * 50;
+                    break;
+                }
+            if (!(pk > 0.3f) || ipk * 50 > MDU_REC_PEAK_MS)
+                rec = MDU_NEXT_MS;      // no recoil in the root / a late spike: SP's timing
+            if (rec < 0)
+                rec = kmax * 50;
+            if (rec > (int) (MDU_VIC_FREE_S * 1000.0f))
+                rec = (int) (MDU_VIC_FREE_S * 1000.0f);
+            g_mduRecRow[cd] = rec < MDU_NEXT_MS ? MDU_NEXT_MS : rec;
+            DULOG
+                ("DUEL: next-press gate for %s: victim root recoil peak %.2f m/s at %d ms, under %.0f%% of it from %d ms -> the next swing is accepted from %d ms after the contact (SP 330)",
+                 CD_PAIRS[cd].name, (double) pk, ipk * 50,
+                 (double) (MDU_REC_FRAC * 100.0f), rec, g_mduRecRow[cd]);
         }
     }
-    int r = g_mdu_rec_row[cd] > 0 ? g_mdu_rec_row[cd] : MDU_NEXT_MS, cap = (int)(end_s * 1000.0f) - 50;
-    r = (int)((float)r / mdu_react_rate() + 0.5f);                       // the reaction runs faster: its recovery comes earlier
-    if (cap > MDU_NEXT_MS && r > cap) r = cap;
-    if (r < MDU_NEXT_MS) r = MDU_NEXT_MS;
-    g_mdu_rec_ms = r;
+    int r = g_mduRecRow[cd] > 0 ? g_mduRecRow[cd] : MDU_NEXT_MS, cap =
+        (int) (end_s * 1000.0f) - 50;
+    r = (int) ((float) r / MduReactRate() + 0.5f);    // the reaction runs faster: its recovery comes earlier
+    if (cap > MDU_NEXT_MS && r > cap)
+        r = cap;
+    if (r < MDU_NEXT_MS)
+        r = MDU_NEXT_MS;
+    g_mduRecMs = r;
 }
-static void mdu_swing_stop(const char *why) {
-    if (!g_mdu.on || !g_mdu.sw_on || g_mdu.sw_done) return;
-    if (g_mdfwu.on || g_mdu.sw_lethal) { mdu_own_swing_cancel(why); return; }
-    static int off = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-duel-hit-cancel-old.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off) return;
-    g_mdu_sw_cut_ms = GetTickCount64();      // ps41: ps_take_other40 - a pair half that starts now takes a body out of its own swing
-    DULOG("DUEL: u%04x swing %s cancelled at +%d ms (contact was due in %d ms): %s - no contact, no warp",
-          g_mdu.uid, g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].move : "?", (int)(n - g_mdu.sw_t0), (int)(int64_t)(g_mdu.sw_tc - n), why);
-    g_mdu.sw_on = 0; g_mdu.sw_done = 1; g_mdu.act_ms = n;
+
+static void MduSwingStop(const char *why)
+{
+    if (!g_mdu.on || !g_mdu.sw_on || g_mdu.sw_done)
+        return;
+    if (g_mdfwu.on || g_mdu.sw_lethal) {
+        MduOwnSwingCancel(why);
+        return;
+    }
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-duel-hit-cancel-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off)
+        return;
+    g_mduSwCutMs = GetTickCount64(); // ps41: ps_take_other40 - a pair half that starts now takes a body out of its own swing
+    DULOG
+        ("DUEL: u%04x swing %s cancelled at +%d ms (contact was due in %d ms): %s - no contact, no warp",
+         g_mdu.uid, g_mdu.sw_row >= 0
+         && g_mdu.sw_row <
+         (int) MDU_MOVES_N ? MDU_MOVES[g_mdu.sw_row].move : "?",
+         (int) (n - g_mdu.sw_t0), (int) (int64_t) (g_mdu.sw_tc - n), why);
+    g_mdu.sw_on = 0;
+    g_mdu.sw_done = 1;
+    g_mdu.act_ms = n;
 }
-static void mdu_swing_hit_cancel(uint32_t slot) { (void)slot; mdu_swing_stop("a melee blow interrupted it, the reaction owns the body"); }
-static void mdu_swing_dodge_cancel(void) { mdu_swing_stop("our dodge interrupted it, the dodge owns the body"); }
+
+static void MduSwingHitCancel(uint32_t slot)
+{
+    (void) slot;
+    MduSwingStop
+        ("a melee blow interrupted it, the reaction owns the body");
+}
+
+static void MduSwingDodgeCancel(void)
+{
+    MduSwingStop("our dodge interrupted it, the dodge owns the body");
+}
+
 // recv_hit_hook (victim of any hit): a third player's hit breaks the duel for both; the partner's blow is the duel's (fx noted)
-static void mdu_note_hit(uint32_t slot, uint64_t w, float dmg) {
-    (void)w;
-    if (!g_mdu.on || g_mdu.slot < 0 || !(dmg > 0.0f)) return;
-    mdu_own_swing_cancel("a blow landed on us");
-    if ((int)slot == g_mdu.slot) { if (!psync_own()) g_mdu.vic_fx_ms = GetTickCount64(); g_mdu.act_ms = GetTickCount64(); return; }
-    mdu_end("a third player hit us", 1, MDUO_BREAK);
+static void MduNoteHit(uint32_t slot, uint64_t w, float dmg)
+{
+    (void) w;
+    if (!g_mdu.on || g_mdu.slot < 0 || !(dmg > 0.0f))
+        return;
+    MduOwnSwingCancel("a blow landed on us");
+    if ((int) slot == g_mdu.slot) {
+        if (!PsyncOwn())
+            g_mdu.vic_fx_ms = GetTickCount64();
+        g_mdu.act_ms = GetTickCount64();
+        return;
+    }
+    MduEnd("a third player hit us", 1, MDUO_BREAK);
 }
+
 // feel.c hrx_victim_hit: the partner's blow plays the duel pair, not the stagger / SP flinch (1 = skip them)
-static int mdu_vic_blow(uint32_t slot) { return g_mdu.on && g_mdu.slot == (int)slot; }
+static int MduVicBlow(uint32_t slot)
+{
+    return g_mdu.on && g_mdu.slot == (int) slot;
+}
+
 // feel.c hrx_victim_hit: 1 = the duel owns this blow's reaction (its synced pair), the stagger / SP reaction are skipped. v5-var: a blow announced as
 // PLAIN (no pair) goes to the normal SP reaction; a blow that arrives BEFORE its PLAIN notice is kept 400 ms and replayed when the notice comes.
-static struct { uint32_t slot; uint64_t w, at; float dmg, hb, ha; } g_mdu_pend;
-static int mdu_vic_hold(uint32_t slot, uint64_t w, float dmg, float hp_before, float hp_after) {
-    if (!mdu_vic_blow(slot)) return 0;
-    if (mdu_plain_now(slot)) {
-        DULOG("DUEL: plain blow from slot %u (no pair, step %d) - the SP hit reaction plays (strength floor %d)", slot, g_mdu_plain_step[slot], mdu_plain_str(slot));
+static struct {
+    uint32_t slot;
+    uint64_t w, at;
+    float dmg, hb, ha;
+} g_mduPend;
+static int MduVicHold(uint32_t slot, uint64_t w, float dmg,
+                        float hp_before, float hp_after)
+{
+    if (!MduVicBlow(slot))
+        return 0;
+    if (MduPlainNow(slot)) {
+        DULOG
+            ("DUEL: plain blow from slot %u (no pair, step %d) - the SP hit reaction plays (strength floor %d)",
+             slot, g_mduPlainStep[slot], MduPlainStr(slot));
         // (a kick did no damage and showed no hit reaction; [33051] md-fist-light-attack-2-hit on us, hand-off 0.83 s; [33099] the
         // plain 4-kick lands 0.80 s in: 'meleestun: no stagger: busy' + 'hitreact: no reaction: busy (paired)' - the 17 damage applied (66 -> 49) but nothing showed,
         // [33102] the -2-hit pair ends): a plain blow of the same partner inside our duel -hit victim half, past its impact part, hands the body off now so the SP
         // reaction of the new blow plays. t2r-plain-handoff-ps48-old.txt = old. Proof line "ps48 plain blow".
-        static int off48 = -1; static uint64_t at48; uint64_t n48 = GetTickCount64();
-        if (off48 < 0 || n48 - at48 > 2000) { at48 = n48; off48 = GetFileAttributesA("t2r-plain-handoff-ps48-old.txt") != INVALID_FILE_ATTRIBUTES; }
-        if (!off48 && g_ps.role == 2 && g_ps.ent_vic == SID_PLAYER && g_ps.kind == PS_CTXDOWN && g_ps.att == (int)slot) {
-            double t48 = (psync_ms() - g_ps.t0 + g_ps.chain_shift) / 1000.0;
-            if (t48 >= 0.30) { DULOG("DUEL: ps48 plain blow from slot %u %.2f s into our -hit victim half u%08x - handed off now, the new blow's SP reaction plays", slot, t48, g_ps.uid); psync_finish("ps48 next plain duel blow: hand-off now", 0); }
-            else DULOG("DUEL: ps48 plain blow from slot %u only %.2f s into our -hit victim half (impact part) - the pair keeps the body", slot, t48);
+        static int off48 = -1;
+        static uint64_t at48;
+        uint64_t n48 = GetTickCount64();
+        if (off48 < 0 || n48 - at48 > 2000) {
+            at48 = n48;
+            off48 =
+                GetFileAttributesA("t2r-plain-handoff-ps48-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        if (!off48 && g_ps.role == 2 && g_ps.ent_vic == SID_PLAYER
+            && g_ps.kind == PS_CTXDOWN && g_ps.att == (int) slot) {
+            double t48 =
+                (PsyncMs() - g_ps.t0 + g_ps.chain_shift) / 1000.0;
+            if (t48 >= 0.30) {
+                DULOG
+                    ("DUEL: ps48 plain blow from slot %u %.2f s into our -hit victim half u%08x - handed off now, the new blow's SP reaction plays",
+                     slot, t48, g_ps.uid);
+                PsyncFinish("ps48 next plain duel blow: hand-off now", 0);
+            } else
+                DULOG
+                    ("DUEL: ps48 plain blow from slot %u only %.2f s into our -hit victim half (impact part) - the pair keeps the body",
+                     slot, t48);
         }
         return 0;
     }
-    if (hp_after > 0.0f) { g_mdu_pend.slot = slot; g_mdu_pend.w = w; g_mdu_pend.dmg = dmg; g_mdu_pend.hb = hp_before; g_mdu_pend.ha = hp_after; g_mdu_pend.at = GetTickCount64(); }
+    if (hp_after > 0.0f) {
+        g_mduPend.slot = slot;
+        g_mduPend.w = w;
+        g_mduPend.dmg = dmg;
+        g_mduPend.hb = hp_before;
+        g_mduPend.ha = hp_after;
+        g_mduPend.at = GetTickCount64();
+    }
     return 1;
 }
+
 // melee_tell.c mtell_cue: the duel plays its own swing cues on both screens
-static int mdu_owns_cue(uint32_t who) { return g_mdu.on && g_mdu.slot >= 0 && (who == T2R_MAX_PEERS ? g_mdu.sw_on : (int)who == g_mdu.slot); }
+static int MduOwnsCue(uint32_t who)
+{
+    return g_mdu.on && g_mdu.slot >= 0
+        && (who == T2R_MAX_PEERS ? g_mdu.sw_on : (int) who == g_mdu.slot);
+}
+
 // MSG_MEX op 5 (t2r-ext.c dispatch, before mex_recv's op check)
 // ---- (the animation got stuck before the finisher;
 // in logs): the attacker's lethal swing became the finisher windup and cut the running -hit pair (SENDER-CUT). Our victim body then had NO clip for
 // the intro + the late START (816 ms): a static pose on both screens (the attacker's screen shows our net body). SP: the victim is still in its hit reaction
 // while the attacker's intro plays. The cut -hit victim half (paired.c g_ps47_cut) now keeps playing on our body from the phase it was cut at, until the
 // finisher START takes the body (psync) or the windup's window ends (dodged / refused: stopped with a 0.20 s blend). t2r-fw-vic-hold-ps47-old.txt = old.
-static struct { uint64_t sid, until; int on; } g_fwvh47;
-static int fwvh47_off(void) { static int off = -1; static uint64_t at; uint64_t n = GetTickCount64(); if (off < 0 || n - at > 2000) { at = n; off = GetFileAttributesA("t2r-fw-vic-hold-ps47-old.txt") != INVALID_FILE_ATTRIBUTES; } return off; }
-static void mdu_fw_vic_hold(uint32_t slot, int tce_ms) {
-    uint64_t now = GetTickCount64();
-    if (!g_ps47_cut.sid || now - g_ps47_cut.ms > 150) return;
-    if (fwvh47_off()) { DULOG("DUEL: ps47 finisher windup of slot %u - the cut -hit half stays cut (t2r-fw-vic-hold-ps47-old.txt = old)", slot); g_ps47_cut.sid = 0; return; }
-    if (psync_active()) { g_ps47_cut.sid = 0; return; }
-    float ph = g_ps47_cut.ph + (g_ps47_cut.dur > 0.05f ? (float)(now - g_ps47_cut.ms) / 1000.0f / g_ps47_cut.dur : 0.0f);
-    if (!(ph >= 0.0f) || ph > 0.95f) { DULOG("DUEL: ps47 finisher windup of slot %u - the cut -hit half was at phase %.3f: nothing to keep", slot, (double)ph); g_ps47_cut.sid = 0; return; }
-    uint64_t r = mhr_animate(SID_PLAYER, g_ps47_cut.sid, ph, 0.06f);
-    g_fwvh47.on = r && r != ~0ULL; g_fwvh47.sid = g_ps47_cut.sid; g_fwvh47.until = now + (uint64_t)(tce_ms > 0 ? tce_ms : 500) + 250;
-    DULOG("DUEL: ps47 finisher windup of slot %u: our cut -hit victim half %016llx (u%08x) plays on from phase %.3f (cut %llu ms ago) through the intro (%d ms) -> %s",
-          slot, (unsigned long long)g_ps47_cut.sid, g_ps47_cut.uid, (double)ph, (unsigned long long)(now - g_ps47_cut.ms), tce_ms, g_fwvh47.on ? "playing" : "animate_ refused");
-    g_ps47_cut.sid = 0;
+static struct {
+    uint64_t sid, until;
+    int on;
+} g_fwvh47;
+static int Fwvh47Off(void)
+{
+    static int off = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (off < 0 || n - at > 2000) {
+        at = n;
+        off =
+            GetFileAttributesA("t2r-fw-vic-hold-ps47-old.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    return off;
 }
-static void mdu_fw_vic_hold_tick(void) {
-    if (!g_fwvh47.on) return;
+
+static void MduFwVicHold(uint32_t slot, int tce_ms)
+{
     uint64_t now = GetTickCount64();
-    if (psync_active()) { g_fwvh47.on = 0; DULOG("DUEL: ps47 the kept -hit half ends: a paired move took our body (the finisher START)"); return; }
-    if (now < g_fwvh47.until) return;
-    g_fwvh47.on = 0; mhr_stop(SID_PLAYER, g_fwvh47.sid, 0.20f);
-    DULOG("DUEL: ps47 the kept -hit half stopped (0.20 s blend): the windup's time is over and no finisher START came (dodged / refused / plain blow)");
+    if (!g_ps47Cut.sid || now - g_ps47Cut.ms > 150)
+        return;
+    if (Fwvh47Off()) {
+        DULOG
+            ("DUEL: ps47 finisher windup of slot %u - the cut -hit half stays cut (t2r-fw-vic-hold-ps47-old.txt = old)",
+             slot);
+        g_ps47Cut.sid = 0;
+        return;
+    }
+    if (PsyncActive()) {
+        g_ps47Cut.sid = 0;
+        return;
+    }
+    float ph =
+        g_ps47Cut.ph + (g_ps47Cut.dur >
+                         0.05f ? (float) (now -
+                                          g_ps47Cut.ms) / 1000.0f /
+                         g_ps47Cut.dur : 0.0f);
+    if (!(ph >= 0.0f) || ph > 0.95f) {
+        DULOG
+            ("DUEL: ps47 finisher windup of slot %u - the cut -hit half was at phase %.3f: nothing to keep",
+             slot, (double) ph);
+        g_ps47Cut.sid = 0;
+        return;
+    }
+    uint64_t r = MhrAnimate(SID_PLAYER, g_ps47Cut.sid, ph, 0.06f);
+    g_fwvh47.on = r && r != ~0ULL;
+    g_fwvh47.sid = g_ps47Cut.sid;
+    g_fwvh47.until = now + (uint64_t) (tce_ms > 0 ? tce_ms : 500) + 250;
+    DULOG
+        ("DUEL: ps47 finisher windup of slot %u: our cut -hit victim half %016llx (u%08x) plays on from phase %.3f (cut %llu ms ago) through the intro (%d ms) -> %s",
+         slot, (unsigned long long) g_ps47Cut.sid, g_ps47Cut.uid,
+         (double) ph, (unsigned long long) (now - g_ps47Cut.ms), tce_ms,
+         g_fwvh47.on ? "playing" : "animate_ refused");
+    g_ps47Cut.sid = 0;
 }
-static void mdu_recv(uint32_t slot, const uint8_t *buf, uint64_t len) {
-    if (slot >= T2R_MAX_PEERS || !buf || len < 4 || !mdu_on()) return;
-    int op = buf[1]; uint16_t uid = (uint16_t)(buf[2] | (buf[3] << 8)); uint64_t now = GetTickCount64();
+
+static void MduFwVicHoldTick(void)
+{
+    if (!g_fwvh47.on)
+        return;
+    uint64_t now = GetTickCount64();
+    if (PsyncActive()) {
+        g_fwvh47.on = 0;
+        DULOG
+            ("DUEL: ps47 the kept -hit half ends: a paired move took our body (the finisher START)");
+        return;
+    }
+    if (now < g_fwvh47.until)
+        return;
+    g_fwvh47.on = 0;
+    MhrStop(SID_PLAYER, g_fwvh47.sid, 0.20f);
+    DULOG
+        ("DUEL: ps47 the kept -hit half stopped (0.20 s blend): the windup's time is over and no finisher START came (dodged / refused / plain blow)");
+}
+
+static void MduRecv(uint32_t slot, const uint8_t *buf, uint64_t len)
+{
+    if (slot >= T2R_MAX_PEERS || !buf || len < 4 || !MduOn())
+        return;
+    int op = buf[1];
+    uint16_t uid = (uint16_t) (buf[2] | (buf[3] << 8));
+    uint64_t now = GetTickCount64();
     if (op == MDUO_LATE) {
-        g_mdu_late_rx[slot] = now; DULOG("DUEL: u%04x slot %u ruled our dodge press TOO LATE - its blow lands", uid, slot);
+        g_mduLateRx[slot] = now;
+        DULOG
+            ("DUEL: u%04x slot %u ruled our dodge press TOO LATE - its blow lands",
+             uid, slot);
         // our combat dodge clip had started before this ruling arrived and played in full (1.17 m back, into a crate) while we
         // took the hit. A dodge started < 350 ms ago is released here: the blow lands, the hit reaction takes the body. t2r-late-dodge-keep.txt = keep it.
-        if (g_mdg.cmb_on && now - g_mdg.cmb_ms < 350 && GetFileAttributesA("t2r-late-dodge-keep.txt") == INVALID_FILE_ATTRIBUTES) mdg_combat_release("TOO LATE ruled by the attacker", now);
+        if (g_mdg.cmb_on && now - g_mdg.cmb_ms < 350
+            && GetFileAttributesA("t2r-late-dodge-keep.txt") ==
+            INVALID_FILE_ATTRIBUTES)
+            MdgCombatRelease("TOO LATE ruled by the attacker", now);
         return;
     }
     if (op == MDUO_PLAIN) {
-        if (g_mdu.slot != (int)slot || mdu_plain_off()) return;
-        g_mdu_plain_at[slot] = now ? now : 1; g_mdu_plain_step[slot] = len >= 6 ? buf[5] : 1; g_mdu_plain_row[slot] = len >= 6 ? buf[4] : -1;
-        mct_note_plain(slot);   // ps25 (melee_duel_contact.c): the replica stops waiting for a START, the -hit follow-through starts from its pose
-        int late = g_mdu_pend.at && g_mdu_pend.slot == slot && now - g_mdu_pend.at < 400 && !PS_OURS;
-        DULOG("DUEL: u%04x slot %u's blow (step %d) landed without a pair - %s", uid, slot, g_mdu_plain_step[slot], late ? "its hit came first: the SP hit reaction is replayed now" : "the SP hit reaction takes it");
-        if (late) { g_mdu_pend.at = 0; mhstun_note(slot, g_mdu_pend.w, g_mdu_pend.dmg, g_mdu_pend.hb, g_mdu_pend.ha); }
+        if (g_mdu.slot != (int) slot || MduPlainOff())
+            return;
+        g_mduPlainAt[slot] = now ? now : 1;
+        g_mduPlainStep[slot] = len >= 6 ? buf[5] : 1;
+        g_mdu_plain_row[slot] = len >= 6 ? buf[4] : -1;
+        MctNotePlain(slot);   // ps25 (melee_duel_contact.c): the replica stops waiting for a START, the -hit follow-through starts from its pose
+        int late = g_mduPend.at && g_mduPend.slot == slot
+            && now - g_mduPend.at < 400 && !PS_OURS;
+        DULOG
+            ("DUEL: u%04x slot %u's blow (step %d) landed without a pair - %s",
+             uid, slot, g_mduPlainStep[slot],
+             late ?
+             "its hit came first: the SP hit reaction is replayed now" :
+             "the SP hit reaction takes it");
+        if (late) {
+            g_mduPend.at = 0;
+            MhstunNote(slot, g_mduPend.w, g_mduPend.dmg, g_mduPend.hb,
+                        g_mduPend.ha);
+        }
         return;
     }
-    if (op >= 6) { mdp_recv(slot, op, buf, len); return; }               // melee_duel_parry.c: the parry / clash claim
+    if (op >= 6) {
+        MdpRecv(slot, op, buf, len);
+        return;
+    }                           // melee_duel_parry.c: the parry / clash claim
     if (op == MDUO_ENGAGE || op == MDUO_SWING) {
-        if (g_mdu.slot >= 0 && g_mdu.slot != (int)slot) { DULOG("DUEL: op %d from slot %u ignored - in a duel with slot %d", op, slot, g_mdu.slot); return; }
-        if (g_mdu.slot < 0) { if (mdu_cooling((int)slot, now)) { DULOG("DUEL: ENGAGE from slot %u during the cooldown - ignored", slot); return; } mdu_engage((int)slot, "their swing", uid); }
-        g_mdu.act_ms = now; g_mdu.sw_from[slot] = now;
-        bq_recv_engage(slot, op == MDUO_ENGAGE ? (len >= 7 ? buf[6] : 0) : (len >= 12 ? buf[11] : 0), uid, now, op);   // melee_beat.c: the partner capability bit
-        mad_note((int)slot, op == MDUO_ENGAGE ? "duel ENGAGE: its swing is on us" : "duel SWING on us");   // v5-mdraw: the swing is on its way - ready the melee weapon we carry
+        if (g_mdu.slot >= 0 && g_mdu.slot != (int) slot) {
+            DULOG
+                ("DUEL: op %d from slot %u ignored - in a duel with slot %d",
+                 op, slot, g_mdu.slot);
+            return;
+        }
+        if (g_mdu.slot < 0) {
+            if (MduCooling((int) slot, now)) {
+                DULOG
+                    ("DUEL: ENGAGE from slot %u during the cooldown - ignored",
+                     slot);
+                return;
+            }
+            MduEngage((int) slot, "their swing", uid);
+        }
+        g_mdu.act_ms = now;
+        g_mdu.sw_from[slot] = now;
+        BqRecvEngage(slot, op == MDUO_ENGAGE ? (len >= 7 ? buf[6] : 0) : (len >= 12 ? buf[11] : 0), uid, now, op);    // melee_beat.c: the partner capability bit
+        MadNote((int) slot, op == MDUO_ENGAGE ? "duel ENGAGE: its swing is on us" : "duel SWING on us");       // v5-mdraw: the swing is on its way - ready the melee weapon we carry
         if (op == MDUO_SWING && len >= 8 && buf[4] < MDU_MOVES_N) {
-            const mdu_row_t *m = &MDU_MOVES[buf[4]];
-            g_mdu_psw_knife_ms[slot] = m->set == MDU_KNIFE ? (now ? now : 1) : 0;   // v5-knife: its blow on us is the knife's (fkr_victim_w)
+            const MduRowT *m = &MDU_MOVES[buf[4]];
+            g_mduPswKnifeMs[slot] = m->set == MDU_KNIFE ? (now ? now : 1) : 0;       // v5-knife: its blow on us is the knife's (fkr_victim_w)
             // v5-sfx press latch, replica side (B [47003]-[47098]: slot 0's windup replica restarted 3 times, a new SWING each time): a SWING from the slot whose
             // finisher windup replica runs on its puppet and has not reached its contact yet is a re-press the sender's latch should have swallowed (an older
             // build, a race) - the running replica, its pick and its dodge window stay. (A dodged windup ends on the sender as a miss: its next swing comes after
             // the miss lock, past this contact.) t2r-duel-no-fin-latch.txt = off.
-            if (g_mdu_fw_rsid[slot] && g_mdu_fw_rend[slot] > now + 150 && GetFileAttributesA("t2r-duel-no-fin-latch.txt") == INVALID_FILE_ATTRIBUTES) {
-                static int nl; if (LOGCAP(nl, 40)) DULOG("DUEL: u%04x slot %u's SWING %s ignored - its finisher windup replica runs to its contact in %lld ms (press latch: one lethal swing, one finisher)",
-                                                         g_mdu.uid, slot, m->move, (long long)(g_mdu_fw_rend[slot] - 150 - now));
+            if (g_mduFwRsid[slot] && g_mdu_fw_rend[slot] > now + 150
+                && GetFileAttributesA("t2r-duel-no-fin-latch.txt") ==
+                INVALID_FILE_ATTRIBUTES) {
+                static int nl;
+                if (LOGCAP(nl, 40))
+                    DULOG
+                        ("DUEL: u%04x slot %u's SWING %s ignored - its finisher windup replica runs to its contact in %lld ms (press latch: one lethal swing, one finisher)",
+                         g_mdu.uid, slot, m->move,
+                         (long long) (g_mdu_fw_rend[slot] - 150 - now));
                 return;
             }
             // v5-finwind: bytes 9-10 = the finisher row + 1 whose SP intro is this windup (tce = its contact on the sender's clock)
-            int fin = len >= 11 ? (int)(buf[9] | (buf[10] << 8)) - 1 : -1, tce_w = buf[6] | (buf[7] << 8), fim = 0;
-            if (fin >= 0 && (fin >= (int)CD_N || !cd_mf_intro(fin))) { DULOG("DUEL: slot %u's SWING names finisher row %d - not an SP-intro finisher here (another build?) - a normal swing", slot, fin); fin = -1; }
-            if (fin >= 0) { fim = (int)(cd_seg_len(fin, 0) * 1000.0f + 0.5f); if (fim < 100) { DULOG("DUEL: slot %u's finisher windup %s: its SP intro is not loaded here (%d ms) - a normal swing", slot, CD_PAIRS[fin].name + 3, fim); fin = -1; } }
-            if (fin >= 0 && (tce_w < fim || tce_w > fim + 150)) tce_w = fim;
-            g_mdu_fw_ptc[slot] = fin >= 0 ? tce_w : 0;
-            mdp_note_swing(slot, buf[4], fin >= 0 ? tce_w : m->tc_ms, now);   // melee_duel_parry.c
-            uint64_t t0 = now - (uint64_t)psync_oneway((int)slot), ph = puppet_handle(slot); uint64_t pw = 0;
-            if (ph) mdl_begin_row(buf[4], ph, (int)slot, m->tc_ms);               // measure the row on the replica too (melee_dodge.c)
-            uint8_t *pe = mdg_peer(slot); if (pe && !IsBadReadPtr(pe + 0x91, 8)) memcpy(&pw, pe + 0x91, 8);
-            if (ph && fin >= 0) { mdu_row_t fr = mdu_fw_row(m, fim); g_mdu_cue_k = (float)tce_w / (float)fim; mdu_swing_cues(&fr, now, ph, pw, (int)slot); g_mdu_cue_k = 1.0f; }   // (the replica's clock: from now, contact = now + tce)
-            else if (ph) { int tce_r = buf[6] | (buf[7] << 8);   // sptl: on the replica's clock (it starts now from phase 0, its contact = now + tce), not the sender's
-                if (sptl_on()) { g_mdu_cue_k = sptl_cue_k(m->tc_ms, tce_r); mdu_swing_cues(m, now, ph, pw, (int)slot); g_mdu_cue_k = 1.0f; } else mdu_swing_cues(m, t0, ph, pw, (int)slot); }
-            if (now - g_mdg.sw[slot].ms > 250) {   // the dodge prompt disappeared after the 1st hit: combo steps 2-4 start through g_start_melee_orig
-                g_mdg.sw[slot].ms = t0; g_mdg.sw[slot].open_ms = 0; g_mdg.sw[slot].seq = ++g_mdg.seq_n; g_mdg.sw[slot].landed_ms = 0;   // (no dodge swing announce) - the duel's SWING message is that announce
-                DULOG("DUEL: u%04x slot %u's %s registered as a dodgeable swing (the dodge window opens)", g_mdu.uid, slot, m->move); }
-            g_mdu.vsw_at[slot] = now; g_mdu.vsw_end[slot] = fin >= 0 ? now + (uint64_t)tce_w + 30 : now + (uint64_t)((buf[6] | (buf[7] << 8)) > m->tc_ms && (buf[6] | (buf[7] << 8)) <= m->tc_ms + 800 ? (buf[6] | (buf[7] << 8)) : m->tc_ms) + 30;   /* ps22: was <= tc + 150 - a +250 / +350 ms wind-up fell back to the unstretched tc: the window shut 250-300 ms before the blow showed */     // the dodge window closes when the contact shows on OUR screen (+ the 30 ms tie grace); the START reaches us then
-            g_mdu49_vtc[slot] = g_mdu.vsw_end[slot];   // ps49 (melee_dodge.c MDG49_COVER_MS)
-            g_dtl_trim_hold = (fin >= 0 && mdv_fin_wide()) ? 260 : 140;
-            { int wt = md54_off() || md45_win_old() ? dtl_window_trim(slot) : 0;   // duel timeline: the dodge verdict must reach the attacker inside its hit-confirm hold (paired.c vlag <= 140 ms); ps54: no ping trim - a later refusal ends the attacker's pair copy (NO HIT)
-              if (wt && g_mdu.vsw_end[slot] > now + (uint64_t)wt) { g_mdu.vsw_end[slot] -= (uint64_t)wt; DULOG("dtl: slot %u's swing - our dodge window closes %d ms before its contact shows (the verdict reaches it inside its 140 ms hit-confirm hold at one-way %.0f ms)", slot, wt, (double)psync_oneway((int)slot)); } }
-            if (!md45_win_old()) {   // (melee_dodge.c md45_*): the window closes where the attacker's ruling stops accepting the press - a lead of md45_vic_lead on our screen
-                int tce45 = fin >= 0 ? tce_w : ((buf[6] | (buf[7] << 8)) > m->tc_ms && (buf[6] | (buf[7] << 8)) <= m->tc_ms + 800 ? (buf[6] | (buf[7] << 8)) : m->tc_ms);
-                float ow45 = psync_oneway((int)slot); int lead45 = md54_off() ? md45_vic_lead(ow45) : MD54_VIC_LEAD_MS, keep45 = tce45 - lead45 < 120 ? 120 : tce45 - lead45;   // (a window always stays pressable this long; the same lead on every link)
-                uint64_t e45 = now + (uint64_t)keep45, was45 = g_mdu.vsw_end[slot];
-                if (e45 < was45) g_mdu.vsw_end[slot] = e45;
-                static int nl45; if (LOGCAP(nl45, 120)) DULOG("DUEL: u%04x ps45 dodge window of slot %u's %s: open to +%lld ms = %d ms before its contact shows here (+%d; press lead >= %d ms on our screen = the attacker's limit %d ms + round trip %.0f + jitter %d), ps44 ran to +%lld",
-                    g_mdu.uid, slot, m->move, (long long)(g_mdu.vsw_end[slot] - now), tce45 - (int)(g_mdu.vsw_end[slot] - now), tce45, lead45, md45_att_lead(ow45), (double)(2.0f * ow45), MD45_JITTER_MS, (long long)(was45 - now));
+            int fin =
+                len >= 11 ? (int) (buf[9] | (buf[10] << 8)) - 1 : -1,
+                tce_w = buf[6] | (buf[7] << 8), fim = 0;
+            if (fin >= 0 && (fin >= (int) CD_N || !CdMfIntro(fin))) {
+                DULOG
+                    ("DUEL: slot %u's SWING names finisher row %d - not an SP-intro finisher here (another build?) - a normal swing",
+                     slot, fin);
+                fin = -1;
             }
-            if (fin >= 0) {   // v5-finwind: the lethal blow's windup is the finisher's SP intro - on its puppet; our body stays ours until the pair START (the contact)
-                DULOG("DUEL: u%04x slot %u's LETHAL swing %s is the FINISHER WINDUP %s: SP intro %s (%d ms, its contact at +%d ms on its clock), contact on us in ~%d ms; our dodge window runs to it (closes in %lld ms), our body stays free",
-                      g_mdu.uid, slot, m->move, CD_PAIRS[fin].name + 3, CD_PAIRS[fin].seg[0].att, fim, tce_w, tce_w - (int)psync_oneway((int)slot), (long long)(g_mdu.vsw_end[slot] - now));
-                if (!mdp_nosw44(slot, "finisher windup")) {   // (a windup that lost the first-wins ruling: no intro replica, no gasp, no early draw, no latch)
-                g_mdu_fw_rsid[slot] = fnv64(CD_PAIRS[fin].seg[0].att); g_mdu_fw_rend[slot] = now + (uint64_t)tce_w + 150;
-                eb_fin_gasp(SID_PLAYER, slot, g_mdu.uid, "the finisher intro's first frame, victim's screen");   // ps31 D
-                mdu_fw_vic_hold(slot, tce_w);                                                   // ps47: our cut -hit reaction plays on through the intro
-                cd_dis_early_draw(fin);                                                          // v5-disfix: a disarm windup - the weapon we carry is in our hand from the intro's first frame
-                dtl_pred_fin(slot, buf[4], fin, tce_w, psync_oneway((int)slot));                 // melee_duel_tl.c: the intro replica on its puppet (no -hit carry: mct_arm_swing is the -hit pair's)
+            if (fin >= 0) {
+                fim = (int) (CdSegLen(fin, 0) * 1000.0f + 0.5f);
+                if (fim < 100) {
+                    DULOG
+                        ("DUEL: slot %u's finisher windup %s: its SP intro is not loaded here (%d ms) - a normal swing",
+                         slot, CD_PAIRS[fin].name + 3, fim);
+                    fin = -1;
+                }
+            }
+            if (fin >= 0 && (tce_w < fim || tce_w > fim + 150))
+                tce_w = fim;
+            g_mduFwPtc[slot] = fin >= 0 ? tce_w : 0;
+            MdpNoteSwing(slot, buf[4], fin >= 0 ? tce_w : m->tc_ms, now);     // melee_duel_parry.c
+            uint64_t t0 = now - (uint64_t) PsyncOneway((int) slot), ph =
+                PuppetHandle(slot);
+            uint64_t pw = 0;
+            if (ph)
+                MdlBeginRow(buf[4], ph, (int) slot, m->tc_ms);        // measure the row on the replica too (melee_dodge.c)
+            uint8_t *pe = MdgPeer(slot);
+            if (pe && !IsBadReadPtr(pe + 0x91, 8))
+                memcpy(&pw, pe + 0x91, 8);
+            if (ph && fin >= 0) {
+                MduRowT fr = MduFwRow(m, fim);
+                g_mduCueK = (float) tce_w / (float) fim;
+                MduSwingCues(&fr, now, ph, pw, (int) slot);
+                g_mduCueK = 1.0f;
+            }                   // (the replica's clock: from now, contact = now + tce)
+            else if (ph) {
+                int tce_r = buf[6] | (buf[7] << 8);     // sptl: on the replica's clock (it starts now from phase 0, its contact = now + tce), not the sender's
+                if (SptlOn()) {
+                    g_mduCueK = SptlCueK(m->tc_ms, tce_r);
+                    MduSwingCues(m, now, ph, pw, (int) slot);
+                    g_mduCueK = 1.0f;
+                } else
+                    MduSwingCues(m, t0, ph, pw, (int) slot);
+            }
+            if (now - g_mdg.sw[slot].ms > 250) {        // the dodge prompt disappeared after the 1st hit: combo steps 2-4 start through g_start_melee_orig
+                g_mdg.sw[slot].ms = t0;
+                g_mdg.sw[slot].open_ms = 0;
+                g_mdg.sw[slot].seq = ++g_mdg.seq_n;
+                g_mdg.sw[slot].landed_ms = 0;   // (no dodge swing announce) - the duel's SWING message is that announce
+                DULOG
+                    ("DUEL: u%04x slot %u's %s registered as a dodgeable swing (the dodge window opens)",
+                     g_mdu.uid, slot, m->move);
+            }
+            g_mdu.vsw_at[slot] = now;
+            g_mdu.vsw_end[slot] = fin >= 0 ? now + (uint64_t) tce_w + 30 : now + (uint64_t) ((buf[6] | (buf[7] << 8)) > m->tc_ms && (buf[6] | (buf[7] << 8)) <= m->tc_ms + 800 ? (buf[6] | (buf[7] << 8)) : m->tc_ms) + 30;     /* ps22: was <= tc + 150 - a +250 / +350 ms wind-up fell back to the unstretched tc: the window shut 250-300 ms before the blow showed */// the dodge window closes when the contact shows on OUR screen (+ the 30 ms tie grace); the START reaches us then
+            g_mdu49Vtc[slot] = g_mdu.vsw_end[slot];    // ps49 (melee_dodge.c MDG49_COVER_MS)
+            g_dtlTrimHold = (fin >= 0 && MdvFinWide())? 260 : 140;
+            {
+                int wt = Md54Off() || Md45WinOld()? DtlWindowTrim(slot) : 0;       // duel timeline: the dodge verdict must reach the attacker inside its hit-confirm hold (paired.c vlag <= 140 ms); ps54: no ping trim - a later refusal ends the attacker's pair copy (NO HIT)
+                if (wt && g_mdu.vsw_end[slot] > now + (uint64_t) wt) {
+                    g_mdu.vsw_end[slot] -= (uint64_t) wt;
+                    DULOG
+                        ("dtl: slot %u's swing - our dodge window closes %d ms before its contact shows (the verdict reaches it inside its 140 ms hit-confirm hold at one-way %.0f ms)",
+                         slot, wt, (double) PsyncOneway((int) slot));
+                }
+            }
+            if (!Md45WinOld()) {      // (melee_dodge.c md45_*): the window closes where the attacker's ruling stops accepting the press - a lead of md45_vic_lead on our screen
+                int tce45 =
+                    fin >= 0 ? tce_w : ((buf[6] | (buf[7] << 8)) > m->tc_ms
+                                        && (buf[6] | (buf[7] << 8)) <=
+                                        m->tc_ms +
+                                        800 ? (buf[6] | (buf[7] << 8)) :
+                                        m->tc_ms);
+                float ow45 = PsyncOneway((int) slot);
+                int lead45 = Md54Off()? Md45VicLead(ow45) : MD54_VIC_LEAD_MS, keep45 = tce45 - lead45 < 120 ? 120 : tce45 - lead45;  // (a window always stays pressable this long; the same lead on every link)
+                uint64_t e45 = now + (uint64_t) keep45, was45 =
+                    g_mdu.vsw_end[slot];
+                if (e45 < was45)
+                    g_mdu.vsw_end[slot] = e45;
+                static int nl45;
+                if (LOGCAP(nl45, 120))
+                    DULOG
+                        ("DUEL: u%04x ps45 dodge window of slot %u's %s: open to +%lld ms = %d ms before its contact shows here (+%d; press lead >= %d ms on our screen = the attacker's limit %d ms + round trip %.0f + jitter %d), ps44 ran to +%lld",
+                         g_mdu.uid, slot, m->move,
+                         (long long) (g_mdu.vsw_end[slot] - now),
+                         tce45 - (int) (g_mdu.vsw_end[slot] - now), tce45,
+                         lead45, Md45AttLead(ow45),
+                         (double) (2.0f * ow45), MD45_JITTER_MS,
+                         (long long) (was45 - now));
+            }
+            if (fin >= 0) {     // v5-finwind: the lethal blow's windup is the finisher's SP intro - on its puppet; our body stays ours until the pair START (the contact)
+                DULOG
+                    ("DUEL: u%04x slot %u's LETHAL swing %s is the FINISHER WINDUP %s: SP intro %s (%d ms, its contact at +%d ms on its clock), contact on us in ~%d ms; our dodge window runs to it (closes in %lld ms), our body stays free",
+                     g_mdu.uid, slot, m->move, CD_PAIRS[fin].name + 3,
+                     CD_PAIRS[fin].seg[0].att, fim, tce_w,
+                     tce_w - (int) PsyncOneway((int) slot),
+                     (long long) (g_mdu.vsw_end[slot] - now));
+                if (!MdpNosw44(slot, "finisher windup")) {     // (a windup that lost the first-wins ruling: no intro replica, no gasp, no early draw, no latch)
+                    g_mduFwRsid[slot] = FNV64(CD_PAIRS[fin].seg[0].att);
+                    g_mdu_fw_rend[slot] = now + (uint64_t) tce_w + 150;
+                    EbFinGasp(SID_PLAYER, slot, g_mdu.uid, "the finisher intro's first frame, victim's screen");      // ps31 D
+                    MduFwVicHold(slot, tce_w);       // ps47: our cut -hit reaction plays on through the intro
+                    CdDisEarlyDraw(fin);     // v5-disfix: a disarm windup - the weapon we carry is in our hand from the intro's first frame
+                    DtlPredFin(slot, buf[4], fin, tce_w, PsyncOneway((int) slot));   // melee_duel_tl.c: the intro replica on its puppet (no -hit carry: mct_arm_swing is the -hit pair's)
                 }
             } else {
-            DULOG("DUEL: u%04x slot %u swings %s (step %d), contact on us in ~%d ms (clip %d ms + wind-up), dodge window to +%lld ms", g_mdu.uid, slot, m->move, buf[5], (buf[6] | (buf[7] << 8)) - (int)psync_oneway((int)slot), m->tc_ms, (long long)(g_mdu.vsw_end[slot] - now));
-            // ps50: the dodger's priority - its swing started inside our MISS lock: we stay locked to its contact (+100 ms), so it is never a trade; our dodge stays open
-            if (md50_on() && (int)slot == g_mdu.slot && g_mdg.atk_lock_until > now) {
-                int tc50 = (buf[6] | (buf[7] << 8)) - (int)psync_oneway((int)slot); if (tc50 < 0) tc50 = 0; if (tc50 > 900) tc50 = 900;
-                uint64_t e50 = now + (uint64_t)tc50 + 100;
-                g_md50_pri_until = e50; g_md50_pri_slot = (int)slot;
-                if (e50 > g_mdg.atk_lock_until) { DULOG("DUEL: u%04x ps50 DODGER PRIORITY: slot %u countered inside our MISS lock (%lld ms left) - we stay locked to its contact, +%d ms", g_mdu.uid, slot, (long long)(g_mdg.atk_lock_until - now), tc50 + 100); g_mdg.atk_lock_until = e50; }
-            }
-            if (!mdp_nosw44(slot, m->move)) {   // (a swing that lost the first-wins ruling plays no replica)
-            dtl_pred_swing(slot, buf[4], buf[6] | (buf[7] << 8), psync_oneway((int)slot));   // duel timeline: the swing clip on its puppet from this message (prediction)
-            mct_arm_swing(slot, buf[4], buf[6] | (buf[7] << 8), psync_oneway((int)slot), len >= 9 ? buf[8] : 0);    // melee_duel_contact.c: its puppet is carried onto the pair's contact spot over the windup
-            sptl_note_rswing(slot, buf[4], buf[6] | (buf[7] << 8));                         // melee_duel_sptl.c: the replica's clock (SWING arrival) for this exchange's line
-            }
+                DULOG
+                    ("DUEL: u%04x slot %u swings %s (step %d), contact on us in ~%d ms (clip %d ms + wind-up), dodge window to +%lld ms",
+                     g_mdu.uid, slot, m->move, buf[5],
+                     (buf[6] | (buf[7] << 8)) -
+                     (int) PsyncOneway((int) slot), m->tc_ms,
+                     (long long) (g_mdu.vsw_end[slot] - now));
+                // ps50: the dodger's priority - its swing started inside our MISS lock: we stay locked to its contact (+100 ms), so it is never a trade; our dodge stays open
+                if (Md50On() && (int) slot == g_mdu.slot
+                    && g_mdg.atk_lock_until > now) {
+                    int tc50 =
+                        (buf[6] | (buf[7] << 8)) -
+                        (int) PsyncOneway((int) slot);
+                    if (tc50 < 0)
+                        tc50 = 0;
+                    if (tc50 > 900)
+                        tc50 = 900;
+                    uint64_t e50 = now + (uint64_t) tc50 + 100;
+                    g_md50PriUntil = e50;
+                    g_md50PriSlot = (int) slot;
+                    if (e50 > g_mdg.atk_lock_until) {
+                        DULOG
+                            ("DUEL: u%04x ps50 DODGER PRIORITY: slot %u countered inside our MISS lock (%lld ms left) - we stay locked to its contact, +%d ms",
+                             g_mdu.uid, slot,
+                             (long long) (g_mdg.atk_lock_until - now),
+                             tc50 + 100);
+                        g_mdg.atk_lock_until = e50;
+                    }
+                }
+                if (!MdpNosw44(slot, m->move)) {       // (a swing that lost the first-wins ruling plays no replica)
+                    DtlPredSwing(slot, buf[4], buf[6] | (buf[7] << 8), PsyncOneway((int) slot));     // duel timeline: the swing clip on its puppet from this message (prediction)
+                    MctArmSwing(slot, buf[4], buf[6] | (buf[7] << 8), PsyncOneway((int) slot), len >= 9 ? buf[8] : 0);       // melee_duel_contact.c: its puppet is carried onto the pair's contact spot over the windup
+                    SptlNoteRswing(slot, buf[4], buf[6] | (buf[7] << 8));     // melee_duel_sptl.c: the replica's clock (SWING arrival) for this exchange's line
+                }
             }
         }
         return;
     }
-    if ((op == MDUO_END || op == MDUO_BREAK) && g_mdu.slot == (int)slot) {
-        if (op == MDUO_BREAK && g_mdu.pair_on && g_ps.role && g_ps.uid == g_mdu.ps_uid) psync_abort("duel broken by the partner", 0);
-        mdu_end(op == MDUO_BREAK ? "the partner was hit by a third player" : "the partner ended it", 0, op);
+    if ((op == MDUO_END || op == MDUO_BREAK) && g_mdu.slot == (int) slot) {
+        if (op == MDUO_BREAK && g_mdu.pair_on && g_ps.role
+            && g_ps.uid == g_mdu.ps_uid)
+            PsyncAbort("duel broken by the partner", 0);
+        MduEnd(op ==
+                MDUO_BREAK ? "the partner was hit by a third player" :
+                "the partner ended it", 0, op);
     }
 }
+
 // ---- every frame (after mex_tick)
-static void mdu_tick(void) {
-    mdu_fw_vic_hold_tick();   // ps47
-    mdu_sep_note();                                                        // ps40 D4: both roots for the engine-delta spacing rule (mdu_sep_adelta)
-    if (!(g_mdu.sw_on && !g_mdu.sw_done)) mdu_yaw_track();                 // ps23: our facing while no duel swing places it (the next swing's turn starts from it)
-    mdu_wallfan_tick();                                                    // the wall steer's ray fan round the opponent
-    mfp_tick();                                                            // the finisher fan checks, one row per frame once the opponent is one hit from down
-    mfg_tick();                                                            // ps41: the finisher rows' path gates, one probe in flight, while the opponent is one hit from down
-    mdu_press_latch_tick();                                                // v5-sfx: no melee press restarts a finisher windup / a running finisher, counter or disarm
-    if (!mdu_on()) { if (g_mdu.slot >= 0) mdu_end("switched off", 1, MDUO_END); return; }
-    dtl_tick();                                                            // melee_duel_tl.c: queue, catch-up rates, snap detector, 30 s summary
-    mct_tick();                                                            // melee_duel_contact.c: the replica's rate to its contact frame, the warp's end, the per-blow contact metrics
-    sptl_tick();                                                           // melee_duel_sptl.c: restored swing speed / stop, the per-exchange SP timeline line
-    mst_tick();                                                            // melee_duel_stance.c: SP's fighting stance on both bodies between blows
+static void MduTick(void)
+{
+    MduFwVicHoldTick();     // ps47
+    MduSepNote();             // ps40 D4: both roots for the engine-delta spacing rule (mdu_sep_adelta)
+    if (!(g_mdu.sw_on && !g_mdu.sw_done))
+        MduYawTrack();        // ps23: our facing while no duel swing places it (the next swing's turn starts from it)
+    MduWallfanTick();         // the wall steer's ray fan round the opponent
+    MfpTick();                 // the finisher fan checks, one row per frame once the opponent is one hit from down
+    MfgTick();                 // ps41: the finisher rows' path gates, one probe in flight, while the opponent is one hit from down
+    MduPressLatchTick();     // v5-sfx: no melee press restarts a finisher windup / a running finisher, counter or disarm
+    if (!MduOn()) {
+        if (g_mdu.slot >= 0)
+            MduEnd("switched off", 1, MDUO_END);
+        return;
+    }
+    DtlTick();                 // melee_duel_tl.c: queue, catch-up rates, snap detector, 30 s summary
+    MctTick();                 // melee_duel_contact.c: the replica's rate to its contact frame, the warp's end, the per-blow contact metrics
+    SptlTick();                // melee_duel_sptl.c: restored swing speed / stop, the per-exchange SP timeline line
+    MstTick();                 // melee_duel_stance.c: SP's fighting stance on both bodies between blows
     uint64_t now = GetTickCount64();
-    mdu_sound_tick(now);
-    mdp_tick(now);                                                         // melee_duel_parry.c: parry / clash sounds + the pair being placed
-    mdv_tick(now);                                                         // C1 verdict: the blow's damage on the victim's ACK
-    bq_tick(now);                                                          // melee_beat.c: owner resolve, PLAY_AT starts, the duel record death / leave end
-    mdw_tick(now);                                                         // v5-pinfix3 3: the duel blows' durability ledger
-    mdu_p31_tick(now);                                                     // ps31: SP's opener rule (press edge, the move search's decision inputs, the refused opener's start)
-    mdu_p31_run_tick(now);                                                 // ps31 C: the far finisher run-in
-    if (g_mdu.slot < 0) return;
+    MduSoundTick(now);
+    MdpTick(now);              // melee_duel_parry.c: parry / clash sounds + the pair being placed
+    MdvTick(now);              // C1 verdict: the blow's damage on the victim's ACK
+    BqTick(now);               // melee_beat.c: owner resolve, PLAY_AT starts, the duel record death / leave end
+    MdwTick(now);              // v5-pinfix3 3: the duel blows' durability ledger
+    MduP31Tick(now);          // ps31: SP's opener rule (press edge, the move search's decision inputs, the refused opener's start)
+    MduP31RunTick(now);      // ps31 C: the far finisher run-in
+    if (g_mdu.slot < 0)
+        return;
     int s = g_mdu.slot;
-    if (g_mdu.sw_on && g_mdu.sw_t0 != g_mdw.sw_t0) { g_mdw.sw_t0 = g_mdu.sw_t0; mdw_swing(now); }
+    if (g_mdu.sw_on && g_mdu.sw_t0 != g_mdw.sw_t0) {
+        g_mdw.sw_t0 = g_mdu.sw_t0;
+        MdwSwing(now);
+    }
     // Our pair's victim half waits one round trip on our screen (paired.c
     // vlag, the hit confirm). A dodge press from the victim arriving inside it was sent no later than the blow reached him + his late-press grace, so
     // his screen rules DODGED - show the miss now, before any hit reaction, instead of when his ABORT comes back.
     // (this ruled DODGED for a press that reached us 0 ms AFTER the finisher's contact while the
     // victim - under the TOO LATE rule - accepted the START and died alone in the finisher on its screen): a press after the contact is too late on both
     // screens now (MDU_LATE_DODGE_MS / melee_dodge.c mirror), so the two hit-confirm DODGED paths are off unless t2r-dodge-late-ok.txt.
-    static int hc_old = -1; static uint64_t hc_at; if (hc_old < 0 || now - hc_at > 3000) { hc_at = now; hc_old = GetFileAttributesA("t2r-dodge-late-ok.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (hc_old && g_mdu.pair_on && g_mdu.pair_role == 1 && g_ps.role == 1 && g_ps.uid == g_mdu.ps_uid && g_ps.vlag_hold && !g_ps.vhold_seg && mdg_slot_immune((uint32_t)s)
-        && g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) >= g_mdu.hit_ms) {
-        DULOG("DUEL: u%04x hit confirm: slot %d's dodge press reached us %d ms after our contact, inside the hold - DODGED, the pair stops before the hit shows", g_mdu.uid, s,
-              (int)(g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) - g_mdu.hit_ms));
-        psync_abort("dodge press inside the hit confirm", 0); g_mdu.n_dodged++;
-        mdg_attacker_missed("dodge press inside the hit confirm", s);
+    static int hc_old = -1;
+    static uint64_t hc_at;
+    if (hc_old < 0 || now - hc_at > 3000) {
+        hc_at = now;
+        hc_old =
+            GetFileAttributesA("t2r-dodge-late-ok.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (hc_old && g_mdu.pair_on && g_mdu.pair_role == 1 && g_ps.role == 1
+        && g_ps.uid == g_mdu.ps_uid && g_ps.vlag_hold && !g_ps.vhold_seg
+        && MdgSlotImmune((uint32_t) s)
+        && g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) >=
+        g_mdu.hit_ms) {
+        DULOG
+            ("DUEL: u%04x hit confirm: slot %d's dodge press reached us %d ms after our contact, inside the hold - DODGED, the pair stops before the hit shows",
+             g_mdu.uid, s,
+             (int) (g_mdg.imm_until[s] -
+                    (MD_IFRAME_MS + MD_PRESS_MARGIN_MS) - g_mdu.hit_ms));
+        PsyncAbort("dodge press inside the hit confirm", 0);
+        g_mdu.n_dodged++;
+        MdgAttackerMissed("dodge press inside the hit confirm", s);
         // (this path never told the dodger - the latest, perfect presses (inside the last 200 ms) were the ones that land here, and their counter
         //  never armed. The same notice as mdg_contact_dodged. t2r-hc-no-res.txt = old.)
-        if (GetFileAttributesA("t2r-hc-no-res.txt") == INVALID_FILE_ATTRIBUTES) mdg_send_res_atk((uint32_t)s);
+        if (GetFileAttributesA("t2r-hc-no-res.txt") ==
+            INVALID_FILE_ATTRIBUTES)
+            MdgSendResAtk((uint32_t) s);
     }
     // v5-finwind: the finisher's -sync pair started at our windup's contact - the same hit-confirm rule as a duel hit: the victim's dodge press that reaches us
     // inside the round trip after the contact was sent before our START reached it (+ its late-press grace), so its screen refuses that START: show the miss now
-    if (g_mdfwu.hit_uid && !(g_ps.role == 1 && g_ps.uid == g_mdfwu.hit_uid)) g_mdfwu.hit_uid = 0;
-    if (hc_old && g_mdfwu.hit_uid && mdg_slot_immune((uint32_t)s)) {
-        int win = (int)(2.0f * psync_oneway(s)) + 34; if (win > (mdv_fin_wide() ? 260 : 140)) win = mdv_fin_wide() ? 260 : 140;   // the full round trip (a dodge notice 20 ms past the old 140 ms cap); t2r-duel-fin-verdict-old.txt = 140
-        uint64_t rcv = g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS);
-        if (rcv >= g_mdfwu.hit_ms && rcv <= g_mdfwu.hit_ms + (uint64_t)win) {
-            DULOG("DUEL: u%04x finisher hit confirm: slot %d's dodge press reached us %d ms after the windup's contact (window %d ms) - DODGED, the finisher stops before it shows", g_mdu.uid, s, (int)(rcv - g_mdfwu.hit_ms), win);
-            g_mdfwu.hit_uid = 0; psync_abort("dodge press inside the finisher's hit confirm", 0); g_mdu.pair_on = 0; g_mdu.n_dodged++; g_mdu_fin = -1;
-            mdg_attacker_missed("dodge press inside the finisher's hit confirm", s);
+    if (g_mdfwu.hit_uid
+        && !(g_ps.role == 1 && g_ps.uid == g_mdfwu.hit_uid))
+        g_mdfwu.hit_uid = 0;
+    if (hc_old && g_mdfwu.hit_uid && MdgSlotImmune((uint32_t) s)) {
+        int win = (int) (2.0f * PsyncOneway(s)) + 34;
+        if (win > (MdvFinWide()? 260 : 140))
+            win = MdvFinWide()? 260 : 140;    // the full round trip (a dodge notice 20 ms past the old 140 ms cap); t2r-duel-fin-verdict-old.txt = 140
+        uint64_t rcv =
+            g_mdg.imm_until[s] - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS);
+        if (rcv >= g_mdfwu.hit_ms
+            && rcv <= g_mdfwu.hit_ms + (uint64_t) win) {
+            DULOG
+                ("DUEL: u%04x finisher hit confirm: slot %d's dodge press reached us %d ms after the windup's contact (window %d ms) - DODGED, the finisher stops before it shows",
+                 g_mdu.uid, s, (int) (rcv - g_mdfwu.hit_ms), win);
+            g_mdfwu.hit_uid = 0;
+            PsyncAbort("dodge press inside the finisher's hit confirm",
+                        0);
+            g_mdu.pair_on = 0;
+            g_mdu.n_dodged++;
+            g_mduFin = -1;
+            MdgAttackerMissed
+                ("dodge press inside the finisher's hit confirm", s);
         }
     }
-    if (g_mdfwu.hit_uid && now > g_mdfwu.hit_ms + 400) g_mdfwu.hit_uid = 0;
+    if (g_mdfwu.hit_uid && now > g_mdfwu.hit_ms + 400)
+        g_mdfwu.hit_uid = 0;
     // v5-fwtrace (the middle of the finisher was cut out; A 20063-20089: the attacker stood still for the whole 467 ms SP intro, then
     // popped into the -sync clip at the hand-over): every 3rd frame of a finisher windup, our own anim-control layers (clip, weights, phase) - which layer
     // holds the pose over the intro. Logs "fwtrace:".
     if (g_mdfwu.on && (g_frame % 3) == 0) {
         typedef uint8_t *(*fn_proc)(uint64_t);
-        uint8_t *proc = ((fn_proc)VMA(0x18000A200))(SID_PLAYER);
-        vdf_lay cur[48]; int n = proc ? vdf_layers(proc, cur, 48) : 0;
-        char buf[1100]; size_t k = 0;
+        uint8_t *proc =
+            ((fn_proc) T2R_SYM(kFnEntityFromHandle)) (SID_PLAYER);
+        VdfLay cur[48];
+        int n = proc ? VdfLayers(proc, cur, 48) : 0;
+        char buf[1100];
+        size_t k = 0;
         for (int i = 0; i < n && k + 140 < 1000; i++) {
-            vdf_lay *L = &cur[i];
-            if (!L->anim) continue;   // (only layers with a clip: the empty ones filled the line before the intro's layer)
-            k += (size_t)snprintf(buf + k, SNLEFT(buf, k), " | L%d t%d u%d w%.2f/%.2f/%.2f f%.2f %s ph%.3f",
-                                  i, L->type, L->used, L->w[0], L->w[1], L->w[2], L->fade, L->anim ? (L->anim == g_mdfwu.sid ? "INTRO" : psync_name(L->anim)) : "-", L->ph);
+            VdfLay *L = &cur[i];
+            if (!L->anim)
+                continue;       // (only layers with a clip: the empty ones filled the line before the intro's layer)
+            k += (size_t) snprintf(buf + k, SNLEFT(buf, k),
+                                   " | L%d t%d u%d w%.2f/%.2f/%.2f f%.2f %s ph%.3f",
+                                   i, L->type, L->used, L->w[0], L->w[1],
+                                   L->w[2], L->fade,
+                                   L->anim ? (L->anim ==
+                                              g_mdfwu.
+                                              sid ? "INTRO" :
+                                              PsyncName(L->anim)) : "-",
+                                   L->ph);
         }
         buf[k] = 0;
-        xlog("fwtrace: +%llu ms psync role %d kind %d%s", (unsigned long long)(now - g_mdfwu.t0), g_ps.role, g_ps.kind, buf);
+        Xlog("fwtrace: +%llu ms psync role %d kind %d%s",
+             (unsigned long long) (now - g_mdfwu.t0), g_ps.role, g_ps.kind,
+             buf);
     }
-    if (g_mdfwu.on && (!g_mdu.sw_on || g_mdu.sw_t0 != g_mdfwu.t0)) mdu_fw_end(g_mdu.sw_on ? "another swing replaced it" : "the swing was taken (parry / clash / cancel)", 1);
+    if (g_mdfwu.on && (!g_mdu.sw_on || g_mdu.sw_t0 != g_mdfwu.t0))
+        MduFwEnd(g_mdu.
+                   sw_on ? "another swing replaced it" :
+                   "the swing was taken (parry / clash / cancel)", 1);
     const char *end = NULL;
-    if (match_substate() != 6) end = "left the match";
-    else if (g_downed || g_down_dying || g_uc4_dying_until || local_hp() <= 0.0f || g_down_at) end = "we are down / dead";
-    else if (!mdu_partner_ok(s)) end = "the partner is gone / down / dead";
-    if (end) { mdu_end(end, 1, MDUO_END); return; }
-    spm_event();                                                           // melee_spcam.c: SP framing stays on for the whole duel
-    uint64_t h = puppet_handle((uint32_t)s);
-    float vb[16], mb[16]; const float *vl = h ? puppet_locator(h, vb) : NULL, *me = player_locator(mb);
-    float d = vl && me ? __builtin_sqrtf((vl[0] - me[0]) * (vl[0] - me[0]) + (vl[2] - me[2]) * (vl[2] - me[2])) : 99.0f;
+    if (MatchSubstate() != 6)
+        end = "left the match";
+    else if (g_downed || g_downDying || g_uc4DyingUntil
+             || LocalHp() <= 0.0f || g_downAt)
+        end = "we are down / dead";
+    else if (!MduPartnerOk(s))
+        end = "the partner is gone / down / dead";
+    if (end) {
+        MduEnd(end, 1, MDUO_END);
+        return;
+    }
+    SpmEvent();                // melee_spcam.c: SP framing stays on for the whole duel
+    uint64_t h = PuppetHandle((uint32_t) s);
+    float vb[16], mb[16];
+    const float *vl = h ? PuppetLocator(h, vb) : NULL, *me =
+        PlayerLocator(mb);
+    float d = vl
+        && me ? __builtin_sqrtf((vl[0] - me[0]) * (vl[0] - me[0]) +
+                                (vl[2] - me[2]) * (vl[2] - me[2])) : 99.0f;
     // the pair ended / was replaced
     if (g_mdu.pair_on && !(g_ps.role && g_ps.uid == g_mdu.ps_uid)) {
-        DULOG("DUEL: u%04x pair %s over after %llu ms (role %s)", g_mdu.uid, g_mdu.pair_row >= 0 ? CD_PAIRS[g_mdu.pair_row].name : "?", (unsigned long long)(now - g_mdu.pair_ms), g_mdu.pair_role == 1 ? "attacker" : "hit player");
-        if (g_mdu.pair_role == 2 && g_melee_lock_victim) g_melee_lock_from = 0;
+        DULOG("DUEL: u%04x pair %s over after %llu ms (role %s)",
+              g_mdu.uid,
+              g_mdu.pair_row >= 0 ? CD_PAIRS[g_mdu.pair_row].name : "?",
+              (unsigned long long) (now - g_mdu.pair_ms),
+              g_mdu.pair_role == 1 ? "attacker" : "hit player");
+        if (g_mdu.pair_role == 2 && g_meleeLockVictim)
+            g_meleeLockFrom = 0;
         // (pressing melee after getting parried did nothing): the parry / clash lock runs to the pair's planned
         // end (+ the parrier's head start). A pair that was ABORTED early (a dodge cut, a third blow) left the swinger locked for the rest of that plan - 1.3 s of
         // dropped presses on a body that was already free. The lock now ends MDU_PLOCK_FREE_MS after the abort. t2r-duel-parry-lock-old.txt = old.
-        if (g_mdu.pair_role == 1 && g_mdu_plock_uid && g_mdu_plock_uid == g_mdu.ps_uid && g_mdu.lock_until > now + MDU_PLOCK_FREE_MS && now + 150 < g_mdu_plock_end
-            && GetFileAttributesA("t2r-duel-parry-lock-old.txt") == INVALID_FILE_ATTRIBUTES) {
-            DULOG("DUEL: u%04x parry / clash pair cut %d ms before its planned end - the press lock ends in %d ms (was %d ms)", g_mdu.uid, (int)(g_mdu_plock_end - now), MDU_PLOCK_FREE_MS, (int)(g_mdu.lock_until - now));
-            g_mdu.lock_until = now + MDU_PLOCK_FREE_MS; padinj_block("melee-attack", g_mdu.lock_until);
-            if (g_mdu_init_until) g_mdu_init_until = g_mdu.lock_until;   // ps28: the press latch follows the shortened lock
+        if (g_mdu.pair_role == 1 && g_mduPlockUid
+            && g_mduPlockUid == g_mdu.ps_uid
+            && g_mdu.lock_until > now + MDU_PLOCK_FREE_MS
+            && now + 150 < g_mduPlockEnd
+            && GetFileAttributesA("t2r-duel-parry-lock-old.txt") ==
+            INVALID_FILE_ATTRIBUTES) {
+            DULOG
+                ("DUEL: u%04x parry / clash pair cut %d ms before its planned end - the press lock ends in %d ms (was %d ms)",
+                 g_mdu.uid, (int) (g_mduPlockEnd - now),
+                 MDU_PLOCK_FREE_MS, (int) (g_mdu.lock_until - now));
+            g_mdu.lock_until = now + MDU_PLOCK_FREE_MS;
+            PadinjBlock("melee-attack", g_mdu.lock_until);
+            if (g_mduInitUntil)
+                g_mduInitUntil = g_mdu.lock_until;    // ps28: the press latch follows the shortened lock
         }
-        g_mdu_plock_uid = 0;
-        g_mdu.pair_on = 0; g_mdu.act_ms = now;
+        g_mduPlockUid = 0;
+        g_mdu.pair_on = 0;
+        g_mdu.act_ms = now;
     }
     // the swing: warp + face, gate ahead, contact
-    if (g_mdu.sw_on && !g_mdu.sw_done && g_ps.role == 2 && g_ps.ent_vic == SID_PLAYER) mdu_swing_stop("we are the victim half of a running pair (ps22: one writer per body)");
+    if (g_mdu.sw_on && !g_mdu.sw_done && g_ps.role == 2
+        && g_ps.ent_vic == SID_PLAYER)
+        MduSwingStop
+            ("we are the victim half of a running pair (ps22: one writer per body)");
     if (g_mdu.sw_on) {
-        if (!vl) {   // every other swing did not hit: log it - a swing must never vanish silently
-            static int nl; if (LOGCAP(nl, 40)) DULOG("DUEL: u%04x %s dropped: no partner locator (pair on %d, psync role %d)", g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move, g_mdu.pair_on, g_ps.role);
-            if (now > g_mdu.sw_tc + 300) g_mdu.sw_on = 0; }   // a locator gap of a frame or two while the last pair hands off: wait, don't lose the blow
+        if (!vl) {              // every other swing did not hit: log it - a swing must never vanish silently
+            static int nl;
+            if (LOGCAP(nl, 40))
+                DULOG
+                    ("DUEL: u%04x %s dropped: no partner locator (pair on %d, psync role %d)",
+                     g_mdu.uid, MDU_MOVES[g_mdu.sw_row].move,
+                     g_mdu.pair_on, g_ps.role);
+            if (now > g_mdu.sw_tc + 300)
+                g_mdu.sw_on = 0;
+        }                       // a locator gap of a frame or two while the last pair hands off: wait, don't lose the blow
         else {
-            if (g_mdfwu.on) { if (now + MDU_FW_LEAD_MS >= g_mdu.sw_tc) mdu_fw_probe(s); }   // (v5-finwind: the finisher's gate, not the -hit pair's)
-            else if (now + MDU_GATE_LEAD_MS >= g_mdu.sw_tc && me) mdu_gate_poll(s, h, vl, me);
-            if (now >= g_mdu.sw_tc && !mdp_hold(now) && !bq_hold(now) && !mdu_regate48_hold(now)) { if (g_mdu_sw_clip) { mstag_speed(g_mdu_sw_clip, 1.0f); g_mdu_sw_clip = 0; } /* ('motion: own frame 18279: 2 writers [duel.mdu_warp 0.03 m (eng 0.02, yaw 66), paired.drive_own ...]' then 'YAW SNAP -66 deg' - the warp's write on the CONTACT frame turned our body 51-89 deg for one frame (4 of 24 pairs) although '4.8 deg left at the contact'; the pair places the body on that frame): no warp write on the contact frame. t2r-duel-cf-warp-old.txt = old */ if (GetFileAttributesA("t2r-duel-cf-warp-old.txt") != INVALID_FILE_ATTRIBUTES) mdu_warp(now, vl); g_cd_fin_skip_intro = g_cd_fin_windup = g_mdfwu.on; mdu_contact(now); g_cd_fin_skip_intro = g_cd_fin_windup = 0; }   // (mdp_hold: a parry pair is being placed; v5-finwind: the intro already played)
+            if (g_mdfwu.on) {
+                if (now + MDU_FW_LEAD_MS >= g_mdu.sw_tc)
+                    MduFwProbe(s);
+            }                   // (v5-finwind: the finisher's gate, not the -hit pair's)
+            else if (now + MDU_GATE_LEAD_MS >= g_mdu.sw_tc && me)
+                MduGatePoll(s, h, vl, me);
+            if (now >= g_mdu.sw_tc && !MdpHold(now) && !BqHold(now)
+                && !MduRegate48Hold(now)) {
+                if (g_mduSwClip) {
+                    mstag_speed(g_mduSwClip, 1.0f);
+                    g_mduSwClip = 0;
+                }               /* ('motion: own frame 18279: 2 writers [duel.mdu_warp 0.03 m (eng 0.02, yaw 66), paired.drive_own ...]' then 'YAW SNAP -66 deg' - the warp's write on the CONTACT frame turned our body 51-89 deg for one frame (4 of 24 pairs) although '4.8 deg left at the contact'; the pair places the body on that frame): no warp write on the contact frame. t2r-duel-cf-warp-old.txt = old */
+                if (GetFileAttributesA("t2r-duel-cf-warp-old.txt") !=
+                    INVALID_FILE_ATTRIBUTES)
+                    MduWarp(now, vl);
+                g_cdFinSkipIntro = g_cdFinWindup = g_mdfwu.on;
+                MduContact(now);
+                g_cdFinSkipIntro = g_cdFinWindup = 0;
+            }                   // (mdp_hold: a parry pair is being placed; v5-finwind: the intro already played)
             // (4 of 12 -hit pair starts: 'YAW SNAP -58 / -52 / 101 / 175 deg ... (duel.mdu_warp); psync ... t=14-16 ms own drive 0' - the warp wrote our
             // body one frame AFTER psync PLAY had taken it as the attacker half = the flip when the punch lands): once the contact is done, or our own attacker half
             // runs, the pair is the body's only writer. t2r-duel-warp-after-play-old.txt = old.
-            else if ((g_mdu.sw_done || (g_ps.role == 1 && g_ps.ent_att == SID_PLAYER)) && GetFileAttributesA("t2r-duel-warp-after-play-old.txt") == INVALID_FILE_ATTRIBUTES) {
-                static int nl; if (LOGCAP(nl, 40)) DULOG("DUEL: u%04x no swing warp this frame: %s (ps24: the pair places the body)", g_mdu.uid, g_mdu.sw_done ? "the contact is done" : "our attacker half runs"); }
-            else mdu_warp(now, vl);
+            else if ((g_mdu.sw_done
+                      || (g_ps.role == 1 && g_ps.ent_att == SID_PLAYER))
+                     &&
+                     GetFileAttributesA("t2r-duel-warp-after-play-old.txt")
+                     == INVALID_FILE_ATTRIBUTES) {
+                static int nl;
+                if (LOGCAP(nl, 40))
+                    DULOG
+                        ("DUEL: u%04x no swing warp this frame: %s (ps24: the pair places the body)",
+                         g_mdu.uid,
+                         g_mdu.
+                         sw_done ? "the contact is done" :
+                         "our attacker half runs");
+            } else
+                MduWarp(now, vl);
         }
     }
-    if (g_mdu.sw_lethal && g_mdu.sw_done && g_mdu_fin < 0 && now > g_mdu.sw_tc + 300) { mdu_end("lethal blow: the normal Melee Down took it (HOOK: finisher beat)", 1, MDUO_END); return; }
+    if (g_mdu.sw_lethal && g_mdu.sw_done && g_mduFin < 0
+        && now > g_mdu.sw_tc + 300) {
+        MduEnd
+            ("lethal blow: the normal Melee Down took it (HOOK: finisher beat)",
+             1, MDUO_END);
+        return;
+    }
     // the combo window / the 4th-hit gap
-    int e = mdu_press_edge(now);   // (every frame: it keeps the baseline; 0 outside the window / gap)
+    int e = MduPressEdge(now);        // (every frame: it keeps the baseline; 0 outside the window / gap)
     if (g_mdu.lock_until) {
         if (now >= g_mdu.lock_until) {
-            g_mdu.lock_until = 0; padinj_block("melee-attack", 0); DULOG("DUEL: u%04x 4th-hit gap over - the next press starts a new chain", g_mdu.uid);
-            if (g_p31.gap_buf) {   // ps31: the one press of the gap's last MDU_GAP4_BUF_MS goes to the engine now (its move search = the opener rule)
-                int go = !g_mdu.sw_on && now - g_p31.started_ms > 300 && !g_p31r.on;
-                DULOG("DUEL: u%04x 4th-hit gap: the press buffered %d ms before its end is %s (ps31)", g_mdu.uid, (int)(now - g_p31.gap_buf), go ? "released - the next opener starts now" : "dropped: a melee move of ours already started");
-                if (go) { g_p31.press_ms = now; padinj_press("melee-attack", 120); }
+            g_mdu.lock_until = 0;
+            PadinjBlock("melee-attack", 0);
+            DULOG
+                ("DUEL: u%04x 4th-hit gap over - the next press starts a new chain",
+                 g_mdu.uid);
+            if (g_p31.gap_buf) {        // ps31: the one press of the gap's last MDU_GAP4_BUF_MS goes to the engine now (its move search = the opener rule)
+                int go = !g_mdu.sw_on && now - g_p31.started_ms > 300
+                    && !g_p31r.on;
+                DULOG
+                    ("DUEL: u%04x 4th-hit gap: the press buffered %d ms before its end is %s (ps31)",
+                     g_mdu.uid, (int) (now - g_p31.gap_buf),
+                     go ? "released - the next opener starts now" :
+                     "dropped: a melee move of ours already started");
+                if (go) {
+                    g_p31.press_ms = now;
+                    PadinjPress("melee-attack", 120);
+                }
             }
-            g_p31.gap_buf = 0; g_p31.gap_lock = 0;
-        }
-        else if (e && !mdu_gap4_old() && g_p31.gap_lock == g_mdu.lock_until && g_mdu.lock_until - now <= MDU_GAP4_BUF_MS) {
-            if (!g_p31.gap_buf) { g_p31.gap_buf = now; DULOG("DUEL: u%04x press %d ms after the 4th hit BUFFERED (%d ms before the gap ends; SP honours a press 250-270 ms early; ps31)", g_mdu.uid, (int)(now - g_mdu.hit_ms), (int)(g_mdu.lock_until - now)); }
-        }
-        else if (e) DULOG("DUEL: u%04x press %d ms after the 4th hit dropped (gap %d ms)", g_mdu.uid, (int)(now - g_mdu.hit_ms), MDU_GAP4_MS);
+            g_p31.gap_buf = 0;
+            g_p31.gap_lock = 0;
+        } else if (e && !MduGap4Old()
+                   && g_p31.gap_lock == g_mdu.lock_until
+                   && g_mdu.lock_until - now <= MDU_GAP4_BUF_MS) {
+            if (!g_p31.gap_buf) {
+                g_p31.gap_buf = now;
+                DULOG
+                    ("DUEL: u%04x press %d ms after the 4th hit BUFFERED (%d ms before the gap ends; SP honours a press 250-270 ms early; ps31)",
+                     g_mdu.uid, (int) (now - g_mdu.hit_ms),
+                     (int) (g_mdu.lock_until - now));
+            }
+        } else if (e)
+            DULOG
+                ("DUEL: u%04x press %d ms after the 4th hit dropped (gap %d ms)",
+                 g_mdu.uid, (int) (now - g_mdu.hit_ms), MDU_GAP4_MS);
     }
     if (g_mdu.win_end) {
-        if (e && now < g_mdu.hit_ms + MDU_NEXT_AT()) { if (!g_mdu.buf_at) { g_mdu.buf_at = now; DULOG("DUEL: u%04x press buffered (%d ms after the contact)", g_mdu.uid, (int)(now - g_mdu.hit_ms)); } }
-        else if (e) mdu_next(now, "pressed in the window");
-        else if (g_mdu.buf_at && now >= g_mdu.hit_ms + MDU_NEXT_AT()) mdu_next(now, "buffered press released");
-        if (g_mdu.win_end && g_mdu.win_end < g_mdu.hit_ms + MDU_NEXT_AT() + 250) g_mdu.win_end = g_mdu.hit_ms + MDU_NEXT_AT() + 250;   // (the breath gate stays inside the combo window)
-        if (g_mdu.win_end && now >= g_mdu.win_end) { g_mdu.win_end = 0; g_mdu.next_move = 0; padinj_block("melee-attack", 0); DULOG("DUEL: u%04x combo window closed without a press", g_mdu.uid); }
+        if (e && now < g_mdu.hit_ms + MDU_NEXT_AT()) {
+            if (!g_mdu.buf_at) {
+                g_mdu.buf_at = now;
+                DULOG
+                    ("DUEL: u%04x press buffered (%d ms after the contact)",
+                     g_mdu.uid, (int) (now - g_mdu.hit_ms));
+            }
+        } else if (e)
+            MduNext(now, "pressed in the window");
+        else if (g_mdu.buf_at && now >= g_mdu.hit_ms + MDU_NEXT_AT())
+            MduNext(now, "buffered press released");
+        if (g_mdu.win_end
+            && g_mdu.win_end < g_mdu.hit_ms + MDU_NEXT_AT() + 250)
+            g_mdu.win_end = g_mdu.hit_ms + MDU_NEXT_AT() + 250; // (the breath gate stays inside the combo window)
+        if (g_mdu.win_end && now >= g_mdu.win_end) {
+            g_mdu.win_end = 0;
+            g_mdu.next_move = 0;
+            PadinjBlock("melee-attack", 0);
+            DULOG("DUEL: u%04x combo window closed without a press",
+                  g_mdu.uid);
+        }
     }
     // the end
     // ps31: nor while a "-far" opener of ours (SP: started at 3-5 m) is on its way, nor while the partner's swing at us is in flight (its dodge window is open)
-    int p31_far_sw = !mdu_p31_opener_old() && ((g_mdu.sw_on && !g_mdu.sw_done && g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N && MDU_MOVES[g_mdu.sw_row].kind == MDUK_FAR) || (s < T2R_MAX_PEERS && g_mdu.vsw_end[s] > now));
-    if (d > MDU_FAR_M && !p31_far_sw && !(g_mdu.sw_on && g_mdu.sw_lethal && g_mdu_fin >= 0) && !(g_mdu_fw_rend[s] > now)) {   // (v5-finwind: nor while the partner's finisher windup closes in on us)
-    if (!g_mdu.far_since) g_mdu.far_since = now; else if (now - g_mdu.far_since >= MDU_FAR_MS) { mdu_end("the partner is more than 3 m away", 1, MDUO_END); return; } }
-    else g_mdu.far_since = 0;
-    if (!g_mdu.sw_on && !g_mdu.pair_on && !g_mdu.win_end && !g_mdu.lock_until && now >= g_mdu.hold_until && !g_dcm.on_att && !g_dcm.on_vic && !dc_armed_at(now) && now - g_mdu.act_ms > MDU_IDLE_MS) mdu_end("no blow for 1 s", 1, MDUO_END);
+    int p31_far_sw = !MduP31OpenerOld()
+        &&
+        ((g_mdu.sw_on && !g_mdu.sw_done && g_mdu.sw_row >= 0
+          && g_mdu.sw_row < (int) MDU_MOVES_N
+          && MDU_MOVES[g_mdu.sw_row].kind == MDUK_FAR)
+         || (s < T2R_MAX_PEERS && g_mdu.vsw_end[s] > now));
+    if (d > MDU_FAR_M && !p31_far_sw && !(g_mdu.sw_on && g_mdu.sw_lethal && g_mduFin >= 0) && !(g_mdu_fw_rend[s] > now)) {     // (v5-finwind: nor while the partner's finisher windup closes in on us)
+        if (!g_mdu.far_since)
+            g_mdu.far_since = now;
+        else if (now - g_mdu.far_since >= MDU_FAR_MS) {
+            MduEnd("the partner is more than 3 m away", 1, MDUO_END);
+            return;
+        }
+    } else
+        g_mdu.far_since = 0;
+    if (!g_mdu.sw_on && !g_mdu.pair_on && !g_mdu.win_end
+        && !g_mdu.lock_until && now >= g_mdu.hold_until && !g_dcm.on_att
+        && !g_dcm.on_vic && !DcArmedAt(now)
+        && now - g_mdu.act_ms > MDU_IDLE_MS)
+        MduEnd("no blow for 1 s", 1, MDUO_END);
 }
+
 // ---- beat 2: dodge / miss / counter hooks (melee_dodge.c, dcounter.c)
 // melee_dodge.c mdg_window: the dodge window of the partner's duel swing, on the victim's clock. 0 = no duel swing known for this one, 1 = *end, 2 = closed
-static int mdu_window_end(uint32_t s, uint64_t *end) {
-    if (!g_mdu.on || s >= T2R_MAX_PEERS || !g_mdu.vsw_end[s] || (int)s != g_mdu.slot) return 0;
+static int MduWindowEnd(uint32_t s, uint64_t *end)
+{
+    if (!g_mdu.on || s >= T2R_MAX_PEERS || !g_mdu.vsw_end[s]
+        || (int) s != g_mdu.slot)
+        return 0;
     uint64_t sw = g_mdg.sw[s].ms, at = g_mdu.vsw_at[s];
-    if (!sw || (at > sw ? at - sw : sw - at) > 400) return 0;                  // another swing (or the dodge announce of an older one)
-    if (GetTickCount64() > g_mdu.vsw_end[s]) return 2;
+    if (!sw || (at > sw ? at - sw : sw - at) > 400)
+        return 0;               // another swing (or the dodge announce of an older one)
+    if (GetTickCount64() > g_mdu.vsw_end[s])
+        return 2;
     *end = g_mdu.vsw_end[s];
     return 1;
 }
-static float mdu_dodge_cap(void) { return g_mdu.on && g_mdu.slot >= 0 ? MDU_DODGE_CAP : 0.0f; }
+
+static float MduDodgeCap(void)
+{
+    return g_mdu.on && g_mdu.slot >= 0 ? MDU_DODGE_CAP : 0.0f;
+}
+
 // dcounter.c dc_swing_start (SP-exact): the press after our dodge inside a duel. SP (re/melee-sp-timeline.md 1.4, a L171634/173845; NR 1031 knife
 // melee-b.md:303/626/1103): the dodge attack is an ORDINARY connected hit - its swing alone (fist 433-462, 1h blunt 521, knife 466, machete 666 ms), then the
 // attacker's <swing>-hit and the victim's -hit half on one frame, the combo goes on at step 2. The dc- pair (dc-fist-back ...) played the swing clip on through
 // with the victim half 0.47 s in: the attacker's -hit half was never played. Here the engine's own dodge-attack move starts on the partner and the duel swing
 // (mdu_swing_note: warp to SP's contact distance, the -hit pair at SP's switch, dodgeable like any duel swing) carries it. 1 = started.
 // Not after a pin (the pin escape counter keeps its guaranteed dc pair). t2r-duel-dc-pair.txt = the dc- pair inside a duel too.
-static uint64_t mpn_pinned_at(void);
-static int mdu_dc_route(uint32_t slot, int dir, uint64_t h) {
-    if (!g_mdu.on || g_mdu.slot < 0 || (uint32_t)g_mdu.slot != slot || !h || !g_start_melee_orig) return 0;
-    if (GetFileAttributesA("t2r-duel-dc-pair.txt") != INVALID_FILE_ATTRIBUTES) return 0;
-    { uint64_t pa = mpn_pinned_at(), nw = GetTickCount64(); if (pa && nw - pa < 3000) return 0; }
-    { int s55 = cd_cur_style(); if ((s55 == -1 || s55 == 3) && !dc_off_heavy()) {   // ps55: fists / knife = the heavy dc pair (haymaker / palm bash), see dcounter.c dc_off_heavy
-        DULOG("DUEL: u%04x dodge counter on slot %u = the heavy dc pair (%s; ps55, t2r-dc-no-haymaker.txt = SP's dodge attack as a duel hit)", g_mdu.uid, slot, s55 == 3 ? "knife palm bash" : "fist haymaker");
-        return 0; } }
-    int st = cd_cur_style(), m = st >= CD_WSET_BASE ? st - CD_WSET_BASE : 0, fw = dir == 0;
-    int ab = !(g_mdu.sw_row >= 0 && g_mdu.sw_row < (int)MDU_MOVES_N && !strncmp(MDU_MOVES[g_mdu.sw_row].move, "ellie-", 6));   // (1h blunt: the set of our last duel swing, abby = SP measured)
-    const char *c[2] = {NULL, NULL};
-    if (st == -1) { c[0] = fw ? "fist-dodge-forward-attack-1" : "fist-dodge-back-attack-1"; c[1] = "fist-dodge-back-attack-1"; }
-    else if (st == 3) c[0] = "switchblade-dodge-back-attack-1";
-    else if (st >= CD_WSET_BASE && (m & 0x04)) c[0] = "ellie-2h-blunt-dodge-back-attack-1";
-    else if (st >= CD_WSET_BASE && (m & 0x02)) c[0] = "ellie-1h-blade-dodge-back-attack-1";
-    else if (st >= CD_WSET_BASE && (m & 0x01)) { c[0] = fw ? (ab ? "abby-1h-blunt-dodge-forward-attack-1" : "ellie-1h-blunt-dodge-forward-attack-1") : (ab ? "abby-1h-blunt-dodge-back-attack-1" : "ellie-1h-blunt-dodge-back-attack-1");
-                                                  c[1] = ab ? "abby-1h-blunt-dodge-back-attack-1" : "ellie-1h-blunt-dodge-back-attack-1"; }
+static uint64_t MpnPinnedAt(void);
+static int MduDcRoute(uint32_t slot, int dir, uint64_t h)
+{
+    if (!g_mdu.on || g_mdu.slot < 0 || (uint32_t) g_mdu.slot != slot || !h
+        || !g_startMeleeOrig)
+        return 0;
+    if (GetFileAttributesA("t2r-duel-dc-pair.txt") !=
+        INVALID_FILE_ATTRIBUTES)
+        return 0;
+    {
+        uint64_t pa = MpnPinnedAt(), nw = GetTickCount64();
+        if (pa && nw - pa < 3000)
+            return 0;
+    }
+    {
+        int s55 = CdCurStyle();
+        if ((s55 == -1 || s55 == 3) && !DcOffHeavy()) {       // ps55: fists / knife = the heavy dc pair (haymaker / palm bash), see dcounter.c dc_off_heavy
+            DULOG
+                ("DUEL: u%04x dodge counter on slot %u = the heavy dc pair (%s; ps55, t2r-dc-no-haymaker.txt = SP's dodge attack as a duel hit)",
+                 g_mdu.uid, slot,
+                 s55 == 3 ? "knife palm bash" : "fist haymaker");
+            return 0;
+        }
+    }
+    int st = CdCurStyle(), m =
+        st >= CD_WSET_BASE ? st - CD_WSET_BASE : 0, fw = dir == 0;
+    int ab = !(g_mdu.sw_row >= 0 && g_mdu.sw_row < (int) MDU_MOVES_N && !strncmp(MDU_MOVES[g_mdu.sw_row].move, "ellie-", 6));   // (1h blunt: the set of our last duel swing, abby = SP measured)
+    const char *c[2] = { NULL, NULL };
+    if (st == -1) {
+        c[0] =
+            fw ? "fist-dodge-forward-attack-1" :
+            "fist-dodge-back-attack-1";
+        c[1] = "fist-dodge-back-attack-1";
+    } else if (st == 3)
+        c[0] = "switchblade-dodge-back-attack-1";
+    else if (st >= CD_WSET_BASE && (m & 0x04))
+        c[0] = "ellie-2h-blunt-dodge-back-attack-1";
+    else if (st >= CD_WSET_BASE && (m & 0x02))
+        c[0] = "ellie-1h-blade-dodge-back-attack-1";
+    else if (st >= CD_WSET_BASE && (m & 0x01)) {
+        c[0] =
+            fw ? (ab ? "abby-1h-blunt-dodge-forward-attack-1" :
+                  "ellie-1h-blunt-dodge-forward-attack-1") : (ab ?
+                                                              "abby-1h-blunt-dodge-back-attack-1"
+                                                              :
+                                                              "ellie-1h-blunt-dodge-back-attack-1");
+        c[1] =
+            ab ? "abby-1h-blunt-dodge-back-attack-1" :
+            "ellie-1h-blunt-dodge-back-attack-1";
+    }
     for (int i = 0; i < 2; i++) {
-        int r = c[i] ? mdu_row_named(c[i]) : -1;
-        if (r < 0 || (MDU_MOVES[r].res & 7) != 7 || g_mdu.mv_cd[r] < 0 || !cd_pair_loaded(g_mdu.mv_cd[r])) continue;
-        uint64_t ret[2] = {0, 0}, args[8] = {SID_PLAYER, h, fnv64_rt(MDU_MOVES[r].move), 0, 0, 0, 0, 0};
-        if (g_ma_have) for (int k = 3; k < 8; k++) args[k] = g_ma_cache[k];
-        { uint64_t me0 = SID_PLAYER; dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0); }
-        g_start_melee_orig(ret, 8, args, 0);
-        DULOG("DUEL: u%04x dodge counter on slot %u = SP's %s as a duel hit (swing, then -hit pair at %d ms, %.2f m) -> %llx%s", g_mdu.uid, slot, MDU_MOVES[r].move, MDU_MOVES[r].tc_ms,
-              (double)MDU_MOVES[r].dist, (unsigned long long)ret[0], ret[0] ? "" : " - refused by the engine, the dc pair instead");
-        if (ret[0]) { g_mdu.hold_until = GetTickCount64() + MDU_HOLD_MS; g_mdu_dc.ms = GetTickCount64(); g_mdu_dc.row = r; return 1; }   // (its blow = DC_COUNTER_DMG)
+        int r = c[i] ? MduRowNamed(c[i]) : -1;
+        if (r < 0 || (MDU_MOVES[r].res & 7) != 7 || g_mdu.mv_cd[r] < 0
+            || !CdPairLoaded(g_mdu.mv_cd[r]))
+            continue;
+        uint64_t ret[2] = { 0, 0 }, args[8] =
+            { SID_PLAYER, h, Fnv64Rt(MDU_MOVES[r].move), 0, 0, 0, 0, 0 };
+        if (g_maHave)
+            for (int k = 3; k < 8; k++)
+                args[k] = g_maCache[k];
+        {
+            uint64_t me0 = SID_PLAYER;
+            DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1,
+                    &me0);
+        }
+        g_startMeleeOrig(ret, 8, args, 0);
+        DULOG
+            ("DUEL: u%04x dodge counter on slot %u = SP's %s as a duel hit (swing, then -hit pair at %d ms, %.2f m) -> %llx%s",
+             g_mdu.uid, slot, MDU_MOVES[r].move, MDU_MOVES[r].tc_ms,
+             (double) MDU_MOVES[r].dist, (unsigned long long) ret[0],
+             ret[0] ? "" :
+             " - refused by the engine, the dc pair instead");
+        if (ret[0]) {
+            g_mdu.hold_until = GetTickCount64() + MDU_HOLD_MS;
+            g_mduDc.ms = GetTickCount64();
+            g_mduDc.row = r;
+            return 1;
+        }                       // (its blow = DC_COUNTER_DMG)
         return 0;
     }
     return 0;
 }
+
 // melee_dodge.c mdg_attacker_missed: SP's missed swing plays on at x1.00 (c1r 1.000 on every swing row, re/melee-sp-timeline.md 1.5) - no x0.75 tail
 // inside a duel. t2r-duel-miss-slow.txt = the old slowed tail.
-static int mdu_sp_miss(int vslot) {
-    if (!g_mdu.on || g_mdu.slot < 0 || vslot != g_mdu.slot) return 0;
-    static int v = -1; static uint64_t at; uint64_t n = GetTickCount64();
-    if (v < 0 || n - at > 2000) { at = n; v = GetFileAttributesA("t2r-duel-miss-slow.txt") == INVALID_FILE_ATTRIBUTES; }
+static int MduSpMiss(int vslot)
+{
+    if (!g_mdu.on || g_mdu.slot < 0 || vslot != g_mdu.slot)
+        return 0;
+    static int v = -1;
+    static uint64_t at;
+    uint64_t n = GetTickCount64();
+    if (v < 0 || n - at > 2000) {
+        at = n;
+        v = GetFileAttributesA("t2r-duel-miss-slow.txt") ==
+            INVALID_FILE_ATTRIBUTES;
+    }
     return v;
 }
+
 // melee_dodge.c mdg_attacker_missed: our blow was dodged. 1 = handled here
 // (fights were much slower than live): the 800 ms MISS lock is set for the LATEST possible dodge (a dodger who pressed at the contact lands up to
 // ~1 s later). The attacker knows when the press reached it: the lock is only as long as that dodger needs - its dodge clip lands MD45_LAND_MS after its press
 // (measured: 'lands at 752-991 ms'), then MD45_REDODGE_MS to see the next swing and press, before that swing's window closes (md45_vic_lead before a
 // MDU45_NEXT_TC_MS contact). Clamped to [650 (live), 800 (ps44)] - never longer than ps44. t2r-miss-lock-ps45-old.txt = 800 always.
-#define MD45_LAND_MS 1000              // measured (rec44a A/B 'combat dodge travel ... lands at 752-991 ms'), rounded up
-#define MD45_REDODGE_MS 200            // [TUNING ps45] a reaction to the next swing after the landing
-#define MDU45_NEXT_TC_MS (mw45_contact_ms())          // = melee_npcwind.c NPCW_CONTACT_MS (included after this file): the next light swing's contact
+#define MD45_LAND_MS 1000       // measured (rec44a A/B 'combat dodge travel ... lands at 752-991 ms'), rounded up
+#define MD45_REDODGE_MS 200     // [TUNING ps45] a reaction to the next swing after the landing
+#define MDU45_NEXT_TC_MS (Mw45ContactMs())    // = melee_npcwind.c NPCW_CONTACT_MS (included after this file): the next light swing's contact
 // (melee felt slower without improving fairness): the MISS lock is 650 ms flat (live's value,
 // the ps45 formula's floor) instead of ps45's 650-800. t2r-miss-lock-ps46-old.txt = the ps45 formula (re-read every 2 s).
-#define MDU46W_MISS_LOCK_MS 650        // [TUNING ps46]
+#define MDU46W_MISS_LOCK_MS 650 // [TUNING ps46]
 // (dodging gave the victim no advantage: the next press usually landed anyway and the dodger had no priority for
 // its hit): the dodger's melee press is buffered to its dodge clip's landing (749-799 ms after the press = ~560-610 ms after the dropped
 // contact) while ps46's flat 650 ms lock freed the attacker ~50 ms later - both swings started together and the attacker won the clash. The lock now runs
 // to the dodger's landing as the attacker sees it (its press reached us at rcv: rcv + MD50_LAND_MS + one-way + MD50_GRACE_MS), never under ps46's 650, never
 // over MD50_MAX_MS; and a swing the dodger starts inside the lock holds us to its contact (mdu_dodger_priority50). t2r-miss-lock-ps50-old.txt = ps46 flat.
-#define MD50_LAND_MS 800               // measured ('fires when it lands at 749 / 799 ms'), rounded up
-#define MD50_GRACE_MS 150              // [TUNING ps50] the dodger's buffered press -> its swing announce reaching us
+#define MD50_LAND_MS 800        // measured ('fires when it lands at 749 / 799 ms'), rounded up
+#define MD50_GRACE_MS 150       // [TUNING ps50] the dodger's buffered press -> its swing announce reaching us
 #define MD50_MAX_MS 1000
-static int md50_on(void) { static int v = -1; static uint64_t at; return !md45_flag("t2r-miss-lock-ps50-old.txt", &v, &at); }
-static int mdu_miss_lock45(int vslot, uint64_t now) {
-    if (md50_on() && vslot >= 0 && vslot < T2R_MAX_PEERS) {
-        uint64_t im = g_mdg.imm_until[vslot]; int r = MDU46W_MISS_LOCK_MS;
-        if (im > (uint64_t)(MD_IFRAME_MS + MD_PRESS_MARGIN_MS)) {
+static int Md50On(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    return !Md45Flag("t2r-miss-lock-ps50-old.txt", &v, &at);
+}
+
+static int MduMissLock45(int vslot, uint64_t now)
+{
+    if (Md50On() && vslot >= 0 && vslot < T2R_MAX_PEERS) {
+        uint64_t im = g_mdg.imm_until[vslot];
+        int r = MDU46W_MISS_LOCK_MS;
+        if (im > (uint64_t) (MD_IFRAME_MS + MD_PRESS_MARGIN_MS)) {
             uint64_t rcv = im - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS);
-            float ow = psync_oneway(vslot); if (!(ow >= 0.0f)) ow = 0.0f;
+            float ow = PsyncOneway(vslot);
+            if (!(ow >= 0.0f))
+                ow = 0.0f;
             if (rcv <= now + 50 && now - rcv < 1500) {
-                int need = (int)((int64_t)rcv + MD50_LAND_MS + (int64_t)(ow + 0.5f) + MD50_GRACE_MS - (int64_t)now);
-                r = need < MDU46W_MISS_LOCK_MS ? MDU46W_MISS_LOCK_MS : need > MD50_MAX_MS ? MD50_MAX_MS : need;
+                int need =
+                    (int) ((int64_t) rcv + MD50_LAND_MS +
+                           (int64_t) (ow + 0.5f) + MD50_GRACE_MS -
+                           (int64_t) now);
+                r = need <
+                    MDU46W_MISS_LOCK_MS ? MDU46W_MISS_LOCK_MS : need >
+                    MD50_MAX_MS ? MD50_MAX_MS : need;
             }
-            DULOG("DUEL: u%04x ps50 MISS lock %d ms: slot %d's dodge press reached us %lld ms before the contact (one-way %.0f) - it lands by ~+%lld ms, its counter swing starts first (ps46 flat 650: t2r-miss-lock-ps50-old.txt)",
-                  g_mdu.uid, r, vslot, (long long)now - (long long)rcv, (double)ow, (long long)rcv + MD50_LAND_MS - (long long)now);
+            DULOG
+                ("DUEL: u%04x ps50 MISS lock %d ms: slot %d's dodge press reached us %lld ms before the contact (one-way %.0f) - it lands by ~+%lld ms, its counter swing starts first (ps46 flat 650: t2r-miss-lock-ps50-old.txt)",
+                 g_mdu.uid, r, vslot, (long long) now - (long long) rcv,
+                 (double) ow,
+                 (long long) rcv + MD50_LAND_MS - (long long) now);
         }
         return r;
     }
-    { static int v46 = -1; static uint64_t at46; if (!md45_flag("t2r-miss-lock-ps46-old.txt", &v46, &at46)) {
-        DULOG("DUEL: u%04x ps46 MISS lock %d ms flat [TUNING ps46] (slot %d dodged; ps45 formula 650-800 ms: t2r-miss-lock-ps46-old.txt)", g_mdu.uid, MDU46W_MISS_LOCK_MS, vslot); (void)now;
-        return MDU46W_MISS_LOCK_MS; } }
-    static int v = -1; static uint64_t at; int lk = MDU_MISS_LOCK_MS;
-    if (md45_flag("t2r-miss-lock-ps45-old.txt", &v, &at) || lk != 800 || vslot < 0 || vslot >= T2R_MAX_PEERS) return lk;
-    uint64_t im = g_mdg.imm_until[vslot]; if (im <= (uint64_t)(MD_IFRAME_MS + MD_PRESS_MARGIN_MS)) return lk;
-    uint64_t rcv = im - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS); if (rcv > now + 50 || now - rcv > 1500) return lk;
-    float ow = psync_oneway(vslot); if (!(ow >= 0.0f)) ow = 0.0f;
-    int lead = (int)(now - rcv), need = MD45_LAND_MS + MD45_REDODGE_MS + md45_vic_lead(ow) - MDU45_NEXT_TC_MS - lead - (int)(2.0f * ow + 0.5f);
+    {
+        static int v46 = -1;
+        static uint64_t at46;
+        if (!Md45Flag("t2r-miss-lock-ps46-old.txt", &v46, &at46)) {
+            DULOG
+                ("DUEL: u%04x ps46 MISS lock %d ms flat [TUNING ps46] (slot %d dodged; ps45 formula 650-800 ms: t2r-miss-lock-ps46-old.txt)",
+                 g_mdu.uid, MDU46W_MISS_LOCK_MS, vslot);
+            (void) now;
+            return MDU46W_MISS_LOCK_MS;
+        }
+    }
+    static int v = -1;
+    static uint64_t at;
+    int lk = MDU_MISS_LOCK_MS;
+    if (Md45Flag("t2r-miss-lock-ps45-old.txt", &v, &at) || lk != 800
+        || vslot < 0 || vslot >= T2R_MAX_PEERS)
+        return lk;
+    uint64_t im = g_mdg.imm_until[vslot];
+    if (im <= (uint64_t) (MD_IFRAME_MS + MD_PRESS_MARGIN_MS))
+        return lk;
+    uint64_t rcv = im - (MD_IFRAME_MS + MD_PRESS_MARGIN_MS);
+    if (rcv > now + 50 || now - rcv > 1500)
+        return lk;
+    float ow = PsyncOneway(vslot);
+    if (!(ow >= 0.0f))
+        ow = 0.0f;
+    int lead = (int) (now - rcv), need =
+        MD45_LAND_MS + MD45_REDODGE_MS + Md45VicLead(ow) -
+        MDU45_NEXT_TC_MS - lead - (int) (2.0f * ow + 0.5f);
     int r = need < 650 ? 650 : need > 800 ? 800 : need;
-    DULOG("DUEL: u%04x ps45 MISS lock %d ms (ps44 800): slot %d's dodge press reached us %d ms before the contact (one-way %.0f) - its dodge lands by ~+%d ms, our next contact >= +%d ms leaves it %d ms to dodge again",
-          g_mdu.uid, r, vslot, lead, (double)ow, MD45_LAND_MS - lead - (int)ow, r + MDU45_NEXT_TC_MS, r + MDU45_NEXT_TC_MS + (int)ow - md45_vic_lead(ow) - (MD45_LAND_MS - lead - (int)ow));
+    DULOG
+        ("DUEL: u%04x ps45 MISS lock %d ms (ps44 800): slot %d's dodge press reached us %d ms before the contact (one-way %.0f) - its dodge lands by ~+%d ms, our next contact >= +%d ms leaves it %d ms to dodge again",
+         g_mdu.uid, r, vslot, lead, (double) ow,
+         MD45_LAND_MS - lead - (int) ow, r + MDU45_NEXT_TC_MS,
+         r + MDU45_NEXT_TC_MS + (int) ow - Md45VicLead(ow) -
+         (MD45_LAND_MS - lead - (int) ow));
     return r;
 }
-static int mdu_miss_note(int vslot, const char *why) {
-    if (!g_mdu.on || g_mdu.slot < 0 || vslot != g_mdu.slot) return 0;
+
+static int MduMissNote(int vslot, const char *why)
+{
+    if (!g_mdu.on || g_mdu.slot < 0 || vslot != g_mdu.slot)
+        return 0;
     uint64_t now = GetTickCount64();
-    if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until) padinj_block("melee-attack", 0);
-    mdu_fw_end(why, 1);   // v5-finwind: a dodged finisher windup = a missed swing (no finisher, no damage); the intro blends out as the recovery
+    if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until)
+        PadinjBlock("melee-attack", 0);
+    MduFwEnd(why, 1);         // v5-finwind: a dodged finisher windup = a missed swing (no finisher, no damage); the intro blends out as the recovery
     // (the engine's own contact on the dodger was dropped, the engine still switched our kick to ITS -hit move - 'swing fist-light-
     // attack-4-kick -> engine -hit move 7e12a9911bef4a61 ... kept' - and one line later the duel ruled the blow DODGED: the attacker played the follow-through of a
     // LANDED kick on a miss, both screens read a hit). A dodged blow has no -hit: the engine's -hit move is ended here. t2r-miss-enghit-ps34.txt = it plays on.
-    if (g_mdu_ehit_move && g_ms_curmove == g_mdu_ehit_move && now - g_mdu_ehit_ms < 600 && GetFileAttributesA("t2r-miss-enghit-ps34.txt") == INVALID_FILE_ATTRIBUTES) {
-        uint64_t me0 = SID_PLAYER, cr = dc_call(0x394888944e949d5fULL /* cancel-melee-action */, 1, &me0);
-        DULOG("DUEL: u%04x MISS: the engine's -hit move %llx of the dodged swing ended (cancel -> %llx) - no hit follow-through on a dodged blow (ps35)", g_mdu.uid, (unsigned long long)g_mdu_ehit_move, (unsigned long long)cr);
+    if (g_mdu_ehit_move && g_msCurmove == g_mdu_ehit_move
+        && now - g_mdu_ehit_ms < 600
+        && GetFileAttributesA("t2r-miss-enghit-ps34.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        uint64_t me0 = SID_PLAYER, cr =
+            DcCall(0x394888944e949d5fULL /* cancel-melee-action */ , 1,
+                    &me0);
+        DULOG
+            ("DUEL: u%04x MISS: the engine's -hit move %llx of the dodged swing ended (cancel -> %llx) - no hit follow-through on a dodged blow (ps35)",
+             g_mdu.uid, (unsigned long long) g_mdu_ehit_move,
+             (unsigned long long) cr);
         g_mdu_ehit_move = 0;
     }
-    mdw_dodged(why);
-    mdp_fu_miss(why);     // ps28: the dodged swing was our follow-up to a parry (log)
-    g_mdu.sw_on = 0; g_mdu.sw_done = 1; g_mdu.buf_at = 0; g_mdu.win_end = 0; g_mdu.lock_until = 0; g_mdu.next_move = 0; g_mdu.step = 0;
-    g_mdu.act_ms = now; g_mdu.hold_until = now + MDU_HOLD_MS;
-    int lk45 = mdu_miss_lock45(vslot, now);
-    g_mdg.atk_lock_until = now + (uint64_t)lk45;
-    mdg_whiff_whoosh(SID_PLAYER, current_weapon(), -1);
-    mdg_dodge_ok_cue(puppet_handle((uint32_t)vslot), (uint32_t)vslot, "our swing was dodged");   // item 4: the dodge's cue on the dodger's puppet
+    MdwDodged(why);
+    MdpFuMiss(why);           // ps28: the dodged swing was our follow-up to a parry (log)
+    g_mdu.sw_on = 0;
+    g_mdu.sw_done = 1;
+    g_mdu.buf_at = 0;
+    g_mdu.win_end = 0;
+    g_mdu.lock_until = 0;
+    g_mdu.next_move = 0;
+    g_mdu.step = 0;
+    g_mdu.act_ms = now;
+    g_mdu.hold_until = now + MDU_HOLD_MS;
+    int lk45 = MduMissLock45(vslot, now);
+    g_mdg.atk_lock_until = now + (uint64_t) lk45;
+    MdgWhiffWhoosh(SID_PLAYER, CurrentWeapon(), -1);
+    MdgDodgeOkCue(PuppetHandle((uint32_t) vslot), (uint32_t) vslot, "our swing was dodged");        // item 4: the dodge's cue on the dodger's puppet
     // (the attacker camera follows the dodge movement so it reads clearly): the duel look-at (melee_spcam.c spm_yaw, bisector of us and the nearest puppet = the dodger,
     // whose streamed body travels MDU_DODGE_CAP) runs on the v5-cam2 BOOST spring for the dodge's travel - omega 16, <= 600 deg/s (inside smoothing 2's 720 deg/s) - instead of the
     // 10 / 240 deg/s one that lags a 1.1 m side step. Smooth (critically damped), never a snap. t2r-no-dodge-cam.txt = off
-    { static int off = -1; static uint64_t at; if (off < 0 || now - at > 2000) { at = now; off = GetFileAttributesA("t2r-no-dodge-cam.txt") != INVALID_FILE_ATTRIBUTES; }
-      if (!off && g_cam2_on) { g_cam2_boost_until = now + 750; DULOG("DUEL: u%04x DODGE CAM: the camera follows slot %d's dodge on the boost spring (omega %.0f, <= %.0f deg/s) for 750 ms", g_mdu.uid, vslot, (double)CAM2_BOOST_OMEGA, (double)(CAM2_BOOST_RATE * 57.2958f)); } }
-    sptl_drop_vic_cues(why); sptl_note_miss(why);
-    DULOG("DUEL: u%04x MISS (%s): slot %d dodged - our swing's own tail plays on at x1.00 in place like SP (no stumble clip, no carry), melee locked %d ms, the duel stays engaged %d ms for the dodger's counter", g_mdu.uid, why, vslot, lk45, MDU_HOLD_MS);
+    {
+        static int off = -1;
+        static uint64_t at;
+        if (off < 0 || now - at > 2000) {
+            at = now;
+            off =
+                GetFileAttributesA("t2r-no-dodge-cam.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        if (!off && g_cam2On) {
+            g_cam2BoostUntil = now + 750;
+            DULOG
+                ("DUEL: u%04x DODGE CAM: the camera follows slot %d's dodge on the boost spring (omega %.0f, <= %.0f deg/s) for 750 ms",
+                 g_mdu.uid, vslot, (double) CAM2_BOOST_OMEGA,
+                 (double) (CAM2_BOOST_RATE * 57.2958f));
+        }
+    }
+    SptlDropVicCues(why);
+    SptlNoteMiss(why);
+    DULOG
+        ("DUEL: u%04x MISS (%s): slot %d dodged - our swing's own tail plays on at x1.00 in place like SP (no stumble clip, no carry), melee locked %d ms, the duel stays engaged %d ms for the dodger's counter",
+         g_mdu.uid, why, vslot, lk45, MDU_HOLD_MS);
     return 1;
 }
+
 // melee_dodge.c mdg_start: we pressed dodge. Inside the duel a running -hit pair on us is cut (the follow-up blow of a combo is dodgeable)
 // (19 pairs were cut in 10 min by presses 550-850 ms into a 480 ms window): the running -hit pair on us is
 // cut ONLY when the attacker's follow-up swing is in flight (its SWING arrived after this pair started: g_mdg.sw[slot].ms > pair_ms) - that is the
 // dodgeable follow-up blow. A press with no follow-up swing does not cut the pair: the reaction plays to its hand-off and the press is queued
 // (melee_dodge.c g_mdg_qpress: it fires as a dodge when the pair lets us go, inside 700 ms). Returns 0 = no dodge now. t2r-duel-dodge-cut-old.txt = old.
-static int mdu_vic_pair_on(void) { return mdu_in_pair() && g_mdu.pair_role == 2; }
+static int MduVicPairOn(void)
+{
+    return MduInPair() && g_mdu.pair_role == 2;
+}
+
 // melee_dodge.c mdg_tick (ps23): the queued press may fire now although the pair still runs - past the reaction's exit point with the attacker's follow-up swing in flight
-static int mdu_vic_dodge_exit(uint64_t now) {
-    if (!mdu_vic_pair_on() || mdu_dodge_exit_old() || g_mdu.slot < 0 || g_mdu.slot >= T2R_MAX_PEERS || now < g_mdu_vic_exit_at) return 0;
+static int MduVicDodgeExit(uint64_t now)
+{
+    if (!MduVicPairOn() || MduDodgeExitOld() || g_mdu.slot < 0
+        || g_mdu.slot >= T2R_MAX_PEERS || now < g_mduVicExitAt)
+        return 0;
     uint64_t swms = g_mdg.sw[g_mdu.slot].ms;
     return swms && swms > g_mdu.pair_ms + 40;
 }
+
 // ps46 (melee_dodge.c prompt): 1 = a press now is queued by the -hit pair on us (mdu_dodge_press: before the reaction's exit point) and released only at / after the
 // window's close (end, 0 = unknown) - it cannot dodge this blow, so no "Dodge" prompt. Same opt-outs as mdu_dodge_press (ps22 cut / old cut rule = never queued here).
-static int mdu46w_queued_past(uint64_t now, uint64_t end) {
-    if (!mdu_vic_pair_on() || mdu_dodge_exit_old() || now >= g_mdu_vic_exit_at) return 0;
-    { static int old = -1; static uint64_t oat; if (old < 0 || now - oat > 3000) { oat = now; old = GetFileAttributesA("t2r-duel-dodge-cut-old.txt") != INVALID_FILE_ATTRIBUTES; } if (old) return 0; }
-    return !end || g_mdu_vic_exit_at >= end;
-}
-static const char *mdu_row_name(int row) { return row >= 0 && row < (int)MDU_MOVES_N ? MDU_MOVES[row].move : "?"; }
-static int mdu_dodge_press(uint32_t slot) {
-    mdu_own_swing_cancel("we pressed dodge");
-    if (!g_mdu.on || g_mdu.slot < 0 || (int)slot != g_mdu.slot) return 1;
-    uint64_t now = GetTickCount64();
-    if (mdu_att_hit_pair()) {      // ps36: the dodge leaves our follow-through the way the next combo press does (mdu_next) - our half blends out, the victim half plays on
-        DULOG("DUEL: u%04x dodge press %d ms after our contact: our -hit follow-through is left for the dodge (attacker half out, combo press / window dropped; ps36)", g_mdu.uid, (int)(now - g_mdu.hit_ms));
-        psync_att_out(psync_ms() - g_ps.t0 + g_ps.chain_shift); psync_own_att_free("duel dodge out of our follow-through");
-        if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until) padinj_block("melee-attack", 0);
-        g_mdu.buf_at = 0; g_mdu.win_end = 0; g_mdu.next_move = 0;
+static int Mdu46wQueuedPast(uint64_t now, uint64_t end)
+{
+    if (!MduVicPairOn() || MduDodgeExitOld()
+        || now >= g_mduVicExitAt)
+        return 0;
+    {
+        static int old = -1;
+        static uint64_t oat;
+        if (old < 0 || now - oat > 3000) {
+            oat = now;
+            old =
+                GetFileAttributesA("t2r-duel-dodge-cut-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
+        if (old)
+            return 0;
     }
-    if (mdu_in_pair() && g_mdu.pair_role == 2) {
+    return !end || g_mduVicExitAt >= end;
+}
+
+static const char *MduRowName(int row)
+{
+    return row >= 0 && row < (int) MDU_MOVES_N ? MDU_MOVES[row].move : "?";
+}
+
+static int MduDodgePress(uint32_t slot)
+{
+    MduOwnSwingCancel("we pressed dodge");
+    if (!g_mdu.on || g_mdu.slot < 0 || (int) slot != g_mdu.slot)
+        return 1;
+    uint64_t now = GetTickCount64();
+    if (MduAttHitPair()) {   // ps36: the dodge leaves our follow-through the way the next combo press does (mdu_next) - our half blends out, the victim half plays on
+        DULOG
+            ("DUEL: u%04x dodge press %d ms after our contact: our -hit follow-through is left for the dodge (attacker half out, combo press / window dropped; ps36)",
+             g_mdu.uid, (int) (now - g_mdu.hit_ms));
+        PsyncAttOut(PsyncMs() - g_ps.t0 + g_ps.chain_shift);
+        PsyncOwnAttFree("duel dodge out of our follow-through");
+        if (g_mdu.buf_at || g_mdu.win_end || g_mdu.lock_until)
+            PadinjBlock("melee-attack", 0);
+        g_mdu.buf_at = 0;
+        g_mdu.win_end = 0;
+        g_mdu.next_move = 0;
+    }
+    if (MduInPair() && g_mdu.pair_role == 2) {
         uint64_t swms = slot < T2R_MAX_PEERS ? g_mdg.sw[slot].ms : 0;
-        static int old = -1; static uint64_t oat; if (old < 0 || now - oat > 3000) { oat = now; old = GetFileAttributesA("t2r-duel-dodge-cut-old.txt") != INVALID_FILE_ATTRIBUTES; }
+        static int old = -1;
+        static uint64_t oat;
+        if (old < 0 || now - oat > 3000) {
+            oat = now;
+            old =
+                GetFileAttributesA("t2r-duel-dodge-cut-old.txt") !=
+                INVALID_FILE_ATTRIBUTES;
+        }
         // ps23: never before the reaction's exit point (see MDU_VIC_DODGE_EXIT_MS) - the press is queued, melee_dodge.c fires it at the exit / the hand-off
-        if (!old && !mdu_dodge_exit_old() && now < g_mdu_vic_exit_at) {
-            static int nlx; if (LOGCAP(nlx, 200)) DULOG("DUEL: u%04x dodge press %d ms into the -hit pair on us, %d ms before the reaction's exit point (follow-up swing %s) - the reaction plays on, the press is queued (ps23)", g_mdu.uid,
-                (int)(now - g_mdu.pair_ms), (int)(g_mdu_vic_exit_at - now), swms && swms > g_mdu.pair_ms + 40 ? "in flight: the queued press dodges it from the exit" : "none yet");
+        if (!old && !MduDodgeExitOld() && now < g_mduVicExitAt) {
+            static int nlx;
+            if (LOGCAP(nlx, 200))
+                DULOG
+                    ("DUEL: u%04x dodge press %d ms into the -hit pair on us, %d ms before the reaction's exit point (follow-up swing %s) - the reaction plays on, the press is queued (ps23)",
+                     g_mdu.uid, (int) (now - g_mdu.pair_ms),
+                     (int) (g_mduVicExitAt - now), swms
+                     && swms >
+                     g_mdu.pair_ms +
+                     40 ?
+                     "in flight: the queued press dodges it from the exit"
+                     : "none yet");
             return 0;
         }
         if (!old && !(swms && swms > g_mdu.pair_ms + 40)) {
-            static int nl; if (LOGCAP(nl, 200)) DULOG("DUEL: u%04x dodge press %d ms into the -hit pair on us with no follow-up swing in flight (last swing of slot %u %lld ms before the pair) - the reaction plays to its hand-off, the press is queued", g_mdu.uid, (int)(now - g_mdu.pair_ms), slot, swms ? (long long)(g_mdu.pair_ms - swms) : -1LL);
+            static int nl;
+            if (LOGCAP(nl, 200))
+                DULOG
+                    ("DUEL: u%04x dodge press %d ms into the -hit pair on us with no follow-up swing in flight (last swing of slot %u %lld ms before the pair) - the reaction plays to its hand-off, the press is queued",
+                     g_mdu.uid, (int) (now - g_mdu.pair_ms), slot,
+                     swms ? (long long) (g_mdu.pair_ms - swms) : -1LL);
             return 0;
         }
-        psync_abort("duel dodge", 1);
-        if (g_melee_lock_victim) g_melee_lock_from = 0;
+        PsyncAbort("duel dodge", 1);
+        if (g_meleeLockVictim)
+            g_meleeLockFrom = 0;
         g_mdu.pair_on = 0;
-        DULOG("DUEL: u%04x we dodge the follow-up blow %d ms into the -hit pair on us (past its exit point: SP's dodge out of a hit reaction) - the pair ends (ABORT to the attacker), the dodge plays", g_mdu.uid, (int)(now - g_mdu.pair_ms));
+        DULOG
+            ("DUEL: u%04x we dodge the follow-up blow %d ms into the -hit pair on us (past its exit point: SP's dodge out of a hit reaction) - the pair ends (ABORT to the attacker), the dodge plays",
+             g_mdu.uid, (int) (now - g_mdu.pair_ms));
     }
-    g_mdu.act_ms = now; g_mdu.hold_until = now + MDU_HOLD_MS;
-    DULOG("DUEL: u%04x DODGE press at %d ms into slot %u's swing (window ends at its contact on our screen): SP contextual dodge clip, travel <= %.2f m, back to facing the attacker", g_mdu.uid,
-          (int)(now - g_mdg.sw[slot].ms), slot, (double)MDU_DODGE_CAP);
+    g_mdu.act_ms = now;
+    g_mdu.hold_until = now + MDU_HOLD_MS;
+    DULOG
+        ("DUEL: u%04x DODGE press at %d ms into slot %u's swing (window ends at its contact on our screen): SP contextual dodge clip, travel <= %.2f m, back to facing the attacker",
+         g_mdu.uid, (int) (now - g_mdg.sw[slot].ms), slot,
+         (double) MDU_DODGE_CAP);
     return 1;
 }
+
 // dcounter.c: a counter pair starts (role 1 = we counter, 2 = we are countered): the duel stays engaged through it
-static void mdu_note_dc(int role) {
-    if (!g_mdu.on || g_mdu.slot < 0) return;
+static void MduNoteDc(int role)
+{
+    if (!g_mdu.on || g_mdu.slot < 0)
+        return;
     uint64_t now = GetTickCount64();
-    g_mdu.act_ms = now; g_mdu.hold_until = now + MDU_HOLD_MS; g_mdu.sw_on = 0; g_mdu.pair_on = 0;
-    DULOG("DUEL: u%04x dodge-counter pair %s - the duel stays engaged (the SP counter is the dodge's follow-up, not a new duel)", g_mdu.uid, role == 1 ? "thrown by us" : "on us");
+    g_mdu.act_ms = now;
+    g_mdu.hold_until = now + MDU_HOLD_MS;
+    g_mdu.sw_on = 0;
+    g_mdu.pair_on = 0;
+    DULOG
+        ("DUEL: u%04x dodge-counter pair %s - the duel stays engaged (the SP counter is the dodge's follow-up, not a new duel)",
+         g_mdu.uid, role == 1 ? "thrown by us" : "on us");
 }

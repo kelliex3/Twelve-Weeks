@@ -25,110 +25,215 @@
 // HOLSTER-DEBT SAFETY: nothing here holsters; the draw goes through the engine's own switch, and nothing is drawn while a debt is owed or a pair runs.
 //    The gun the player held is not remembered / drawn back (the victim half keeps its own g_cd_vgun logic for guns it put away itself).
 // Opt-out: t2r-no-melee-autodraw.txt (re-read every 2 s). Log prefix "melee autodraw:".
-#define MAD_QUIET_MS 4000      // no trigger for this long = the engagement is over, the next trigger may draw again
-#define MAD_WAIT_MS 1500       // a request that finds the gates closed for this long is dropped
-#define MAD_VERIFY_T60 48      // frames (0.8 s) the animated draw gets to put the weapon in the hand before the instant draw takes over
+#define MAD_QUIET_MS 4000       // no trigger for this long = the engagement is over, the next trigger may draw again
+#define MAD_WAIT_MS 1500        // a request that finds the gates closed for this long is dropped
+#define MAD_VERIFY_T60 48       // frames (0.8 s) the animated draw gets to put the weapon in the hand before the instant draw takes over
 static struct {
-    int pend, phase, done, slot;           // pend: a request waits for open gates; phase 1: the animated draw was called, the hand is checked; done: this engagement drew / gave up
-    uint64_t note_ms, last_ms, t60, w;     // request time, last trigger time, frame of the draw call, the weapon being drawn
+    int pend, phase, done, slot;        // pend: a request waits for open gates; phase 1: the animated draw was called, the hand is checked; done: this engagement drew / gave up
+    uint64_t note_ms, last_ms, t60, w;  // request time, last trigger time, frame of the draw call, the weapon being drawn
     char why[48];
-    const char *block;                     // the gate that held the request last tick (logged when it gives up)
+    const char *block;          // the gate that held the request last tick (logged when it gives up)
 } g_mad;
-static int mad_off(void) { static int v = -1; static uint64_t at; return mown_file("t2r-no-melee-autodraw.txt", &v, &at); }
+static int MadOff(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    return MownFile("t2r-no-melee-autodraw.txt", &v, &at);
+}
+
 // a melee attack reached us: why = log text, slot = the attacker (-1 unknown)
-static void mad_note(int slot, const char *why) {
-    if (mad_off() || match_substate() != 6) return;
+static void MadNote(int slot, const char *why)
+{
+    if (MadOff() || MatchSubstate() != 6)
+        return;
     uint64_t now = GetTickCount64();
-    if (g_mad.last_ms && now - g_mad.last_ms > MAD_QUIET_MS) g_mad.done = 0;           // quiet long enough: a new engagement
+    if (g_mad.last_ms && now - g_mad.last_ms > MAD_QUIET_MS)
+        g_mad.done = 0;         // quiet long enough: a new engagement
     g_mad.last_ms = now ? now : 1;
-    if (g_mad.done || g_mad.pend || g_mad.phase) return;
-    g_mad.pend = 1; g_mad.slot = slot; g_mad.note_ms = now; g_mad.block = NULL;
+    if (g_mad.done || g_mad.pend || g_mad.phase)
+        return;
+    g_mad.pend = 1;
+    g_mad.slot = slot;
+    g_mad.note_ms = now;
+    g_mad.block = NULL;
     snprintf(g_mad.why, sizeof g_mad.why, "%s", why ? why : "?");
 }
+
 // recv_hit_hook: only melee blows (a melee-table weapon, a knife, fists) - not bullets, fire, explosions, executions
-static void mad_note_hit(uint32_t slot, uint64_t w, float dmg) {
-    if (!(dmg > 0.0f) || dmg >= 150.0f || !w) return;
-    if (!(melee_class_of(w, NULL) >= 0 || melee_class_of(base_weapon(w), NULL) >= 0 || knife_weapon_id(w) || w == fnv64("abby-unarmed") || w == fnv64("ellie-unarmed"))) return;
-    mad_note(slot < T2R_MAX_PEERS ? (int)slot : -1, "a melee blow reached us");
+static void MadNoteHit(uint32_t slot, uint64_t w, float dmg)
+{
+    if (!(dmg > 0.0f) || dmg >= 150.0f || !w)
+        return;
+    if (!
+        (MeleeClassOf(w, NULL) >= 0
+         || MeleeClassOf(BaseWeapon(w), NULL) >= 0 || KnifeWeaponId(w)
+         || w == FNV64("abby-unarmed") || w == FNV64("ellie-unarmed")))
+        return;
+    MadNote(slot < T2R_MAX_PEERS ? (int) slot : -1,
+             "a melee blow reached us");
 }
+
 // Source (log lines 'ANIMATED draw ... controller holds 226c...', 'held 0, current 0', 'SWING abby-1h-blunt-light-1' - the first swing came with the hand
 // empty while the club's draw was still pending behind the victim pairs; the watchers saw a pistol / an empty hand swing club moves): no melee press starts a swing while our own melee draw is
 // under way and the weapon is not in the hand yet (<= 2.5 s after the draw call; the fallback instant draw runs the frame the pairs end). melee_duel.c mdu_press_latched.
 // t2r-swing-wait-draw-old.txt = off. Log "melee autodraw: a press waits for the draw".
-static int mad_drawing(void) {
-    static int v = -1; static uint64_t at; static uint64_t lastlog;
-    if (!g_mad.phase || !g_mad.w || mad_off() || mown_file("t2r-swing-wait-draw-old.txt", &v, &at) || g_t60 - g_mad.t60 > 150 || xr_hand_ok(g_mad.w)) return 0;
-    if (g_t60 - lastlog > 300) { lastlog = g_t60; xlog("melee autodraw: a melee press waits for the draw of %llx (held %llx) - no swing with the hand empty / a gun in it", (unsigned long long)g_mad.w, (unsigned long long)xr_held()); }
+static int MadDrawing(void)
+{
+    static int v = -1;
+    static uint64_t at;
+    static uint64_t lastlog;
+    if (!g_mad.phase || !g_mad.w || MadOff()
+        || MownFile("t2r-swing-wait-draw-old.txt", &v, &at)
+        || g_t60 - g_mad.t60 > 150 || XrHandOk(g_mad.w))
+        return 0;
+    if (g_t60 - lastlog > 300) {
+        lastlog = g_t60;
+        Xlog("melee autodraw: a melee press waits for the draw of %llx (held %llx) - no swing with the hand empty / a gun in it", (unsigned long long) g_mad.w, (unsigned long long) XrHeld());
+    }
     return 1;
 }
-static void mad_reset(void) { g_mad.pend = g_mad.phase = 0; g_mad.w = 0; }
-static void mad_tick(void) {
-    if (!g_mad.pend && !g_mad.phase) return;
-    typedef union { float f; uint32_t u; } fu_t;
+
+static void MadReset(void)
+{
+    g_mad.pend = g_mad.phase = 0;
+    g_mad.w = 0;
+}
+
+static void MadTick(void)
+{
+    if (!g_mad.pend && !g_mad.phase)
+        return;
+    typedef union {
+        float f;
+        uint32_t u;
+    } FuT;
     uint64_t now = GetTickCount64(), none = 0;
-    if (mad_off() || match_substate() != 6) { mad_reset(); return; }
-    if (g_downed || g_down_dying || g_down_at || g_exec_until || local_hp() <= 0.0f || g_in_spawn) {            // hard: never over a down / death / respawn
-        xlog("melee autodraw: dropped (%s) - down / dead / respawning", g_mad.why); g_mad.done = 1; mad_reset(); return;
+    if (MadOff() || MatchSubstate() != 6) {
+        MadReset();
+        return;
     }
-    uint64_t cw = current_weapon(); if (cw == ~0ULL) cw = 0;
-    if (g_mad.phase) {                                                       // the animated draw was called: wait for the hand, then the instant fallback
+    if (g_downed || g_downDying || g_downAt || g_execUntil || LocalHp() <= 0.0f || g_inSpawn) {    // hard: never over a down / death / respawn
+        Xlog("melee autodraw: dropped (%s) - down / dead / respawning",
+             g_mad.why);
+        g_mad.done = 1;
+        MadReset();
+        return;
+    }
+    uint64_t cw = CurrentWeapon();
+    if (cw == ~0ULL)
+        cw = 0;
+    if (g_mad.phase) {          // the animated draw was called: wait for the hand, then the instant fallback
         uint64_t w = g_mad.w;
-        if (xr_hand_ok(w)) {
-            xlog("melee autodraw: %llx is in the hand %llu frames after the animated draw (held %llx) - done", (unsigned long long)w, (unsigned long long)(g_t60 - g_mad.t60), (unsigned long long)xr_held());
-            if (!xr_hand_check_off()) { g_xr_vfy_w = w; g_xr_vfy_at = g_t60 + 30; g_xr_vfy_try = 0; }
-            g_mad.done = 1; mad_reset(); return;
+        if (XrHandOk(w)) {
+            Xlog("melee autodraw: %llx is in the hand %llu frames after the animated draw (held %llx) - done", (unsigned long long) w, (unsigned long long) (g_t60 - g_mad.t60), (unsigned long long) XrHeld());
+            if (!XrHandCheckOff()) {
+                g_xr_vfy_w = w;
+                g_xr_vfy_at = g_t60 + 30;
+                g_xrVfyTry = 0;
+            }
+            g_mad.done = 1;
+            MadReset();
+            return;
         }
-        if (g_t60 - g_mad.t60 < MAD_VERIFY_T60) return;
+        if (g_t60 - g_mad.t60 < MAD_VERIFY_T60)
+            return;
         // v5-madwait (the victim's bat came out only at the 3rd blow - late): the draw was dropped when a -hit pair ran on us at
         // the check; it now waits up to 3 s for the pair to end, then the instant fallback below draws. t2r-mad-no-wait.txt = old.
-        if ((psync_own()) && !g_xr_on && !g_unarm_exec && g_t60 - g_mad.t60 < 180 && GetFileAttributesA("t2r-mad-no-wait.txt") == INVALID_FILE_ATTRIBUTES) return;
-        if (psync_own() || g_xr_on || g_unarm_exec) {
-            xlog("melee autodraw: %llx not in the hand %llu frames after the animated draw (held %llx) and a paired move / execution runs - left to the engine, no fallback", (unsigned long long)w, (unsigned long long)(g_t60 - g_mad.t60), (unsigned long long)xr_held());
-            g_mad.done = 1; mad_reset(); return;
+        if ((PsyncOwn()) && !g_xrOn && !g_unarmExec
+            && g_t60 - g_mad.t60 < 180
+            && GetFileAttributesA("t2r-mad-no-wait.txt") ==
+            INVALID_FILE_ATTRIBUTES)
+            return;
+        if (PsyncOwn() || g_xrOn || g_unarmExec) {
+            Xlog("melee autodraw: %llx not in the hand %llu frames after the animated draw (held %llx) and a paired move / execution runs - left to the engine, no fallback", (unsigned long long) w, (unsigned long long) (g_t60 - g_mad.t60), (unsigned long long) XrHeld());
+            g_mad.done = 1;
+            MadReset();
+            return;
         }
-        uint64_t held0 = xr_held(), r = xr_draw(w); int forced = 0, busy = -1;
-        if (!xr_hand_ok(w)) { forced = (int)xr_draw_forced(w, &busy); }
-        int ok = xr_hand_ok(w);
-        xlog("melee autodraw: animated draw of %llx did not reach the hand (held %llx) - FALLBACK instant draw %llx%s -> %s (held now %llx)", (unsigned long long)w, (unsigned long long)held0,
-             (unsigned long long)r, forced ? " + forced draw" : "", ok ? "in the hand" : "STILL NOT IN THE HAND", (unsigned long long)xr_held());
-        if (ok && !xr_hand_check_off()) { g_xr_vfy_w = w; g_xr_vfy_at = g_t60 + 30; g_xr_vfy_try = 0; }
-        g_mad.done = 1; mad_reset(); return;
+        uint64_t held0 = XrHeld(), r = XrDraw(w);
+        int forced = 0, busy = -1;
+        if (!XrHandOk(w)) {
+            forced = (int) XrDrawForced(w, &busy);
+        }
+        int ok = XrHandOk(w);
+        Xlog("melee autodraw: animated draw of %llx did not reach the hand (held %llx) - FALLBACK instant draw %llx%s -> %s (held now %llx)", (unsigned long long) w, (unsigned long long) held0, (unsigned long long) r, forced ? " + forced draw" : "", ok ? "in the hand" : "STILL NOT IN THE HAND", (unsigned long long) XrHeld());
+        if (ok && !XrHandCheckOff()) {
+            g_xr_vfy_w = w;
+            g_xr_vfy_at = g_t60 + 30;
+            g_xrVfyTry = 0;
+        }
+        g_mad.done = 1;
+        MadReset();
+        return;
     }
     // ---- a request is waiting for open gates
-    if (cw && !base_weapon_is_gun(base_weapon(cw)) && !weapon_is_throwable(cw) && cw != fnv64("abby-unarmed") && cw != fnv64("ellie-unarmed")) {   // a melee weapon / the knife is out already
-        xlog("melee autodraw: skipped (%s) - %llx is in the hand already", g_mad.why, (unsigned long long)cw); g_mad.done = 1; mad_reset(); return;
+    if (cw && !BaseWeaponIsGun(BaseWeapon(cw)) && !WeaponIsThrowable(cw) && cw != FNV64("abby-unarmed") && cw != FNV64("ellie-unarmed")) {        // a melee weapon / the knife is out already
+        Xlog("melee autodraw: skipped (%s) - %llx is in the hand already",
+             g_mad.why, (unsigned long long) cw);
+        g_mad.done = 1;
+        MadReset();
+        return;
     }
-    uint64_t mw = xr_melee_weapon(cw);
-    if (!(melee_class_of(mw, NULL) >= 0) && g_last_melee) { uint64_t hw = dc_call(fnv64("has-weapon?"), 1, &g_last_melee); if (hw != ~0ULL && (hw & 0xff)) mw = g_last_melee; }
-    if (mw) { uint64_t hw = dc_call(fnv64("has-weapon?"), 1, &mw); if (hw != ~0ULL && !(hw & 0xff)) mw = 0; }       // (stale id: not in the inventory)
-    if (!mw || melee_class_of(mw, NULL) < 0 || knife_weapon_id(mw)) {
-        static int nl; if (LOGCAP(nl, 40)) xlog("melee autodraw: skipped (%s) - we carry no melee weapon to draw (held %llx, last melee %llx)", g_mad.why, (unsigned long long)cw, (unsigned long long)g_last_melee);
-        g_mad.done = 1; mad_reset(); return;
+    uint64_t mw = XrMeleeWeapon(cw);
+    if (!(MeleeClassOf(mw, NULL) >= 0) && g_lastMelee) {
+        uint64_t hw = DcCall(FNV64("has-weapon?"), 1, &g_lastMelee);
+        if (hw != ~0ULL && (hw & 0xff))
+            mw = g_lastMelee;
+    }
+    if (mw) {
+        uint64_t hw = DcCall(FNV64("has-weapon?"), 1, &mw);
+        if (hw != ~0ULL && !(hw & 0xff))
+            mw = 0;
+    }                           // (stale id: not in the inventory)
+    if (!mw || MeleeClassOf(mw, NULL) < 0 || KnifeWeaponId(mw)) {
+        static int nl;
+        if (LOGCAP(nl, 40))
+            Xlog("melee autodraw: skipped (%s) - we carry no melee weapon to draw (held %llx, last melee %llx)", g_mad.why, (unsigned long long) cw, (unsigned long long) g_lastMelee);
+        g_mad.done = 1;
+        MadReset();
+        return;
     }
     const char *blk = NULL;
-    uint64_t ar = dc_call(fnv64("player-is-aiming?"), 0, &none), fr = dc_call(fnv64("player-is-firing?"), 0, &none), gw = xr_held();
-    uint8_t *me = ((uint8_t *(*)(void))VMA(0x180050390))();
-    uint8_t *ctrl = me && !IsBadReadPtr(me + 0x2F60, 8) ? *(uint8_t **)(me + 0x2F60) : NULL;
-    if ((ar != ~0ULL && (ar & 0xff)) || (fr != ~0ULL && (fr & 0xff))) blk = "aiming / firing";
-    else if (cw && gw && gw != ~0ULL && cw != gw) blk = "a weapon switch is under way";
-    else if (xr_cannot_switch(ctrl) == 1) blk = "the engine's CannotSwitchWeapon gate";
-    else if (psync_own()) blk = "a paired move";
-    else if (g_xr_on || g_unarm_exec) blk = "an execution weapon keeper";
-    else if (g_hdebt_item) blk = "a holster debt is owed";
-    else if (bp_own_phase_now()) blk = "the backpack stow phase";
+    uint64_t ar = DcCall(FNV64("player-is-aiming?"), 0, &none), fr =
+        DcCall(FNV64("player-is-firing?"), 0, &none), gw = XrHeld();
+    uint8_t *me = ((uint8_t * (*)(void)) T2R_SYM(kFnLocalPlayer)) ();
+    uint8_t *ctrl = me
+        && !IsBadReadPtr(me + 0x2F60,
+                         8) ? *(uint8_t **) (me + 0x2F60) : NULL;
+    if ((ar != ~0ULL && (ar & 0xff)) || (fr != ~0ULL && (fr & 0xff)))
+        blk = "aiming / firing";
+    else if (cw && gw && gw != ~0ULL && cw != gw)
+        blk = "a weapon switch is under way";
+    else if (XrCannotSwitch(ctrl) == 1)
+        blk = "the engine's CannotSwitchWeapon gate";
+    else if (PsyncOwn())
+        blk = "a paired move";
+    else if (g_xrOn || g_unarmExec)
+        blk = "an execution weapon keeper";
+    else if (g_hdebtItem)
+        blk = "a holster debt is owed";
+    else if (BpOwnPhaseNow())
+        blk = "the backpack stow phase";
     // v5-mad2 (a melee attack did make the opponent draw their melee weapon, but far too late: it waits for the animation to end, which
     // never happens in a series of hits): in a series every blow is a paired move on us, the gate never opened. As the VICTIM of a paired move the
     // carried weapon now goes into the hand at once (instant draw - the hit reaction is full-body, the next blow's reaction is the armed one; the
     // engine's animated draw cannot run under the pair). Aiming / firing / a switch / an execution keeper still hold it. t2r-mad-wait-pair.txt = wait.
-    if (blk && g_ps.role == 2 && !strcmp(blk, "a paired move") && GetFileAttributesA("t2r-mad-wait-pair.txt") == INVALID_FILE_ATTRIBUTES) {
-        uint64_t r = xr_draw(mw);
-        xlog("melee autodraw: %s (slot %d) - we are the victim of a paired move: INSTANT draw of %llx under it -> %llx, held now %llx, %d ms after the trigger", g_mad.why, g_mad.slot,
-             (unsigned long long)mw, (unsigned long long)r, (unsigned long long)xr_held(), (int)(now - g_mad.note_ms));
-        g_mad.done = 1; mad_reset(); return;
+    if (blk && g_ps.role == 2 && !strcmp(blk, "a paired move")
+        && GetFileAttributesA("t2r-mad-wait-pair.txt") ==
+        INVALID_FILE_ATTRIBUTES) {
+        uint64_t r = XrDraw(mw);
+        Xlog("melee autodraw: %s (slot %d) - we are the victim of a paired move: INSTANT draw of %llx under it -> %llx, held now %llx, %d ms after the trigger", g_mad.why, g_mad.slot, (unsigned long long) mw, (unsigned long long) r, (unsigned long long) XrHeld(), (int) (now - g_mad.note_ms));
+        g_mad.done = 1;
+        MadReset();
+        return;
     }
     if (blk) {
         g_mad.block = blk;
-        if (now - g_mad.note_ms > MAD_WAIT_MS) { xlog("melee autodraw: gave up (%s) - held back for %d ms by: %s", g_mad.why, (int)(now - g_mad.note_ms), blk); g_mad.done = 1; mad_reset(); }
+        if (now - g_mad.note_ms > MAD_WAIT_MS) {
+            Xlog("melee autodraw: gave up (%s) - held back for %d ms by: %s", g_mad.why, (int) (now - g_mad.note_ms), blk);
+            g_mad.done = 1;
+            MadReset();
+        }
         return;
     }
     // v5-mad3 (getting hit did not draw into the melee pose with the melee weapon in hand on the first frame; the character started pulling
@@ -137,18 +242,27 @@ static void mad_tick(void) {
     // v5-mad4 (hits connected much worse): drawn at once, the victim is ARMED from the first blow on, and every following duel blow
     // on an armed victim is a plain contact (SP: armed defender = standing hit reaction, no synced pair) - the combo lost its pairs. The animated draw is the
     // default again; t2r-mad-instant.txt = the instant draw.
-    if (GetFileAttributesA("t2r-mad-instant.txt") != INVALID_FILE_ATTRIBUTES) {
-        uint64_t r = xr_draw(mw);
-        xlog("melee autodraw: %s (slot %d) - we carry %llx (held %llx) - INSTANT draw -> %llx, held now %llx, %d ms after the trigger", g_mad.why, g_mad.slot,
-             (unsigned long long)mw, (unsigned long long)cw, (unsigned long long)r, (unsigned long long)xr_held(), (int)(now - g_mad.note_ms));
-        if (!xr_hand_check_off()) { g_xr_vfy_w = mw; g_xr_vfy_at = g_t60 + 30; g_xr_vfy_try = 0; }
-        g_mad.done = 1; mad_reset(); return;
+    if (GetFileAttributesA("t2r-mad-instant.txt") !=
+        INVALID_FILE_ATTRIBUTES) {
+        uint64_t r = XrDraw(mw);
+        Xlog("melee autodraw: %s (slot %d) - we carry %llx (held %llx) - INSTANT draw -> %llx, held now %llx, %d ms after the trigger", g_mad.why, g_mad.slot, (unsigned long long) mw, (unsigned long long) cw, (unsigned long long) r, (unsigned long long) XrHeld(), (int) (now - g_mad.note_ms));
+        if (!XrHandCheckOff()) {
+            g_xr_vfy_w = mw;
+            g_xr_vfy_at = g_t60 + 30;
+            g_xrVfyTry = 0;
+        }
+        g_mad.done = 1;
+        MadReset();
+        return;
     }
-    fu_t z = {0.0f}; uint64_t a[2] = {mw, z.u};
-    uint64_t r = dc_call(fnv64("player-draw-weapon-by-name"), 2, a);
-    g_mad.phase = 1; g_mad.pend = 0; g_mad.t60 = g_t60; g_mad.w = mw;
-    xlog("melee autodraw: %s (slot %d) - we carry %llx (held %llx, ranged-in-hand %d) - ANIMATED draw player-draw-weapon-by-name -> %llx, controller holds %llx now, %d ms after the trigger", g_mad.why, g_mad.slot,
-         (unsigned long long)mw, (unsigned long long)cw, cw && base_weapon_is_gun(base_weapon(cw)), (unsigned long long)r, (unsigned long long)xr_held(), (int)(now - g_mad.note_ms));
+    FuT z = { 0.0f };
+    uint64_t a[2] = { mw, z.u };
+    uint64_t r = DcCall(FNV64("player-draw-weapon-by-name"), 2, a);
+    g_mad.phase = 1;
+    g_mad.pend = 0;
+    g_mad.t60 = g_t60;
+    g_mad.w = mw;
+    Xlog("melee autodraw: %s (slot %d) - we carry %llx (held %llx, ranged-in-hand %d) - ANIMATED draw player-draw-weapon-by-name -> %llx, controller holds %llx now, %d ms after the trigger", g_mad.why, g_mad.slot, (unsigned long long) mw, (unsigned long long) cw, cw && BaseWeaponIsGun(BaseWeapon(cw)), (unsigned long long) r, (unsigned long long) XrHeld(), (int) (now - g_mad.note_ms));
 }
 
 // v5-pickstow (sometimes a picked up melee weapon went into neither the hand nor the backpack; it appeared when meleeing, and went to the backpack on switching
@@ -156,45 +270,68 @@ static void mad_tick(void) {
 // joins the inventory without a draw has the never-drawn draw-control visibility byte (+0x1b0 -> +0x48 = 0x00, see spawn stow) and no holster point
 // until the next weapon switch. Every carried, not held melee item with that byte gets it set (as its first draw does) and goes to its holster
 // (PutWeaponInHolster, SP's HolsterAllWeapons args). t2r-no-pickup-stow.txt = off.
-static void pickstow_tick(void) {
+static void PickstowTick(void)
+{
     typedef uint8_t *(*fn_me)(void);
     typedef void (*fn_putw)(void *, void *, int, float);
     typedef uint64_t *(*fn_apsid)(void *, void *);
-    static int off = -1; static uint64_t off_at;
-    if (match_substate() != 6 || g_frame % 15 || g_downed || local_hp() <= 0.0f || psync_active()) return;
-    if (off < 0 || GetTickCount64() - off_at > 2000) { off_at = GetTickCount64(); off = GetFileAttributesA("t2r-no-pickup-stow.txt") != INVALID_FILE_ATTRIBUTES; }
-    if (off) return;
-    uint64_t none = 0, anym = dc_call(0x79763b864843c645ULL /* player-has-non-basic-melee-weapon? */, 0, &none);
-    if (anym == ~0ULL || !(anym & 0xff)) return;
-    uint8_t *me = ((fn_me)VMA(0x180050390))();
-    if (!me || IsBadReadPtr(me + 0x2F60, 8)) return;
-    uint8_t *ctrl = *(uint8_t **)(me + 0x2F60);
-    if (!ctrl) return;
-    uint64_t held = 0; hdebt_held(me, &held);
+    static int off = -1;
+    static uint64_t off_at;
+    if (MatchSubstate() != 6 || g_frame % 15 || g_downed
+        || LocalHp() <= 0.0f || PsyncActive())
+        return;
+    if (off < 0 || GetTickCount64() - off_at > 2000) {
+        off_at = GetTickCount64();
+        off =
+            GetFileAttributesA("t2r-no-pickup-stow.txt") !=
+            INVALID_FILE_ATTRIBUTES;
+    }
+    if (off)
+        return;
+    uint64_t none = 0, anym =
+        DcCall(0x79763b864843c645ULL
+                /* player-has-non-basic-melee-weapon? */ , 0, &none);
+    if (anym == ~0ULL || !(anym & 0xff))
+        return;
+    uint8_t *me = ((fn_me) T2R_SYM(kFnLocalPlayer)) ();
+    if (!me || IsBadReadPtr(me + 0x2F60, 8))
+        return;
+    uint8_t *ctrl = *(uint8_t **) (me + 0x2F60);
+    if (!ctrl)
+        return;
+    uint64_t held = 0;
+    HdebtHeld(me, &held);
     for (size_t i = 0; i < sizeof MELEE_TAB / sizeof *MELEE_TAB; i++) {
-        uint64_t id = fnv64(MELEE_TAB[i].n);
-        if (id == held) continue;
-        uint64_t has = dc_call(fnv64("has-weapon?"), 1, &id);
-        if (has == ~0ULL || !(has & 0xff)) continue;
-        uint8_t *w = hdebt_proc(me, id);
-        if (!w || w == g_cd_dis.hw || IsBadReadPtr(w + 0x1b0, 8)) continue;
-        uint8_t *dc = *(uint8_t **)(w + 0x1b0);
-        if (!dc || IsBadWritePtr(dc + 0x48, 4) || dc[0x48] != 0x00 || dc[0x49] != 0xff || dc[0x4a] != 0xff) continue;
+        uint64_t id = FNV64(MELEE_TAB[i].n);
+        if (id == held)
+            continue;
+        uint64_t has = DcCall(FNV64("has-weapon?"), 1, &id);
+        if (has == ~0ULL || !(has & 0xff))
+            continue;
+        uint8_t *w = HdebtProc(me, id);
+        if (!w || w == g_cdDis.hw || IsBadReadPtr(w + 0x1b0, 8))
+            continue;
+        uint8_t *dc = *(uint8_t **) (w + 0x1b0);
+        if (!dc || IsBadWritePtr(dc + 0x48, 4) || dc[0x48] != 0x00
+            || dc[0x49] != 0xff || dc[0x4a] != 0xff)
+            continue;
         dc[0x48] = 0xff;
-        uint8_t *exe = (uint8_t *)GetModuleHandleW(NULL);
-        uint64_t o0[8] = {0}, o1[8] = {0};
-        uint64_t *r0 = ((fn_apsid)(exe + 0x1cd4870))(w, o0), ap0 = r0 ? *r0 : 0;
+        uint8_t *exe = (uint8_t *) GetModuleHandleW(NULL);
+        uint64_t o0[8] = { 0 }, o1[8] = { 0 };
+        uint64_t *r0 = ((fn_apsid) (exe + 0x1cd4870)) (w, o0), ap0 =
+            r0 ? *r0 : 0;
         // taking a melee weapon puts it in the hand, as before - a pickup (not the spawn loadout) goes into the hand.
         // t2r-pickup-to-bag.txt = holstered instead.
-        if (g_frame - g_spawned_frame > 180 && GetFileAttributesA("t2r-pickup-to-bag.txt") == INVALID_FILE_ATTRIBUTES) {
-            uint64_t r = xr_draw(id);
-            xlog("pickup stow: %s (%016llx) picked up, never drawn, invisible - shown + instant draw -> %llx, held now %016llx (was %016llx)", MELEE_TAB[i].n,
-                 (unsigned long long)id, (unsigned long long)r, (unsigned long long)xr_held(), (unsigned long long)held);
+        if (g_frame - g_spawnedFrame > 180
+            && GetFileAttributesA("t2r-pickup-to-bag.txt") ==
+            INVALID_FILE_ATTRIBUTES) {
+            uint64_t r = XrDraw(id);
+            Xlog("pickup stow: %s (%016llx) picked up, never drawn, invisible - shown + instant draw -> %llx, held now %016llx (was %016llx)", MELEE_TAB[i].n, (unsigned long long) id, (unsigned long long) r, (unsigned long long) XrHeld(), (unsigned long long) held);
             return;
         }
-        ((fn_putw)(exe + 0xbdd9d0))(ctrl, w, -1, 0.0f);
-        uint64_t *r1 = ((fn_apsid)(exe + 0x1cd4870))(w, o1), ap1 = r1 ? *r1 : 0;
-        xlog("pickup stow: %s (%016llx) carried, never drawn, invisible - shown + PutWeaponInHolster: %s -> %s (held %016llx)", MELEE_TAB[i].n,
-             (unsigned long long)id, ap0 ? bp_ap_name(ap0) : "none", ap1 ? bp_ap_name(ap1) : "none", (unsigned long long)held);
+        ((fn_putw) (exe + 0xbdd9d0)) (ctrl, w, -1, 0.0f);
+        uint64_t *r1 = ((fn_apsid) (exe + 0x1cd4870)) (w, o1), ap1 =
+            r1 ? *r1 : 0;
+        Xlog("pickup stow: %s (%016llx) carried, never drawn, invisible - shown + PutWeaponInHolster: %s -> %s (held %016llx)", MELEE_TAB[i].n, (unsigned long long) id, ap0 ? BpApName(ap0) : "none", ap1 ? BpApName(ap1) : "none", (unsigned long long) held);
     }
 }

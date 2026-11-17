@@ -26,29 +26,53 @@
 #define AJ_SLOT_JOB 0x4ca8
 #define AJ_JOB_ID 0x18
 #define AJ_WAYS 4
-typedef struct { int32_t id; uint8_t *job; } aj_ent;
-typedef struct { aj_ent e[AJ_WAYS]; uint32_t rr; } aj_cache;
+typedef struct {
+    int32_t id;
+    uint8_t *job;
+} AjEnt;
+typedef struct {
+    AjEnt e[AJ_WAYS];
+    uint32_t rr;
+} AjCache;
 enum { AJ_OK = 0, AJ_SWAPPED = 1, AJ_DROPPED = 2 };
 // slot: base of the winmm slot record (PA_SLOT(s)); cur: id of the table the puppet's replay call carries (0 = unknown: leave everything);
 // *old_id: id of the job that was installed (for the log)
-static int aj_fix(uint8_t *slot, int32_t cur, aj_cache *c, int32_t *old_id) {
-    uint8_t **pj = (uint8_t **)(slot + AJ_SLOT_JOB);
+static int AjFix(uint8_t *slot, int32_t cur, AjCache *c, int32_t *old_id)
+{
+    uint8_t **pj = (uint8_t **) (slot + AJ_SLOT_JOB);
     uint8_t *job = *pj;
-    if (!job || !cur || !AJ_READABLE(job + AJ_JOB_ID, 4)) return AJ_OK;
-    int32_t jid = *(int32_t *)(job + AJ_JOB_ID);
-    if (old_id) *old_id = jid;
+    if (!job || !cur || !AJ_READABLE(job + AJ_JOB_ID, 4))
+        return AJ_OK;
+    int32_t jid = *(int32_t *) (job + AJ_JOB_ID);
+    if (old_id)
+        *old_id = jid;
     int k = -1;
-    for (int i = 0; i < AJ_WAYS; i++) if (c->e[i].id == jid && c->e[i].job) { k = i; break; }
-    if (k < 0) { for (int i = 0; i < AJ_WAYS; i++) if (!c->e[i].job) { k = i; break; } }
-    if (k < 0) k = (int)(c->rr++ % AJ_WAYS);
-    c->e[k].id = jid; c->e[k].job = job;                       // every installed job is remembered by its table id
-    if (jid == cur) return AJ_OK;
     for (int i = 0; i < AJ_WAYS; i++)
-        if (c->e[i].job && c->e[i].id == cur && c->e[i].job != job && AJ_READABLE(c->e[i].job + AJ_JOB_ID, 4) && *(int32_t *)(c->e[i].job + AJ_JOB_ID) == cur) {
-            AJ_XCHG(pj, c->e[i].job);                          // this body's own job is still there: back in at once (no NPC-graph frame)
+        if (c->e[i].id == jid && c->e[i].job) {
+            k = i;
+            break;
+        }
+    if (k < 0) {
+        for (int i = 0; i < AJ_WAYS; i++)
+            if (!c->e[i].job) {
+                k = i;
+                break;
+            }
+    }
+    if (k < 0)
+        k = (int) (c->rr++ % AJ_WAYS);
+    c->e[k].id = jid;
+    c->e[k].job = job;          // every installed job is remembered by its table id
+    if (jid == cur)
+        return AJ_OK;
+    for (int i = 0; i < AJ_WAYS; i++)
+        if (c->e[i].job && c->e[i].id == cur && c->e[i].job != job
+            && AJ_READABLE(c->e[i].job + AJ_JOB_ID, 4)
+            && *(int32_t *) (c->e[i].job + AJ_JOB_ID) == cur) {
+            AJ_XCHG(pj, c->e[i].job);   // this body's own job is still there: back in at once (no NPC-graph frame)
             return AJ_SWAPPED;
         }
-    AJ_XCHG(pj, (uint8_t *)0);                                 // none yet: winmm's builder (0x180028c40, every frame) makes one for the table parked at +0x60b8
+    AJ_XCHG(pj, (uint8_t *) 0); // none yet: winmm's builder (0x180028c40, every frame) makes one for the table parked at +0x60b8
     return AJ_DROPPED;
 }
 #endif

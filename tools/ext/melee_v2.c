@@ -6,13 +6,22 @@
 //   - a blow always shows on the victim: no 1.0 s graze, no immune window, a blow mid swing cancels our swing and plays the reaction (SP)
 //   - a melee press during the cadence lock is never dropped while we are not hit (fires when the lock ends)
 // t2r-melee-v1.txt = the old layers back.
-static int mv2_on(void) {
-    static int on = -1; static uint64_t at;
+static int Mv2On(void)
+{
+    static int on = -1;
+    static uint64_t at;
     uint64_t now = GetTickCount64();
     if (on < 0 || now - at >= 2000) {
         at = now ? now : 1;
-        FILE *f = exe_side_open("t2r-melee-v1.txt", "r"); int o = f == NULL; if (f) fclose(f);
-        if (o != on) xlog("melee v2: %s", o ? "ON (free swings, SP windup, every blow reacts, no eaten presses; t2r-melee-v1.txt = old layers)" : "OFF (t2r-melee-v1.txt)");
+        FILE *f = ExeSideOpen("t2r-melee-v1.txt", "r");
+        int o = f == NULL;
+        if (f)
+            fclose(f);
+        if (o != on)
+            Xlog("melee v2: %s",
+                 o ?
+                 "ON (free swings, SP windup, every blow reacts, no eaten presses; t2r-melee-v1.txt = old layers)"
+                 : "OFF (t2r-melee-v1.txt)");
         on = o;
     }
     return on;

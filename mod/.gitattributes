@@ -1,0 +1,12 @@
+* text=auto
+
+*.png binary
+*.ttf binary
+*.pak binary
+*.bin binary
+*.i64 binary
+*.psarc binary
+*.xvag binary
+*.TMP binary
+*.common binary
+psarc/speech1/** binary

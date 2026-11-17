@@ -175,662 +175,1433 @@ enum {
     MV3_M_COUNTERED_KNIFE_PALM = 155,
 };
 
-const mv3_move MV3_MOVES[MV3_MOVES_COUNT] = {
+const Mv3Move MV3_MOVES[MV3_MOVES_COUNT] = {
     // name, sid, pair, pair_sid, kind, wset, dir, strength, dur_f, hit0_f, hit1_f, chain0_f, chain1_f, cancel_f, iframe0_f, iframe1_f, reach, arc_deg, root_fwd, root_side, dmg, sfx_n
     /* 0   contact measured (SP fist-light-attack-left-1, 9 rows, median 303 ms, event rule -3 ms); reach SP farthest contact 1.93 m + 0.15 (floor 1.4); chain +331 ms after contact (measured: median of 30 SP fist -hit moves that chained, 326-338 ms) */
-    {"abby-fist-combo-punch-1-left--abby", 0x03d9fadb721228beULL, NULL, 0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_FIST, 0, 0, 100, 18, 21, 38, 56, 56, 0, 0, 2.08f, 60.0f, 0.671f, -0.029f, 200, 3, 0},
+    { "abby-fist-combo-punch-1-left--abby", 0x03d9fadb721228beULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_FIST, 0, 0, 100, 18, 21,
+     38, 56, 56, 0, 0, 2.08f, 60.0f, 0.671f, -0.029f, 200, 3, 0 },
     /* 1   contact measured (SP abby-1h-blunt-light-1, 1 rows, median 460 ms, event rule +7 ms); reach SP farthest contact 0.71 m + 0.15 (floor 1.6); chain +334 ms after contact (measured: abby-1h-blunt-light-2-hit chained at 334 ms with the press 109 ms earlier (1 row)) */
-    {"abby-1hblunt-combo-swing-1--abby", 0xac675c4313367948ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_1HBLUNT, 0, 1, 148, 28, 31, 48, 66, 66, 0, 0, 1.60f, 70.0f, 1.109f, 0.077f, 340, 6, 0},
+    { "abby-1hblunt-combo-swing-1--abby", 0xac675c4313367948ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_1HBLUNT, 0, 1, 148, 28,
+     31, 48, 66, 66, 0, 0, 1.60f, 70.0f, 1.109f, 0.077f, 340, 6, 0 },
     /* 2   contact ESTIMATE (swing-marker event + 3 clip frames); reach default (floor 1.6); chain +331 ms after contact (ESTIMATE: no chained SP 1h blade -hit recorded (the 105 ms row was a dodge cancel); fists value) */
-    {"ellie-machete-combo-slash-1--ellie", 0x2e30f2476a121180ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_1HBLADE, 0, 1, 142, 20, 23, 40, 58, 58, 0, 0, 2.00f, 70.0f, 1.729f, 0.180f, 340, 6, 0},
+    { "ellie-machete-combo-slash-1--ellie", 0x2e30f2476a121180ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_1HBLADE, 0, 1, 142, 20,
+     23, 40, 58, 58, 0, 0, 2.00f, 70.0f, 1.729f, 0.180f, 340, 6, 0 },
     /* 3   contact ESTIMATE (swing-marker event + 3 clip frames); reach default (floor 1.8); chain +331 ms after contact (ESTIMATE: no chained SP 2h -hit recorded; fists value) */
-    {"ellie-2hblunt-open-combo-1--ellie", 0x3d4bd7e2edc7f897ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_2H, 0, 2, 146, 22, 25, 42, 60, 60, 0, 0, 2.00f, 75.0f, 0.883f, -0.098f, 340, 5, 0},
+    { "ellie-2hblunt-open-combo-1--ellie", 0x3d4bd7e2edc7f897ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_2H, 0, 2, 146, 22, 25, 42,
+     60, 60, 0, 0, 2.00f, 75.0f, 0.883f, -0.098f, 340, 5, 0 },
     /* 4   contact measured (SP switchblade-light-attack-1, 4 rows, median 268 ms, event rule +65 ms); reach SP farthest contact 1.69 m + 0.15 (floor 1.5); chain +732 ms after contact (measured upper bound: switchblade -hit 732-766 ms until the next swing (presses 0.4 s apart)) */
-    {"ellie-knife-combo-slash-1", 0xa2d0afef648c2aabULL, NULL, 0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_KNIFE, 0, 1, 128, 16, 19, 60, 78, 78, 0, 0, 1.84f, 60.0f, 0.815f, -0.281f, 340, 8, 0},
+    { "ellie-knife-combo-slash-1", 0xa2d0afef648c2aabULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING1, MV3_WS_KNIFE, 0, 1, 128, 16, 19,
+     60, 78, 78, 0, 0, 1.84f, 60.0f, 0.815f, -0.281f, 340, 8, 0 },
     /* 5   contact measured (SP fist-light-attack-1, 9 rows, median 267 ms, event rule -0 ms); reach SP farthest contact 1.17 m + 0.15 (floor 1.4); chain +331 ms after contact (measured: median of 30 SP fist -hit moves that chained, 326-338 ms) */
-    {"abby-fist-combo-punch-1--abby", 0x7695d1e340359bf0ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_FIST, 0, 0, 102, 16, 19, 36, 54, 54, 0, 0, 1.40f, 60.0f, 0.735f, -0.007f, 200, 5, 0},
+    { "abby-fist-combo-punch-1--abby", 0x7695d1e340359bf0ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_FIST, 0, 0, 102, 16, 19,
+     36, 54, 54, 0, 0, 1.40f, 60.0f, 0.735f, -0.007f, 200, 5, 0 },
     /* 6   contact measured (SP abby-1h-blunt-light-2, 1 rows, median 465 ms, event rule -32 ms); reach SP farthest contact 1.47 m + 0.15 (floor 1.6); chain +334 ms after contact (measured: abby-1h-blunt-light-2-hit chained at 334 ms with the press 109 ms earlier (1 row)) */
-    {"abby-1hblunt-combo-swing-2--abby", 0xa85782b5d81f46f5ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_1HBLUNT, 0, 1, 110, 28, 31, 48, 66, 66, 0, 0, 1.62f, 70.0f, 0.550f, -0.018f, 340, 7, 0},
+    { "abby-1hblunt-combo-swing-2--abby", 0xa85782b5d81f46f5ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_1HBLUNT, 0, 1, 110, 28,
+     31, 48, 66, 66, 0, 0, 1.62f, 70.0f, 0.550f, -0.018f, 340, 7, 0 },
     /* 7   contact measured (SP ellie-1h-blade-light-2, 1 rows, median 265 ms, event rule +35 ms); reach SP farthest contact 1.31 m + 0.15 (floor 1.6); chain +331 ms after contact (ESTIMATE: no chained SP 1h blade -hit recorded (the 105 ms row was a dodge cancel); fists value) */
-    {"ellie-machete-combo-slash-2--ellie", 0xb06c516274a615cbULL, NULL, 0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_1HBLADE, 0, 1, 126, 16, 19, 36, 54, 54, 0, 0, 1.60f, 70.0f, 1.287f, 0.101f, 340, 2, 0},
+    { "ellie-machete-combo-slash-2--ellie", 0xb06c516274a615cbULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_1HBLADE, 0, 1, 126, 16,
+     19, 36, 54, 54, 0, 0, 1.60f, 70.0f, 1.287f, 0.101f, 340, 2, 0 },
     /* 8   contact measured (SP ellie-2h-blunt-attack-2, 2 rows, median 370 ms, event rule -3 ms); reach default (floor 1.8); chain +331 ms after contact (ESTIMATE: no chained SP 2h -hit recorded; fists value) */
-    {"ellie-2hblunt-open-combo-2--ellie", 0xfba94fd957fe9cdcULL, NULL, 0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_2H, 0, 2, 110, 22, 25, 42, 60, 60, 0, 0, 2.00f, 75.0f, 1.515f, -0.151f, 340, 5, 0},
+    { "ellie-2hblunt-open-combo-2--ellie", 0xfba94fd957fe9cdcULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_2H, 0, 2, 110, 22, 25, 42,
+     60, 60, 0, 0, 2.00f, 75.0f, 1.515f, -0.151f, 340, 5, 0 },
     /* 9   contact measured (SP switchblade-light-attack-2, 2 rows, median 301 ms, event rule -1 ms); reach SP farthest contact 1.48 m + 0.15 (floor 1.5); chain +732 ms after contact (measured upper bound: switchblade -hit 732-766 ms until the next swing (presses 0.4 s apart)) */
-    {"ellie-knife-combo-slash-2", 0xa2d0b0ef648c2c5eULL, NULL, 0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_KNIFE, 0, 1, 128, 18, 21, 62, 80, 80, 0, 0, 1.63f, 60.0f, -0.001f, 0.001f, 340, 4, 0},
+    { "ellie-knife-combo-slash-2", 0xa2d0b0ef648c2c5eULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING2, MV3_WS_KNIFE, 0, 1, 128, 18, 21,
+     62, 80, 80, 0, 0, 1.63f, 60.0f, -0.001f, 0.001f, 340, 4, 0 },
     /* 10  contact measured (SP fist-light-attack-2, 10 rows, median 335 ms, event rule -68 ms); reach SP farthest contact 1.71 m + 0.15 (floor 1.4); chain +331 ms after contact (measured: median of 30 SP fist -hit moves that chained, 326-338 ms) */
-    {"abby-fist-combo-punch-2--abby", 0x7320aa7530cf09ddULL, NULL, 0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_FIST, 0, 0, 94, 20, 23, 40, 58, 58, 0, 0, 1.86f, 60.0f, 1.000f, 0.038f, 200, 7, 0},
+    { "abby-fist-combo-punch-2--abby", 0x7320aa7530cf09ddULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_FIST, 0, 0, 94, 20, 23,
+     40, 58, 58, 0, 0, 1.86f, 60.0f, 1.000f, 0.038f, 200, 7, 0 },
     /* 11  contact measured (SP abby-1h-blunt-light-3, 1 rows, median 467 ms, event rule -34 ms); reach SP farthest contact 1.34 m + 0.15 (floor 1.6); chain +334 ms after contact (measured: abby-1h-blunt-light-2-hit chained at 334 ms with the press 109 ms earlier (1 row)) */
-    {"abby-1hblunt-combo-swing-3--abby", 0x980530c9d848f75eULL, NULL, 0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_1HBLUNT, 0, 1, 130, 28, 31, 48, 66, 66, 0, 0, 1.60f, 70.0f, 1.690f, 0.035f, 340, 8, 0},
+    { "abby-1hblunt-combo-swing-3--abby", 0x980530c9d848f75eULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_1HBLUNT, 0, 1, 130, 28,
+     31, 48, 66, 66, 0, 0, 1.60f, 70.0f, 1.690f, 0.035f, 340, 8, 0 },
     /* 12  contact ESTIMATE (swing-marker event + 3 clip frames); reach default (floor 1.6); chain +331 ms after contact (ESTIMATE: no chained SP 1h blade -hit recorded (the 105 ms row was a dodge cancel); fists value) */
-    {"ellie-machete-combo-slash-3--ellie", 0xab1e47264a02c616ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_1HBLADE, 0, 1, 150, 20, 23, 40, 58, 58, 0, 0, 2.00f, 70.0f, 0.943f, -0.168f, 340, 2, 0},
+    { "ellie-machete-combo-slash-3--ellie", 0xab1e47264a02c616ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_1HBLADE, 0, 1, 150, 20,
+     23, 40, 58, 58, 0, 0, 2.00f, 70.0f, 0.943f, -0.168f, 340, 2, 0 },
     /* 13  contact ESTIMATE (swing-marker event + 3 clip frames); reach default (floor 1.8); chain +331 ms after contact (ESTIMATE: no chained SP 2h -hit recorded; fists value) */
-    {"ellie-2hblunt-open-combo-3--ellie", 0xd2a22187914a1a01ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_2H, 0, 2, 206, 20, 23, 40, 58, 58, 0, 0, 2.00f, 75.0f, 1.531f, 0.054f, 340, 6, 0},
+    { "ellie-2hblunt-open-combo-3--ellie", 0xd2a22187914a1a01ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_2H, 0, 2, 206, 20, 23, 40,
+     58, 58, 0, 0, 2.00f, 75.0f, 1.531f, 0.054f, 340, 6, 0 },
     /* 14  contact measured (SP switchblade-light-attack-3, 1 rows, median 268 ms, event rule +32 ms); reach SP farthest contact 1.47 m + 0.15 (floor 1.5); chain +732 ms after contact (measured upper bound: switchblade -hit 732-766 ms until the next swing (presses 0.4 s apart)) */
-    {"ellie-knife-combo-slash-3", 0xa2d0b1ef648c2e11ULL, NULL, 0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_KNIFE, 0, 1, 116, 16, 19, 60, 78, 78, 0, 0, 1.62f, 60.0f, -0.166f, -0.163f, 340, 4, 0},
+    { "ellie-knife-combo-slash-3", 0xa2d0b1ef648c2e11ULL, NULL,
+     0x0000000000000000ULL, MV3_K_SWING3, MV3_WS_KNIFE, 0, 1, 116, 16, 19,
+     60, 78, 78, 0, 0, 1.62f, 60.0f, -0.166f, -0.163f, 340, 4, 0 },
     /* 15  dodge open forward (SP: a forward dodge plays the plain open dodge); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 22 f */
-    {"ellie-1h-dodge-open^idle-forward--left-ft", 0xc3d9db69620042a1ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 124, 0, 0, 22, 58, 41, 0, 23, 0.00f, 0.0f, 1.980f, 0.102f, 0, 15, 0},
+    { "ellie-1h-dodge-open^idle-forward--left-ft", 0xc3d9db69620042a1ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 124, 0, 0,
+     22, 58, 41, 0, 23, 0.00f, 0.0f, 1.980f, 0.102f, 0, 15, 0 },
     /* 16  dodge open forward (SP: a forward dodge plays the plain open dodge); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 22 f */
-    {"ellie-1h-dodge-open^idle-forward--right-ft", 0xbaea4c2146f5d68eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 124, 0, 0, 22, 58, 41, 0, 23, 0.00f, 0.0f, 1.980f, 0.102f, 0, 16, 0},
+    { "ellie-1h-dodge-open^idle-forward--right-ft", 0xbaea4c2146f5d68eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 124, 0, 0,
+     22, 58, 41, 0, 23, 0.00f, 0.0f, 1.980f, 0.102f, 0, 16, 0 },
     /* 17  dodge combat forward; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 38 f */
-    {"ellie-1h-dodge-forward-combat-a", 0x551b7de83367d8f7ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 140, 0, 0, 38, 74, 41, 0, 23, 0.00f, 0.0f, 2.267f, -0.025f, 0, 11, 0},
+    { "ellie-1h-dodge-forward-combat-a", 0x551b7de83367d8f7ULL, NULL,
+     0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 140, 0, 0, 38, 74,
+     41, 0, 23, 0.00f, 0.0f, 2.267f, -0.025f, 0, 11, 0 },
     /* 18  dodge combat forward; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-forward-combat-b", 0x551b7ee83367daaaULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 90, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 2.346f, 0.035f, 0, 9, 0},
+    { "ellie-1h-dodge-forward-combat-b", 0x551b7ee83367daaaULL, NULL,
+     0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 90, 0, 0, 41, 77,
+     41, 0, 23, 0.00f, 0.0f, 2.346f, 0.035f, 0, 9, 0 },
     /* 19  dodge combat forward; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 40 f */
-    {"ellie-1h-dodge-forward-combat-c", 0x551b7fe83367dc5dULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 86, 0, 0, 40, 76, 41, 0, 23, 0.00f, 0.0f, 2.115f, -0.001f, 0, 9, 0},
+    { "ellie-1h-dodge-forward-combat-c", 0x551b7fe83367dc5dULL, NULL,
+     0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 86, 0, 0, 40, 76,
+     41, 0, 23, 0.00f, 0.0f, 2.115f, -0.001f, 0, 9, 0 },
     /* 20  dodge combat forward; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 44 f */
-    {"ellie-1h-dodge-forward-combat-d", 0x551b78e83367d078ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 104, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 2.357f, -0.035f, 0, 11, 0},
+    { "ellie-1h-dodge-forward-combat-d", 0x551b78e83367d078ULL, NULL,
+     0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 0, 0, 104, 0, 0, 41, 77,
+     41, 0, 23, 0.00f, 0.0f, 2.357f, -0.035f, 0, 11, 0 },
     /* 21  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 50 f */
-    {"ellie-1h-dodge-left-combat-horiz-right-b", 0x246253c022696e60ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 100, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.272f, -1.651f, 0, 12, 0},
+    { "ellie-1h-dodge-left-combat-horiz-right-b", 0x246253c022696e60ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 100, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.272f, -1.651f, 0, 12, 0 },
     /* 22  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 54 f */
-    {"ellie-1h-dodge-left-combat-upward-right-a", 0xffe1b1d707f60228ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 104, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.111f, -2.186f, 0, 14, 0},
+    { "ellie-1h-dodge-left-combat-upward-right-a", 0xffe1b1d707f60228ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 104, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.111f, -2.186f, 0, 14, 0 },
     /* 23  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 44 f */
-    {"ellie-1h-dodge-left-combat-horiz-left-a", 0xc2c63cf9e4d55e90ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 108, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.088f, -2.025f, 0, 15, 0},
+    { "ellie-1h-dodge-left-combat-horiz-left-a", 0xc2c63cf9e4d55e90ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 108, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.088f, -2.025f, 0, 15, 0 },
     /* 24  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 44 f */
-    {"ellie-1h-dodge-left-combat-downward-right-e", 0x67aecc4cddbcad05ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 140, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.379f, -1.596f, 0, 11, 0},
+    { "ellie-1h-dodge-left-combat-downward-right-e", 0x67aecc4cddbcad05ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 140, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.379f, -1.596f, 0, 11, 0 },
     /* 25  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-left-combat-horiz-left-b", 0xc2c63ff9e4d563a9ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 94, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.221f, -2.192f, 0, 14, 0},
+    { "ellie-1h-dodge-left-combat-horiz-left-b", 0xc2c63ff9e4d563a9ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 94, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.221f, -2.192f, 0, 14, 0 },
     /* 26  dodge duck (melee_dodge.c DUCK_L); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 50 f */
-    {"ellie-1h-dodge-left-combat-horiz-right-a", 0x246256c022697379ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.338f, -1.788f, 0, 14, 0},
+    { "ellie-1h-dodge-left-combat-horiz-right-a", 0x246256c022697379ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 102, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.338f, -1.788f, 0, 14, 0 },
     /* 27  dodge contextual vs a horiz blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-left-combat-horiz-left-c", 0xc2c63ef9e4d561f6ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 98, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.256f, -1.874f, 0, 10, 0},
+    { "ellie-1h-dodge-left-combat-horiz-left-c", 0xc2c63ef9e4d561f6ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 98, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.256f, -1.874f, 0, 10, 0 },
     /* 28  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 36 f */
-    {"ellie-1h-dodge-left-combat-downward-left-a", 0x20542b0608e08b50ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 98, 0, 0, 36, 72, 41, 0, 23, 0.00f, 0.0f, 0.491f, -1.856f, 0, 14, 0},
+    { "ellie-1h-dodge-left-combat-downward-left-a", 0x20542b0608e08b50ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 98, 0, 0,
+     36, 72, 41, 0, 23, 0.00f, 0.0f, 0.491f, -1.856f, 0, 14, 0 },
     /* 29  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 40 f */
-    {"ellie-1h-dodge-left-combat-downward-left-b", 0x20542e0608e09069ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 80, 0, 0, 40, 76, 41, 0, 23, 0.00f, 0.0f, -0.270f, -1.724f, 0, 15, 0},
+    { "ellie-1h-dodge-left-combat-downward-left-b", 0x20542e0608e09069ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 80, 0, 0,
+     40, 76, 41, 0, 23, 0.00f, 0.0f, -0.270f, -1.724f, 0, 15, 0 },
     /* 30  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-left-combat-downward-left-c", 0x20542d0608e08eb6ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 88, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.383f, -2.099f, 0, 14, 0},
+    { "ellie-1h-dodge-left-combat-downward-left-c", 0x20542d0608e08eb6ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 88, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.383f, -2.099f, 0, 14, 0 },
     /* 31  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-left-combat-downward-right-a", 0x67aec84cddbca639ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 100, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.223f, -1.644f, 0, 12, 0},
+    { "ellie-1h-dodge-left-combat-downward-right-a", 0x67aec84cddbca639ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 100, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.223f, -1.644f, 0, 12, 0 },
     /* 32  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 38 f */
-    {"ellie-1h-dodge-left-combat-downward-right-b", 0x67aec54cddbca120ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 94, 0, 0, 38, 74, 41, 0, 23, 0.00f, 0.0f, 0.292f, -1.918f, 0, 13, 0},
+    { "ellie-1h-dodge-left-combat-downward-right-b", 0x67aec54cddbca120ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 94, 0, 0,
+     38, 74, 41, 0, 23, 0.00f, 0.0f, 0.292f, -1.918f, 0, 13, 0 },
     /* 33  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 36 f */
-    {"ellie-1h-dodge-left-combat-downward-right-c", 0x67aec64cddbca2d3ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 78, 0, 0, 36, 72, 41, 0, 23, 0.00f, 0.0f, 0.569f, -1.919f, 0, 12, 0},
+    { "ellie-1h-dodge-left-combat-downward-right-c", 0x67aec64cddbca2d3ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 78, 0, 0,
+     36, 72, 41, 0, 23, 0.00f, 0.0f, 0.569f, -1.919f, 0, 12, 0 },
     /* 34  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-left-combat-downward-right-d", 0x67aecb4cddbcab52ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 128, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.606f, -1.850f, 0, 9, 0},
+    { "ellie-1h-dodge-left-combat-downward-right-d", 0x67aecb4cddbcab52ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 128, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.606f, -1.850f, 0, 9, 0 },
     /* 35  dodge contextual vs a upward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-left-combat-upward-left-a", 0xe8936d2f4a65110bULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 78, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.180f, -1.734f, 0, 12, 0},
+    { "ellie-1h-dodge-left-combat-upward-left-a", 0xe8936d2f4a65110bULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 1, 0, 78, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.180f, -1.734f, 0, 12, 0 },
     /* 36  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 56 f */
-    {"ellie-1h-dodge-right-combat-horiz-right-c", 0x977a742b4aae0c00ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 92, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.212f, 1.856f, 0, 9, 0},
+    { "ellie-1h-dodge-right-combat-horiz-right-c", 0x977a742b4aae0c00ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 92, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.212f, 1.856f, 0, 9, 0 },
     /* 37  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 68 f */
-    {"ellie-1h-dodge-right-combat-upward-left-b", 0x8c0c5e77dfe341adULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 100, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.015f, 1.901f, 0, 8, 0},
+    { "ellie-1h-dodge-right-combat-upward-left-b", 0x8c0c5e77dfe341adULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 100, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.015f, 1.901f, 0, 8, 0 },
     /* 38  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 66 f */
-    {"ellie-1h-dodge-right-combat-upward-left-a", 0x8c0c5b77dfe33c94ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 98, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.083f, 1.713f, 0, 8, 0},
+    { "ellie-1h-dodge-right-combat-upward-left-a", 0x8c0c5b77dfe33c94ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 98, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.083f, 1.713f, 0, 8, 0 },
     /* 39  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 50 f */
-    {"ellie-1h-dodge-right-combat-horiz-right-a", 0x977a762b4aae0f66ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.238f, 2.091f, 0, 11, 0},
+    { "ellie-1h-dodge-right-combat-horiz-right-a", 0x977a762b4aae0f66ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 102, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.238f, 2.091f, 0, 11, 0 },
     /* 40  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-right-combat-horiz-right-b", 0x977a752b4aae0db3ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 114, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.425f, 2.131f, 0, 13, 0},
+    { "ellie-1h-dodge-right-combat-horiz-right-b", 0x977a752b4aae0db3ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 114, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.425f, 2.131f, 0, 13, 0 },
     /* 41  dodge duck (melee_dodge.c DUCK_R); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 66 f */
-    {"ellie-2h-dodge-combat-right-horiz-right-a", 0x97446446332eb1d9ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 132, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, 0.008f, 2.051f, 0, 14, 0},
+    { "ellie-2h-dodge-combat-right-horiz-right-a", 0x97446446332eb1d9ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 132, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, 0.008f, 2.051f, 0, 14, 0 },
     /* 42  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 46 f */
-    {"ellie-1h-dodge-right-combat-downward-right-a", 0x228b8e81f37468d8ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 116, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.266f, 2.129f, 0, 11, 0},
+    { "ellie-1h-dodge-right-combat-downward-right-a",
+     0x228b8e81f37468d8ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE,
+     MV3_WS_N, 2, 0, 116, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.266f,
+     2.129f, 0, 11, 0 },
     /* 43  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-right-combat-downward-right-b", 0x228b9181f3746df1ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 120, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.283f, 2.094f, 0, 14, 0},
+    { "ellie-1h-dodge-right-combat-downward-right-b",
+     0x228b9181f3746df1ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE,
+     MV3_WS_N, 2, 0, 120, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.283f,
+     2.094f, 0, 14, 0 },
     /* 44  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 44 f */
-    {"ellie-1h-dodge-right-combat-downward-right-c", 0x228b9081f3746c3eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.078f, 2.052f, 0, 11, 0},
+    { "ellie-1h-dodge-right-combat-downward-right-c",
+     0x228b9081f3746c3eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE,
+     MV3_WS_N, 2, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.078f,
+     2.052f, 0, 11, 0 },
     /* 45  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 38 f */
-    {"ellie-1h-dodge-right-combat-downward-right-d", 0x228b9381f3747157ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 98, 0, 0, 38, 74, 41, 0, 23, 0.00f, 0.0f, -0.173f, 2.162f, 0, 8, 0},
+    { "ellie-1h-dodge-right-combat-downward-right-d",
+     0x228b9381f3747157ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE,
+     MV3_WS_N, 2, 0, 98, 0, 0, 38, 74, 41, 0, 23, 0.00f, 0.0f, -0.173f,
+     2.162f, 0, 8, 0 },
     /* 46  dodge contextual vs a upward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 60 f */
-    {"ellie-1h-dodge-right-combat-upward-right-a", 0xf4ebe66897c78865ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 144, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.305f, 2.113f, 0, 12, 0},
+    { "ellie-1h-dodge-right-combat-upward-right-a", 0xf4ebe66897c78865ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 144, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.305f, 2.113f, 0, 12, 0 },
     /* 47  dodge contextual vs a upward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-right-combat-upward-right-b", 0xf4ebe36897c7834cULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 108, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -0.303f, 1.828f, 0, 13, 0},
+    { "ellie-1h-dodge-right-combat-upward-right-b", 0xf4ebe36897c7834cULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 108, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -0.303f, 1.828f, 0, 13, 0 },
     /* 48  dodge contextual vs a upward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 40 f */
-    {"ellie-1h-dodge-right-combat-upward-right-c", 0xf4ebe46897c784ffULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 116, 0, 0, 40, 76, 41, 0, 23, 0.00f, 0.0f, -0.316f, 1.928f, 0, 13, 0},
+    { "ellie-1h-dodge-right-combat-upward-right-c", 0xf4ebe46897c784ffULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 2, 0, 116, 0, 0,
+     40, 76, 41, 0, 23, 0.00f, 0.0f, -0.316f, 1.928f, 0, 13, 0 },
     /* 49  dodge contextual vs a horiz blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 56 f */
-    {"ellie-1h-dodge-back-combat-horiz-left-a", 0x651cf00b1257401eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.195f, 0.031f, 0, 11, 0},
+    { "ellie-1h-dodge-back-combat-horiz-left-a", 0x651cf00b1257401eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 102, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.195f, 0.031f, 0, 11, 0 },
     /* 50  dodge contextual vs a horiz blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 56 f */
-    {"ellie-1h-dodge-back-combat-horiz-left-b", 0x651cef0b12573e6bULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 146, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.246f, 0.089f, 0, 11, 0},
+    { "ellie-1h-dodge-back-combat-horiz-left-b", 0x651cef0b12573e6bULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 146, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.246f, 0.089f, 0, 11, 0 },
     /* 51  dodge contextual vs a horiz blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-back-combat-horiz-left-c", 0x651cee0b12573cb8ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 154, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.400f, -0.038f, 0, 12, 0},
+    { "ellie-1h-dodge-back-combat-horiz-left-c", 0x651cee0b12573cb8ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 154, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.400f, -0.038f, 0, 12, 0 },
     /* 52  dodge contextual vs a horiz blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 46 f */
-    {"ellie-1h-dodge-back-combat-horiz-left-d", 0x651cf50b1257489dULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 100, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.164f, -0.133f, 0, 13, 0},
+    { "ellie-1h-dodge-back-combat-horiz-left-d", 0x651cf50b1257489dULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 100, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.164f, -0.133f, 0, 13, 0 },
     /* 53  dodge contextual vs a horiz blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 40 f */
-    {"ellie-1h-dodge-back-combat-horiz-right-a", 0xbf9ebafdad8f7b4fULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 148, 0, 0, 40, 76, 41, 0, 23, 0.00f, 0.0f, -1.763f, -0.048f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-horiz-right-a", 0xbf9ebafdad8f7b4fULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 148, 0, 0,
+     40, 76, 41, 0, 23, 0.00f, 0.0f, -1.763f, -0.048f, 0, 9, 0 },
     /* 54  dodge contextual vs a horiz blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 44 f */
-    {"ellie-1h-dodge-back-combat-horiz-right-b", 0xbf9ebbfdad8f7d02ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 130, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.038f, 0.023f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-horiz-right-b", 0xbf9ebbfdad8f7d02ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 130, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.038f, 0.023f, 0, 9, 0 },
     /* 55  dodge contextual vs a horiz blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 38 f */
-    {"ellie-1h-dodge-back-combat-horiz-right-c", 0xbf9ebcfdad8f7eb5ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 284, 0, 0, 38, 74, 41, 0, 23, 0.00f, 0.0f, -2.033f, 0.055f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-horiz-right-c", 0xbf9ebcfdad8f7eb5ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 284, 0, 0,
+     38, 74, 41, 0, 23, 0.00f, 0.0f, -2.033f, 0.055f, 0, 9, 0 },
     /* 56  dodge contextual vs a horiz blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-back-combat-horiz-right-d", 0xbf9eb5fdad8f72d0ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 174, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -1.996f, -0.007f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-horiz-right-d", 0xbf9eb5fdad8f72d0ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 174, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -1.996f, -0.007f, 0, 9, 0 },
     /* 57  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-back-combat-downward-left-a", 0x691bca219ff8b382ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 152, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.113f, 0.095f, 0, 10, 0},
+    { "ellie-1h-dodge-back-combat-downward-left-a", 0x691bca219ff8b382ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 152, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.113f, 0.095f, 0, 10, 0 },
     /* 58  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-back-combat-downward-left-b", 0x691bc9219ff8b1cfULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 162, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.121f, 0.162f, 0, 11, 0},
+    { "ellie-1h-dodge-back-combat-downward-left-b", 0x691bc9219ff8b1cfULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 162, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.121f, 0.162f, 0, 11, 0 },
     /* 59  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-back-combat-downward-left-c", 0x691bc8219ff8b01cULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 156, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.135f, 0.253f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-downward-left-c", 0x691bc8219ff8b01cULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 156, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.135f, 0.253f, 0, 9, 0 },
     /* 60  dodge contextual vs a downward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 52 f */
-    {"ellie-1h-dodge-back-combat-downward-left-d", 0x691bc7219ff8ae69ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 106, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.561f, 0.069f, 0, 12, 0},
+    { "ellie-1h-dodge-back-combat-downward-left-d", 0x691bc7219ff8ae69ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 106, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.561f, 0.069f, 0, 12, 0 },
     /* 61  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 42 f */
-    {"ellie-1h-dodge-back-combat-downward-right-a", 0x0ee6971bf202f2abULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 154, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -1.857f, -0.062f, 0, 11, 0},
+    { "ellie-1h-dodge-back-combat-downward-right-a", 0x0ee6971bf202f2abULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 154, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -1.857f, -0.062f, 0, 11, 0 },
     /* 62  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-back-combat-downward-right-b", 0x0ee6981bf202f45eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 162, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -1.572f, -0.065f, 0, 10, 0},
+    { "ellie-1h-dodge-back-combat-downward-right-b", 0x0ee6981bf202f45eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 162, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -1.572f, -0.065f, 0, 10, 0 },
     /* 63  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 58 f */
-    {"ellie-1h-dodge-back-combat-downward-right-c", 0x0ee6991bf202f611ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 146, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.036f, -0.002f, 0, 12, 0},
+    { "ellie-1h-dodge-back-combat-downward-right-c", 0x0ee6991bf202f611ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 146, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.036f, -0.002f, 0, 12, 0 },
     /* 64  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 54 f */
-    {"ellie-1h-dodge-back-combat-downward-right-d", 0x0ee69a1bf202f7c4ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 126, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.097f, -0.045f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-downward-right-d", 0x0ee69a1bf202f7c4ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 126, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.097f, -0.045f, 0, 9, 0 },
     /* 65  dodge contextual vs a downward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 62 f */
-    {"ellie-1h-dodge-back-combat-downward-right-e", 0x0ee69b1bf202f977ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 102, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.155f, -0.018f, 0, 10, 0},
+    { "ellie-1h-dodge-back-combat-downward-right-e", 0x0ee69b1bf202f977ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 102, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.155f, -0.018f, 0, 10, 0 },
     /* 66  dodge contextual vs a upward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 66 f */
-    {"ellie-1h-dodge-back-combat-upward-left-a", 0x8c047ac7e3ff53f9ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 142, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -1.830f, -0.173f, 0, 10, 0},
+    { "ellie-1h-dodge-back-combat-upward-left-a", 0x8c047ac7e3ff53f9ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 142, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -1.830f, -0.173f, 0, 10, 0 },
     /* 67  dodge contextual vs a upward blow from the left; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 36 f */
-    {"ellie-1h-dodge-back-combat-upward-left-b", 0x8c0477c7e3ff4ee0ULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 86, 0, 0, 36, 72, 41, 0, 23, 0.00f, 0.0f, -2.247f, 0.096f, 0, 10, 0},
+    { "ellie-1h-dodge-back-combat-upward-left-b", 0x8c0477c7e3ff4ee0ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 86, 0, 0,
+     36, 72, 41, 0, 23, 0.00f, 0.0f, -2.247f, 0.096f, 0, 10, 0 },
     /* 68  dodge contextual vs a upward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 56 f */
-    {"ellie-1h-dodge-back-combat-upward-right-a", 0x9f0973845214af9eULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 68, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.315f, 0.013f, 0, 9, 0},
+    { "ellie-1h-dodge-back-combat-upward-right-a", 0x9f0973845214af9eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 68, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.315f, 0.013f, 0, 9, 0 },
     /* 69  dodge contextual vs a upward blow from the right; i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 46 f */
-    {"ellie-1h-dodge-back-combat-upward-right-b", 0x9f0972845214adebULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 106, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -2.417f, 0.053f, 0, 12, 0},
+    { "ellie-1h-dodge-back-combat-upward-right-b", 0x9f0972845214adebULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 106, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -2.417f, 0.053f, 0, 12, 0 },
     /* 70  dodge open back (no swing angle); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-open^idle-back--left-ft", 0x9993c8693698077fULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 132, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -3.125f, -0.281f, 0, 20, 0},
+    { "ellie-1h-dodge-open^idle-back--left-ft", 0x9993c8693698077fULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 132, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -3.125f, -0.281f, 0, 20, 0 },
     /* 71  dodge open back (no swing angle); i-frames MD_IFRAME_MS 380 ms; end min(MD_CLIP_MAX_MS 680, 85 % clip); land = 90 % of the authored travel at 48 f */
-    {"ellie-1h-dodge-open^idle-back--right-ft", 0x5a4380ba128325ecULL, NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 132, 0, 0, 41, 77, 41, 0, 23, 0.00f, 0.0f, -3.125f, -0.281f, 0, 15, 0},
+    { "ellie-1h-dodge-open^idle-back--right-ft", 0x5a4380ba128325ecULL,
+     NULL, 0x0000000000000000ULL, MV3_K_DODGE, MV3_WS_N, 3, 0, 132, 0, 0,
+     41, 77, 41, 0, 23, 0.00f, 0.0f, -3.125f, -0.281f, 0, 15, 0 },
     /* 72  resident fallback (melee_dodge.c MISS_SPRINT; MP log length 1.87 s); cancel = MD_MISS_MS 800; root ESTIMATE 0.6 m */
-    {"ellie-land-early-stumble^run", 0xf6ca348c6d46d342ULL, NULL, 0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 0, 0, 112, 0, 0, 0, 0, 48, 0, 0, 0.00f, 0.0f, 0.600f, 0.000f, 0, 0, 0},
+    { "ellie-land-early-stumble^run", 0xf6ca348c6d46d342ULL, NULL,
+     0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 0, 0, 112, 0, 0, 0, 0,
+     48, 0, 0, 0.00f, 0.0f, 0.600f, 0.000f, 0, 0, 0 },
     /* 73  SP miss step (npc-human-shared); NOT in the MP paks; length = SP trace event span 663 ms (ESTIMATE); root motion ESTIMATE 0.3 m */
-    {"npc-reaction-step-left", 0xe1369b729923e34dULL, NULL, 0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 1, 0, 40, 0, 0, 0, 0, 40, 0, 0, 0.00f, 0.0f, 0.000f, -0.300f, 0, 0, 0},
+    { "npc-reaction-step-left", 0xe1369b729923e34dULL, NULL,
+     0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 1, 0, 40, 0, 0, 0, 0, 40,
+     0, 0, 0.00f, 0.0f, 0.000f, -0.300f, 0, 0, 0 },
     /* 74  SP miss step (npc-human-shared); NOT in the MP paks; length = SP trace event span 663 ms (ESTIMATE); root motion ESTIMATE 0.3 m */
-    {"npc-reaction-step-right", 0x94a00d421012f346ULL, NULL, 0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 2, 0, 40, 0, 0, 0, 0, 40, 0, 0, 0.00f, 0.0f, 0.000f, 0.300f, 0, 0, 0},
+    { "npc-reaction-step-right", 0x94a00d421012f346ULL, NULL,
+     0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 2, 0, 40, 0, 0, 0, 0, 40,
+     0, 0, 0.00f, 0.0f, 0.000f, 0.300f, 0, 0, 0 },
     /* 75  SP miss step (npc-human-shared); NOT in the MP paks; length = SP trace event span 663 ms (ESTIMATE); root motion ESTIMATE 0.3 m */
-    {"npc-reaction-step-back", 0xd31b14e9b0874157ULL, NULL, 0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 3, 0, 40, 0, 0, 0, 0, 40, 0, 0, 0.00f, 0.0f, -0.300f, 0.000f, 0, 0, 0},
+    { "npc-reaction-step-back", 0xd31b14e9b0874157ULL, NULL,
+     0x0000000000000000ULL, MV3_K_MISS, MV3_WS_N, 3, 0, 40, 0, 0, 0, 0, 40,
+     0, 0, 0.00f, 0.0f, -0.300f, 0.000f, 0, 0, 0 },
     /* 76  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-left-from-left-a", 0x4474dc5aa5fcdeeeULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 102, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -1.214f, -0.073f, 0, 6, 0},
+    { "ellie-1h-hr-hip-front-left-from-left-a", 0x4474dc5aa5fcdeeeULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 102, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -1.214f, -0.073f, 0, 6, 0 },
     /* 77  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-left-from-right-a", 0xd3fd43e4db39f9dfULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 124, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.749f, 0.962f, 0, 7, 0},
+    { "ellie-1h-hr-hip-front-left-from-right-a", 0xd3fd43e4db39f9dfULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 124, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.749f, 0.962f, 0, 7, 0 },
     /* 78  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-left-from-right-b", 0xd3fd44e4db39fb92ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 150, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.509f, 0.952f, 0, 7, 0},
+    { "ellie-1h-hr-hip-front-left-from-right-b", 0xd3fd44e4db39fb92ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 150, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.509f, 0.952f, 0, 7, 0 },
     /* 79  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-right-from-left-a", 0x8a61429179b85bf1ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 132, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 0.072f, -1.141f, 0, 7, 0},
+    { "ellie-1h-hr-hip-front-right-from-left-a", 0x8a61429179b85bf1ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 132, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 0.072f, -1.141f, 0, 7, 0 },
     /* 80  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-right-from-left-b", 0x8a613f9179b856d8ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 98, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.037f, -1.402f, 0, 6, 0},
+    { "ellie-1h-hr-hip-front-right-from-left-b", 0x8a613f9179b856d8ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 98, 0, 0, 0,
+     0, 22, 0, 0, 0.00f, 0.0f, -0.037f, -1.402f, 0, 6, 0 },
     /* 81  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-right-from-left-c", 0x8a61409179b8588bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 124, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.028f, -1.806f, 0, 8, 0},
+    { "ellie-1h-hr-hip-front-right-from-left-c", 0x8a61409179b8588bULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 124, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.028f, -1.806f, 0, 8, 0 },
     /* 82  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-right-from-right-a", 0xdf33457e748bb7b6ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 110, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.337f, -1.321f, 0, 9, 0},
+    { "ellie-1h-hr-hip-front-right-from-right-a", 0xdf33457e748bb7b6ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 110, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.337f, -1.321f, 0, 9, 0 },
     /* 83  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-front-right-from-right-b", 0xdf33447e748bb603ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 138, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -1.217f, -0.181f, 0, 7, 0},
+    { "ellie-1h-hr-hip-front-right-from-right-b", 0xdf33447e748bb603ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 0, 138, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -1.217f, -0.181f, 0, 7, 0 },
     /* 84  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-chest-front-downward-a", 0x592208b2b6e612ceULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 182, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -1.121f, 0.016f, 0, 8, 0},
+    { "ellie-1h-hr-chest-front-downward-a", 0x592208b2b6e612ceULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 182, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -1.121f, 0.016f, 0, 8, 0 },
     /* 85  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-chest-front-downward-b", 0x592207b2b6e6111bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 170, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -1.451f, 0.096f, 0, 9, 0},
+    { "ellie-1h-hr-chest-front-downward-b", 0x592207b2b6e6111bULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 170, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -1.451f, 0.096f, 0, 9, 0 },
     /* 86  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-chest-front-horizontal-a", 0x45ab7961a6229c20ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 186, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -1.447f, -0.438f, 0, 9, 0},
+    { "ellie-1h-hr-chest-front-horizontal-a", 0x45ab7961a6229c20ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 186, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -1.447f, -0.438f, 0, 9, 0 },
     /* 87  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-chest-front-upward-a", 0xae8998c235d2da8bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 170, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -1.235f, -0.067f, 0, 7, 0},
+    { "ellie-1h-hr-chest-front-upward-a", 0xae8998c235d2da8bULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 170, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -1.235f, -0.067f, 0, 7, 0 },
     /* 88  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-rt-ft-chest-front-horizontal-a", 0x9214a7b25ba05f8eULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 186, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -1.437f, -0.409f, 0, 10, 0},
+    { "ellie-1h-hr-rt-ft-chest-front-horizontal-a", 0x9214a7b25ba05f8eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 1, 186, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, -1.437f, -0.409f, 0, 10, 0 },
     /* 89  melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-chest-front-downward-c", 0x592206b2b6e60f68ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 112, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -2.041f, -0.134f, 0, 10, 0},
+    { "ellie-1h-hr-chest-front-downward-c", 0x592206b2b6e60f68ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 112, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -2.041f, -0.134f, 0, 10, 0 },
     /* 90  melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-front-a", 0xff2276e817fa1b06ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 152, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -1.740f, -0.166f, 0, 6, 0},
+    { "ellie-1h-hr-head-front-a", 0xff2276e817fa1b06ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 152, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -1.740f, -0.166f, 0, 6, 0 },
     /* 91  melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-front-b", 0xff2275e817fa1953ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 170, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -1.521f, -0.138f, 0, 8, 0},
+    { "ellie-1h-hr-head-front-b", 0xff2275e817fa1953ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 170, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -1.521f, -0.138f, 0, 8, 0 },
     /* 92  melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-front-c", 0xff2274e817fa17a0ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 170, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -2.275f, -0.615f, 0, 10, 0},
+    { "ellie-1h-hr-head-front-c", 0xff2274e817fa17a0ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 170, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -2.275f, -0.615f, 0, 10, 0 },
     /* 93  melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-front-d", 0xff227be817fa2385ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 174, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -1.422f, 0.175f, 0, 9, 0},
+    { "ellie-1h-hr-head-front-d", 0xff227be817fa2385ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 0, 2, 174, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -1.422f, 0.175f, 0, 9, 0 },
     /* 94  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-left-upward-a", 0x52097991f2114501ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 0, 150, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.128f, 1.266f, 0, 6, 0},
+    { "ellie-1h-hr-left-upward-a", 0x52097991f2114501ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 0, 150, 0, 0, 0, 0,
+     22, 0, 0, 0.00f, 0.0f, -0.128f, 1.266f, 0, 6, 0 },
     /* 95  melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-left-upward-b", 0x52097691f2113fe8ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 0, 122, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 0.168f, 1.325f, 0, 7, 0},
+    { "ellie-1h-hr-left-upward-b", 0x52097691f2113fe8ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 0, 122, 0, 0, 0, 0,
+     22, 0, 0, 0.00f, 0.0f, 0.168f, 1.325f, 0, 7, 0 },
     /* 96  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-left-downward-a", 0xa8cb9fc3f20f9e48ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 210, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.305f, 1.044f, 0, 8, 0},
+    { "ellie-1h-hr-left-downward-a", 0xa8cb9fc3f20f9e48ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 210, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -0.305f, 1.044f, 0, 8, 0 },
     /* 97  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-left-horizontal-a", 0x263f603ecb5a513aULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 180, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -2.277f, 0.010f, 0, 9, 0},
+    { "ellie-1h-hr-left-horizontal-a", 0x263f603ecb5a513aULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 180, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -2.277f, 0.010f, 0, 9, 0 },
     /* 98  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-left-horizontal-b", 0x263f5f3ecb5a4f87ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 148, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 0.039f, 1.516f, 0, 8, 0},
+    { "ellie-1h-hr-left-horizontal-b", 0x263f5f3ecb5a4f87ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 148, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, 0.039f, 1.516f, 0, 8, 0 },
     /* 99  melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-left-horizontal-c", 0x263f5e3ecb5a4dd4ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 168, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.162f, 1.566f, 0, 7, 0},
+    { "ellie-1h-hr-left-horizontal-c", 0x263f5e3ecb5a4dd4ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 168, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -0.162f, 1.566f, 0, 7, 0 },
     /* 100 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-left-horizontal-d", 0x263f5d3ecb5a4c21ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 130, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.538f, 1.424f, 0, 6, 0},
+    { "ellie-1h-hr-left-horizontal-d", 0x263f5d3ecb5a4c21ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 1, 130, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -0.538f, 1.424f, 0, 6, 0 },
     /* 101 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-left-a", 0x6701f6f5e9cc2b56ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 2, 146, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 0.075f, 1.531f, 0, 7, 0},
+    { "ellie-1h-hr-head-left-a", 0x6701f6f5e9cc2b56ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 1, 2, 146, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 0.075f, 1.531f, 0, 7, 0 },
     /* 102 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-right-shoulder-from-left-a", 0xb41ce87079bea594ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 142, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.075f, -1.250f, 0, 7, 0},
+    { "ellie-1h-hr-right-shoulder-from-left-a", 0xb41ce87079bea594ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 142, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.075f, -1.250f, 0, 7, 0 },
     /* 103 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-right-shoulder-from-left-b", 0xb41ceb7079beaaadULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 144, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.270f, -1.227f, 0, 8, 0},
+    { "ellie-1h-hr-right-shoulder-from-left-b", 0xb41ceb7079beaaadULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 144, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.270f, -1.227f, 0, 8, 0 },
     /* 104 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-right-shoulder-from-right-a", 0xe47470d6079af365ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 190, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -1.056f, -0.398f, 0, 9, 0},
+    { "ellie-1h-hr-right-shoulder-from-right-a", 0xe47470d6079af365ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 190, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -1.056f, -0.398f, 0, 9, 0 },
     /* 105 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-right-shoulder-from-right-b", 0xe4746dd6079aee4cULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 142, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.119f, -1.355f, 0, 7, 0},
+    { "ellie-1h-hr-right-shoulder-from-right-b", 0xe4746dd6079aee4cULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 142, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.119f, -1.355f, 0, 7, 0 },
     /* 106 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-right-upward-a", 0x5970d801dac709a0ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 134, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.212f, -1.290f, 0, 6, 0},
+    { "ellie-1h-hr-right-upward-a", 0x5970d801dac709a0ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 0, 134, 0, 0, 0, 0,
+     22, 0, 0, 0.00f, 0.0f, -0.212f, -1.290f, 0, 6, 0 },
     /* 107 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-right-horizontal-a", 0x47e08b270836a27bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 1, 208, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.367f, -1.481f, 0, 9, 0},
+    { "ellie-1h-hr-right-horizontal-a", 0x47e08b270836a27bULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 1, 208, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, -0.367f, -1.481f, 0, 9, 0 },
     /* 108 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-right-a", 0xa1ed02547d5328a7ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 2, 152, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -0.480f, -1.569f, 0, 6, 0},
+    { "ellie-1h-hr-head-right-a", 0xa1ed02547d5328a7ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 2, 152, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -0.480f, -1.569f, 0, 6, 0 },
     /* 109 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-right-b", 0xa1ed03547d532a5aULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 2, 146, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, -0.312f, -1.711f, 0, 9, 0},
+    { "ellie-1h-hr-head-right-b", 0xa1ed03547d532a5aULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 2, 2, 146, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, -0.312f, -1.711f, 0, 9, 0 },
     /* 110 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-left-a", 0x8240a53efac825a2ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 126, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.299f, -0.114f, 0, 9, 0},
+    { "ellie-1h-hr-hip-back-left-from-left-a", 0x8240a53efac825a2ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 126, 0, 0, 0, 0,
+     22, 0, 0, 0.00f, 0.0f, 1.299f, -0.114f, 0, 9, 0 },
     /* 111 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-left-b", 0x8240a43efac823efULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 116, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 0.402f, 1.262f, 0, 7, 0},
+    { "ellie-1h-hr-hip-back-left-from-left-b", 0x8240a43efac823efULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 116, 0, 0, 0, 0,
+     22, 0, 0, 0.00f, 0.0f, 0.402f, 1.262f, 0, 7, 0 },
     /* 112 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-right-a", 0x44ee49facdf3b14bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 124, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.145f, 0.141f, 0, 7, 0},
+    { "ellie-1h-hr-hip-back-left-from-right-a", 0x44ee49facdf3b14bULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 124, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 1.145f, 0.141f, 0, 7, 0 },
     /* 113 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-right-b", 0x44ee4afacdf3b2feULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 118, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.736f, 0.017f, 0, 8, 0},
+    { "ellie-1h-hr-hip-back-left-from-right-b", 0x44ee4afacdf3b2feULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 118, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 1.736f, 0.017f, 0, 8, 0 },
     /* 114 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-right-c", 0x44ee4bfacdf3b4b1ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 142, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.449f, 0.058f, 0, 8, 0},
+    { "ellie-1h-hr-hip-back-left-from-right-c", 0x44ee4bfacdf3b4b1ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 142, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 1.449f, 0.058f, 0, 8, 0 },
     /* 115 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-left-from-right-d", 0x44ee4cfacdf3b664ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 140, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, -0.227f, 0.919f, 0, 8, 0},
+    { "ellie-1h-hr-hip-back-left-from-right-d", 0x44ee4cfacdf3b664ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 140, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, -0.227f, 0.919f, 0, 8, 0 },
     /* 116 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-right-from-left-a", 0xdfff4711eeb146cdULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 102, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.045f, -0.103f, 0, 9, 0},
+    { "ellie-1h-hr-hip-back-right-from-left-a", 0xdfff4711eeb146cdULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 102, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 1.045f, -0.103f, 0, 9, 0 },
     /* 117 melee_hitreact.c pool; cancel = MHR_CUT_MS[0] 360 ms */
-    {"ellie-1h-hr-hip-back-right-from-right-a", 0xa419336ce991c1caULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 116, 0, 0, 0, 0, 22, 0, 0, 0.00f, 0.0f, 1.491f, -0.004f, 0, 9, 0},
+    { "ellie-1h-hr-hip-back-right-from-right-a", 0xa419336ce991c1caULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 0, 116, 0, 0,
+     0, 0, 22, 0, 0, 0.00f, 0.0f, 1.491f, -0.004f, 0, 9, 0 },
     /* 118 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-left-shoulder-from-left-a", 0x74952431e165ba8bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 150, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.129f, 1.031f, 0, 7, 0},
+    { "ellie-1h-hr-back-left-shoulder-from-left-a", 0x74952431e165ba8bULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 150, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, -0.129f, 1.031f, 0, 7, 0 },
     /* 119 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-left-shoulder-from-right-a", 0xe7752b3d9e1606a8ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 134, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.062f, 0.574f, 0, 8, 0},
+    { "ellie-1h-hr-back-left-shoulder-from-right-a", 0xe7752b3d9e1606a8ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 134, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, 1.062f, 0.574f, 0, 8, 0 },
     /* 120 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-left-shoulder-from-right-b", 0xe7752e3d9e160bc1ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 146, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.797f, 0.470f, 0, 8, 0},
+    { "ellie-1h-hr-back-left-shoulder-from-right-b", 0xe7752e3d9e160bc1ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 146, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, 1.797f, 0.470f, 0, 8, 0 },
     /* 121 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-left-shoulder-from-right-c", 0xe7752d3d9e160a0eULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 160, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, -0.336f, 1.545f, 0, 8, 0},
+    { "ellie-1h-hr-back-left-shoulder-from-right-c", 0xe7752d3d9e160a0eULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 160, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, -0.336f, 1.545f, 0, 8, 0 },
     /* 122 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-right-shoulder-from-left-a", 0x0c5858374226f592ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 160, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.612f, 0.051f, 0, 7, 0},
+    { "ellie-1h-hr-back-right-shoulder-from-left-a", 0x0c5858374226f592ULL,
+     NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 160, 0, 0,
+     0, 0, 26, 0, 0, 0.00f, 0.0f, 1.612f, 0.051f, 0, 7, 0 },
     /* 123 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-right-shoulder-from-right-a", 0xe8ddcebbf416217bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 160, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 0.871f, -0.186f, 0, 8, 0},
+    { "ellie-1h-hr-back-right-shoulder-from-right-a",
+     0xe8ddcebbf416217bULL, NULL, 0x0000000000000000ULL, MV3_K_REACT,
+     MV3_WS_N, 3, 1, 160, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 0.871f,
+     -0.186f, 0, 8, 0 },
     /* 124 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-back-right-shoulder-from-right-b", 0xe8ddcfbbf416232eULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 130, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.274f, 0.084f, 0, 9, 0},
+    { "ellie-1h-hr-back-right-shoulder-from-right-b",
+     0xe8ddcfbbf416232eULL, NULL, 0x0000000000000000ULL, MV3_K_REACT,
+     MV3_WS_N, 3, 1, 130, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.274f,
+     0.084f, 0, 9, 0 },
     /* 125 melee_hitreact.c pool; cancel = MHR_CUT_MS[1] 440 ms */
-    {"ellie-1h-hr-chest-back-upward-a", 0x61c92f11190ff7a7ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 154, 0, 0, 0, 0, 26, 0, 0, 0.00f, 0.0f, 1.176f, 0.093f, 0, 8, 0},
+    { "ellie-1h-hr-chest-back-upward-a", 0x61c92f11190ff7a7ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 1, 154, 0, 0, 0, 0,
+     26, 0, 0, 0.00f, 0.0f, 1.176f, 0.093f, 0, 8, 0 },
     /* 126 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-back-center-a", 0x0a0394994e3ab9c9ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 180, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.608f, -0.028f, 0, 10, 0},
+    { "ellie-1h-hr-back-center-a", 0x0a0394994e3ab9c9ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 180, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.608f, -0.028f, 0, 10, 0 },
     /* 127 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-back-center-b", 0x0a0391994e3ab4b0ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 180, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.686f, 0.115f, 0, 9, 0},
+    { "ellie-1h-hr-back-center-b", 0x0a0391994e3ab4b0ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 180, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.686f, 0.115f, 0, 9, 0 },
     /* 128 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-back-center-c", 0x0a0392994e3ab663ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 168, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.774f, -0.127f, 0, 13, 0},
+    { "ellie-1h-hr-back-center-c", 0x0a0392994e3ab663ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 168, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.774f, -0.127f, 0, 13, 0 },
     /* 129 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-back-center-upward-a", 0xb865fdc9f29e4c53ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 156, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.118f, -0.453f, 0, 8, 0},
+    { "ellie-1h-hr-back-center-upward-a", 0xb865fdc9f29e4c53ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 156, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.118f, -0.453f, 0, 8, 0 },
     /* 130 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-back-center-a", 0x790d6a1697bc2b6aULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 166, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 0.960f, -0.024f, 0, 10, 0},
+    { "ellie-1h-hr-head-back-center-a", 0x790d6a1697bc2b6aULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 166, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 0.960f, -0.024f, 0, 10, 0 },
     /* 131 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-back-center-b", 0x790d691697bc29b7ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 168, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.125f, 0.069f, 0, 8, 0},
+    { "ellie-1h-hr-head-back-center-b", 0x790d691697bc29b7ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 168, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.125f, 0.069f, 0, 8, 0 },
     /* 132 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-1h-hr-head-back-center-c", 0x790d681697bc2804ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 178, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.351f, 0.149f, 0, 9, 0},
+    { "ellie-1h-hr-head-back-center-c", 0x790d681697bc2804ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 178, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.351f, 0.149f, 0, 9, 0 },
     /* 133 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-2h-hr-back-center-a", 0x77558dea69823e64ULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 184, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.948f, 0.064f, 0, 0, 0},
+    { "ellie-2h-hr-back-center-a", 0x77558dea69823e64ULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 184, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.948f, 0.064f, 0, 0, 0 },
     /* 134 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-2h-hr-back-center-b", 0x775590ea6982437dULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 146, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 1.501f, 0.031f, 0, 0, 0},
+    { "ellie-2h-hr-back-center-b", 0x775590ea6982437dULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 146, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 1.501f, 0.031f, 0, 0, 0 },
     /* 135 melee_hitreact.c pool; cancel = MHR_CUT_MS[2] 520 ms */
-    {"ellie-2h-hr-back-center-c", 0x77558fea698241caULL, NULL, 0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 144, 0, 0, 0, 0, 31, 0, 0, 0.00f, 0.0f, 2.031f, 0.353f, 0, 0, 0},
+    { "ellie-2h-hr-back-center-c", 0x77558fea698241caULL, NULL,
+     0x0000000000000000ULL, MV3_K_REACT, MV3_WS_N, 3, 2, 144, 0, 0, 0, 0,
+     31, 0, 0, 0.00f, 0.0f, 2.031f, 0.353f, 0, 0, 0 },
     /* 136 ctxdown.c dc-fist-fw: hit = dmax 0.57 s, hand-off = end_s 1.50 s */
-    {"abby-fist-dodge-foward-attack--abby", 0x7d1d769a5c1ae77fULL, "abby-fist-dodge-foward-attack-hit--npc-f", 0x5c3873192937a167ULL, MV3_K_COUNTER, MV3_WS_FIST, 0, 2, 176, 34, 37, 0, 0, 90, 0, 0, 1.60f, 90.0f, 3.145f, 0.035f, 200, 3, 0},
+    { "abby-fist-dodge-foward-attack--abby", 0x7d1d769a5c1ae77fULL,
+     "abby-fist-dodge-foward-attack-hit--npc-f", 0x5c3873192937a167ULL,
+     MV3_K_COUNTER, MV3_WS_FIST, 0, 2, 176, 34, 37, 0, 0, 90, 0, 0, 1.60f,
+     90.0f, 3.145f, 0.035f, 200, 3, 0 },
     /* 137 ctxdown.c dc-fist-back: hit = dmax 0.33 s, hand-off = end_s 1.25 s; SP dodge-back-attack contact 454 ms (4 rows; SP counts from the dodge-attack press, dmax from the pair clip start) */
-    {"abby-fist-dodge-back-attack--abby", 0xef8cac887adaf291ULL, "abby-fist-dodge-back-attack-hit--npc-f", 0xadd2a9e62b2b9741ULL, MV3_K_COUNTER, MV3_WS_FIST, 3, 2, 154, 20, 23, 0, 0, 75, 0, 0, 1.60f, 90.0f, 3.119f, -0.144f, 200, 3, 0},
+    { "abby-fist-dodge-back-attack--abby", 0xef8cac887adaf291ULL,
+     "abby-fist-dodge-back-attack-hit--npc-f", 0xadd2a9e62b2b9741ULL,
+     MV3_K_COUNTER, MV3_WS_FIST, 3, 2, 154, 20, 23, 0, 0, 75, 0, 0, 1.60f,
+     90.0f, 3.119f, -0.144f, 200, 3, 0 },
     /* 138 ctxdown.c dc-fist-haymaker: hit = dmax 0.53 s, hand-off = end_s 1.15 s; MULTI-SEGMENT row: this is segment 0 only (cut 0.00 s), the rest is in CD_PAIRS */
-    {"abby-fist-kill-right-haymaker-intro--abby", 0x12661e1f10cc4462ULL, "abby-fist-kill-right-haymaker--npc-f", 0x9fb485a528f46ab9ULL, MV3_K_COUNTER, MV3_WS_FIST, 3, 2, 32, 32, 35, 0, 0, 69, 0, 0, 1.60f, 90.0f, 1.500f, -0.268f, 200, 6, 0},
+    { "abby-fist-kill-right-haymaker-intro--abby", 0x12661e1f10cc4462ULL,
+     "abby-fist-kill-right-haymaker--npc-f", 0x9fb485a528f46ab9ULL,
+     MV3_K_COUNTER, MV3_WS_FIST, 3, 2, 32, 32, 35, 0, 0, 69, 0, 0, 1.60f,
+     90.0f, 1.500f, -0.268f, 200, 6, 0 },
     /* 139 ctxdown.c dc-1hblunt-fw: hit = dmax 0.43 s, hand-off = end_s 1.30 s */
-    {"abby-1hblunt-dodge-fw-attack--abby", 0xc046b9949a4e589bULL, "abby-1hblunt-dodge-fw-attack-hit--npc-f", 0xa0923188cad11483ULL, MV3_K_COUNTER, MV3_WS_1HBLUNT, 0, 2, 140, 26, 29, 0, 0, 78, 0, 0, 2.00f, 90.0f, 3.896f, 0.233f, 340, 10, 0},
+    { "abby-1hblunt-dodge-fw-attack--abby", 0xc046b9949a4e589bULL,
+     "abby-1hblunt-dodge-fw-attack-hit--npc-f", 0xa0923188cad11483ULL,
+     MV3_K_COUNTER, MV3_WS_1HBLUNT, 0, 2, 140, 26, 29, 0, 0, 78, 0, 0,
+     2.00f, 90.0f, 3.896f, 0.233f, 340, 10, 0 },
     /* 140 ctxdown.c dc-1hblunt-back: hit = dmax 0.43 s, hand-off = end_s 1.30 s; SP dodge-back-attack contact 522 ms (1 rows; SP counts from the dodge-attack press, dmax from the pair clip start) */
-    {"abby-1hblunt-dodge-back-attack--abby", 0x4a0e3e4a5b3b90efULL, "abby-1hblunt-dodge-back-attack-hit--npc-f", 0xa59f08f1a5974697ULL, MV3_K_COUNTER, MV3_WS_1HBLUNT, 3, 2, 128, 26, 29, 0, 0, 78, 0, 0, 2.00f, 90.0f, 3.285f, -0.135f, 340, 9, 0},
+    { "abby-1hblunt-dodge-back-attack--abby", 0x4a0e3e4a5b3b90efULL,
+     "abby-1hblunt-dodge-back-attack-hit--npc-f", 0xa59f08f1a5974697ULL,
+     MV3_K_COUNTER, MV3_WS_1HBLUNT, 3, 2, 128, 26, 29, 0, 0, 78, 0, 0,
+     2.00f, 90.0f, 3.285f, -0.135f, 340, 9, 0 },
     /* 141 ctxdown.c dc-1hblade-back: hit = dmax 0.47 s, hand-off = end_s 1.35 s */
-    {"ellie-1hblade-dodge-back-attack--ellie", 0x1fb48510f462d912ULL, "ellie-1hblade-dodge-back-attack-hit--npc-f", 0x8ed6e373f1a013abULL, MV3_K_COUNTER, MV3_WS_1HBLADE, 3, 2, 172, 28, 31, 0, 0, 81, 0, 0, 2.00f, 90.0f, 2.629f, -0.252f, 340, 17, 0},
+    { "ellie-1hblade-dodge-back-attack--ellie", 0x1fb48510f462d912ULL,
+     "ellie-1hblade-dodge-back-attack-hit--npc-f", 0x8ed6e373f1a013abULL,
+     MV3_K_COUNTER, MV3_WS_1HBLADE, 3, 2, 172, 28, 31, 0, 0, 81, 0, 0,
+     2.00f, 90.0f, 2.629f, -0.252f, 340, 17, 0 },
     /* 142 ctxdown.c dc-1hblade-heavy: hit = dmax 0.50 s, hand-off = end_s 1.35 s */
-    {"ellie-1hblade-dodge-bk-heavy-atk", 0x1a7a11071afc0a89ULL, "ellie-1hblade-dodge-bk-heavy-atk-hit--npc-m", 0xc3b203e54fa7df38ULL, MV3_K_COUNTER, MV3_WS_1HBLADE, 3, 2, 114, 30, 33, 0, 0, 81, 0, 0, 2.00f, 90.0f, 3.370f, -0.000f, 340, 13, 0},
+    { "ellie-1hblade-dodge-bk-heavy-atk", 0x1a7a11071afc0a89ULL,
+     "ellie-1hblade-dodge-bk-heavy-atk-hit--npc-m", 0xc3b203e54fa7df38ULL,
+     MV3_K_COUNTER, MV3_WS_1HBLADE, 3, 2, 114, 30, 33, 0, 0, 81, 0, 0,
+     2.00f, 90.0f, 3.370f, -0.000f, 340, 13, 0 },
     /* 143 ctxdown.c dc-2h-back: hit = dmax 0.50 s, hand-off = end_s 1.40 s */
-    {"ellie-2hblunt-dodge-back-attack--ellie", 0x6807a335892daaeaULL, "ellie-2hblunt-dodge-back-attack-hit--npc-f", 0xaf6737d9b775b383ULL, MV3_K_COUNTER, MV3_WS_2H, 3, 2, 170, 30, 33, 0, 0, 84, 0, 0, 2.00f, 90.0f, 2.363f, -0.124f, 340, 4, 0},
+    { "ellie-2hblunt-dodge-back-attack--ellie", 0x6807a335892daaeaULL,
+     "ellie-2hblunt-dodge-back-attack-hit--npc-f", 0xaf6737d9b775b383ULL,
+     MV3_K_COUNTER, MV3_WS_2H, 3, 2, 170, 30, 33, 0, 0, 84, 0, 0, 2.00f,
+     90.0f, 2.363f, -0.124f, 340, 4, 0 },
     /* 144 ctxdown.c dc-knife-back: hit = dmax 0.47 s, hand-off = end_s 1.35 s */
-    {"ellie-knife-dodge-back-attack", 0xca52b197d0bc2e27ULL, "ellie-knife-dodge-back-attack-hit--npc-m", 0xa552cbcc76ec2f8aULL, MV3_K_COUNTER, MV3_WS_KNIFE, 3, 2, 88, 28, 31, 0, 0, 81, 0, 0, 2.00f, 90.0f, 2.658f, -0.000f, 340, 13, 0},
+    { "ellie-knife-dodge-back-attack", 0xca52b197d0bc2e27ULL,
+     "ellie-knife-dodge-back-attack-hit--npc-m", 0xa552cbcc76ec2f8aULL,
+     MV3_K_COUNTER, MV3_WS_KNIFE, 3, 2, 88, 28, 31, 0, 0, 81, 0, 0, 2.00f,
+     90.0f, 2.658f, -0.000f, 340, 13, 0 },
     /* 145 ctxdown.c dc-knife-palm: hit = dmax 0.41 s, hand-off = end_s 0.97 s; MULTI-SEGMENT row: this is segment 0 only (cut 0.37 s), the rest is in CD_PAIRS */
-    {"ellie-knife-stun-handle-bash-2--ellie", 0x09a8969b3a4f0943ULL, "ellie-knife-stun-handle-bash-2-hit--npc-f", 0x98744bb81657765aULL, MV3_K_COUNTER, MV3_WS_KNIFE, 3, 2, 22, 25, 28, 0, 0, 58, 0, 0, 2.00f, 90.0f, 1.541f, 0.258f, 340, 14, 0},
+    { "ellie-knife-stun-handle-bash-2--ellie", 0x09a8969b3a4f0943ULL,
+     "ellie-knife-stun-handle-bash-2-hit--npc-f", 0x98744bb81657765aULL,
+     MV3_K_COUNTER, MV3_WS_KNIFE, 3, 2, 22, 25, 28, 0, 0, 58, 0, 0, 2.00f,
+     90.0f, 1.541f, 0.258f, 340, 14, 0 },
     /* 146 victim half of dc-fist-fw */
-    {"abby-fist-dodge-foward-attack-hit--npc-f", 0x5c3873192937a167ULL, "abby-fist-dodge-foward-attack--abby", 0x7d1d769a5c1ae77fULL, MV3_K_COUNTERED, MV3_WS_FIST, 0, 2, 130, 34, 37, 0, 0, 90, 0, 0, 0.00f, 0.0f, -2.539f, -0.193f, 0, 1, 0},
+    { "abby-fist-dodge-foward-attack-hit--npc-f", 0x5c3873192937a167ULL,
+     "abby-fist-dodge-foward-attack--abby", 0x7d1d769a5c1ae77fULL,
+     MV3_K_COUNTERED, MV3_WS_FIST, 0, 2, 130, 34, 37, 0, 0, 90, 0, 0,
+     0.00f, 0.0f, -2.539f, -0.193f, 0, 1, 0 },
     /* 147 victim half of dc-fist-back */
-    {"abby-fist-dodge-back-attack-hit--npc-f", 0xadd2a9e62b2b9741ULL, "abby-fist-dodge-back-attack--abby", 0xef8cac887adaf291ULL, MV3_K_COUNTERED, MV3_WS_FIST, 3, 2, 122, 20, 23, 0, 0, 75, 0, 0, 0.00f, 0.0f, -1.681f, -0.028f, 0, 1, 0},
+    { "abby-fist-dodge-back-attack-hit--npc-f", 0xadd2a9e62b2b9741ULL,
+     "abby-fist-dodge-back-attack--abby", 0xef8cac887adaf291ULL,
+     MV3_K_COUNTERED, MV3_WS_FIST, 3, 2, 122, 20, 23, 0, 0, 75, 0, 0,
+     0.00f, 0.0f, -1.681f, -0.028f, 0, 1, 0 },
     /* 148 victim half of dc-fist-haymaker */
-    {"abby-fist-kill-right-haymaker--npc-f", 0x9fb485a528f46ab9ULL, "abby-fist-kill-right-haymaker-intro--abby", 0x12661e1f10cc4462ULL, MV3_K_COUNTERED, MV3_WS_FIST, 3, 2, 208, 32, 35, 0, 0, 69, 0, 0, 0.00f, 0.0f, -1.709f, -0.027f, 0, 6, 0},
+    { "abby-fist-kill-right-haymaker--npc-f", 0x9fb485a528f46ab9ULL,
+     "abby-fist-kill-right-haymaker-intro--abby", 0x12661e1f10cc4462ULL,
+     MV3_K_COUNTERED, MV3_WS_FIST, 3, 2, 208, 32, 35, 0, 0, 69, 0, 0,
+     0.00f, 0.0f, -1.709f, -0.027f, 0, 6, 0 },
     /* 149 victim half of dc-1hblunt-fw */
-    {"abby-1hblunt-dodge-fw-attack-hit--npc-f", 0xa0923188cad11483ULL, "abby-1hblunt-dodge-fw-attack--abby", 0xc046b9949a4e589bULL, MV3_K_COUNTERED, MV3_WS_1HBLUNT, 0, 2, 126, 26, 29, 0, 0, 78, 0, 0, 0.00f, 0.0f, -3.100f, -0.112f, 0, 0, 0},
+    { "abby-1hblunt-dodge-fw-attack-hit--npc-f", 0xa0923188cad11483ULL,
+     "abby-1hblunt-dodge-fw-attack--abby", 0xc046b9949a4e589bULL,
+     MV3_K_COUNTERED, MV3_WS_1HBLUNT, 0, 2, 126, 26, 29, 0, 0, 78, 0, 0,
+     0.00f, 0.0f, -3.100f, -0.112f, 0, 0, 0 },
     /* 150 victim half of dc-1hblunt-back */
-    {"abby-1hblunt-dodge-back-attack-hit--npc-f", 0xa59f08f1a5974697ULL, "abby-1hblunt-dodge-back-attack--abby", 0x4a0e3e4a5b3b90efULL, MV3_K_COUNTERED, MV3_WS_1HBLUNT, 3, 2, 106, 26, 29, 0, 0, 78, 0, 0, 0.00f, 0.0f, -2.301f, 0.317f, 0, 10, 0},
+    { "abby-1hblunt-dodge-back-attack-hit--npc-f", 0xa59f08f1a5974697ULL,
+     "abby-1hblunt-dodge-back-attack--abby", 0x4a0e3e4a5b3b90efULL,
+     MV3_K_COUNTERED, MV3_WS_1HBLUNT, 3, 2, 106, 26, 29, 0, 0, 78, 0, 0,
+     0.00f, 0.0f, -2.301f, 0.317f, 0, 10, 0 },
     /* 151 victim half of dc-1hblade-back */
-    {"ellie-1hblade-dodge-back-attack-hit--npc-f", 0x8ed6e373f1a013abULL, "ellie-1hblade-dodge-back-attack--ellie", 0x1fb48510f462d912ULL, MV3_K_COUNTERED, MV3_WS_1HBLADE, 3, 2, 112, 28, 31, 0, 0, 81, 0, 0, 0.00f, 0.0f, -1.936f, 0.118f, 0, 17, 0},
+    { "ellie-1hblade-dodge-back-attack-hit--npc-f", 0x8ed6e373f1a013abULL,
+     "ellie-1hblade-dodge-back-attack--ellie", 0x1fb48510f462d912ULL,
+     MV3_K_COUNTERED, MV3_WS_1HBLADE, 3, 2, 112, 28, 31, 0, 0, 81, 0, 0,
+     0.00f, 0.0f, -1.936f, 0.118f, 0, 17, 0 },
     /* 152 victim half of dc-1hblade-heavy */
-    {"ellie-1hblade-dodge-bk-heavy-atk-hit--npc-m", 0xc3b203e54fa7df38ULL, "ellie-1hblade-dodge-bk-heavy-atk", 0x1a7a11071afc0a89ULL, MV3_K_COUNTERED, MV3_WS_1HBLADE, 3, 2, 152, 30, 33, 0, 0, 81, 0, 0, 0.00f, 0.0f, -1.497f, -1.438f, 0, 11, 0},
+    { "ellie-1hblade-dodge-bk-heavy-atk-hit--npc-m", 0xc3b203e54fa7df38ULL,
+     "ellie-1hblade-dodge-bk-heavy-atk", 0x1a7a11071afc0a89ULL,
+     MV3_K_COUNTERED, MV3_WS_1HBLADE, 3, 2, 152, 30, 33, 0, 0, 81, 0, 0,
+     0.00f, 0.0f, -1.497f, -1.438f, 0, 11, 0 },
     /* 153 victim half of dc-2h-back */
-    {"ellie-2hblunt-dodge-back-attack-hit--npc-f", 0xaf6737d9b775b383ULL, "ellie-2hblunt-dodge-back-attack--ellie", 0x6807a335892daaeaULL, MV3_K_COUNTERED, MV3_WS_2H, 3, 2, 132, 30, 33, 0, 0, 84, 0, 0, 0.00f, 0.0f, -1.724f, 0.056f, 0, 10, 0},
+    { "ellie-2hblunt-dodge-back-attack-hit--npc-f", 0xaf6737d9b775b383ULL,
+     "ellie-2hblunt-dodge-back-attack--ellie", 0x6807a335892daaeaULL,
+     MV3_K_COUNTERED, MV3_WS_2H, 3, 2, 132, 30, 33, 0, 0, 84, 0, 0, 0.00f,
+     0.0f, -1.724f, 0.056f, 0, 10, 0 },
     /* 154 victim half of dc-knife-back */
-    {"ellie-knife-dodge-back-attack-hit--npc-m", 0xa552cbcc76ec2f8aULL, "ellie-knife-dodge-back-attack", 0xca52b197d0bc2e27ULL, MV3_K_COUNTERED, MV3_WS_KNIFE, 3, 2, 144, 28, 31, 0, 0, 81, 0, 0, 0.00f, 0.0f, -1.764f, 0.082f, 0, 10, 0},
+    { "ellie-knife-dodge-back-attack-hit--npc-m", 0xa552cbcc76ec2f8aULL,
+     "ellie-knife-dodge-back-attack", 0xca52b197d0bc2e27ULL,
+     MV3_K_COUNTERED, MV3_WS_KNIFE, 3, 2, 144, 28, 31, 0, 0, 81, 0, 0,
+     0.00f, 0.0f, -1.764f, 0.082f, 0, 10, 0 },
     /* 155 victim half of dc-knife-palm */
-    {"ellie-knife-stun-handle-bash-2-hit--npc-f", 0x98744bb81657765aULL, "ellie-knife-stun-handle-bash-2--ellie", 0x09a8969b3a4f0943ULL, MV3_K_COUNTERED, MV3_WS_KNIFE, 3, 2, 236, 25, 28, 0, 0, 58, 0, 0, 0.00f, 0.0f, -0.789f, 0.057f, 0, 26, 0},
+    { "ellie-knife-stun-handle-bash-2-hit--npc-f", 0x98744bb81657765aULL,
+     "ellie-knife-stun-handle-bash-2--ellie", 0x09a8969b3a4f0943ULL,
+     MV3_K_COUNTERED, MV3_WS_KNIFE, 3, 2, 236, 25, 28, 0, 0, 58, 0, 0,
+     0.00f, 0.0f, -0.789f, 0.057f, 0, 26, 0 },
 };
+
 const int MV3_MOVES_N = MV3_MOVES_COUNT;
 
 // extra per-move data the contract struct has no field for (same index as MV3_MOVES)
 typedef struct {
-    const char *hit_clip;          // swings: the attacker's synced follow-through played from the contact (SP "<move>-hit"), NULL otherwise
-    uint64_t    hit_sid;
-    const char *hit_vic;           // swings: the victim half of that -hit pair (the --npc-f / --npc-m retarget ctxdown / melee_seq play), NULL if none
-    uint64_t    hit_vic_sid;
-    uint16_t    hit_dur_f;         // the -hit clip length
-    uint16_t    dodge_cancel_f;    // swings: a dodge may cut the connected swing from here (SP: 102-170 ms after the contact)
-    uint8_t     resident;          // 1 = every clip of the row is resident in an MP-loaded melee pak (plays through animate_), 0 = missing / streamed
-    uint8_t     ang, side;         // dodges: the blow angle the clip answers (0 horiz 1 downward 2 upward) and side (0 left 1 right), 0xff = any
-    uint8_t     pad;
-} mv3_move_x;
-static const mv3_move_x MV3_MOVES_X[MV3_MOVES_COUNT] = {
-    {"abby-fist-combo-punch-1-left-hit--abby", 0xa6ad5eafb5cb188eULL, "abby-fist-combo-punch-1-left-hit--npc-f", 0x45ffb04806e09188ULL, 90, 24, 1, 255, 255, 0},   // MV3_M_FIST_SWING1
-    {"abby-1hblunt-combo-swing-1-hit--abby", 0xe36f8656baeb0990ULL, "abby-1hblunt-combo-swing-1-hit--npc-f", 0xca585e1e19ecfac2ULL, 120, 34, 1, 255, 255, 0},   // MV3_M_1HBLUNT_SWING1
-    {"ellie-machete-combo-slash-1-hit--ellie", 0x20fb06d5ac1c7c78ULL, "ellie-machete-combo-slash-1-hit--npc-m", 0x9241467a2a3fbdf4ULL, 276, 26, 1, 255, 255, 0},   // MV3_M_1HBLADE_SWING1
-    {"ellie-2hblunt-open-combo-1-hit--ellie", 0xef8126fd7f2e893fULL, "ellie-2hblunt-open-combo-1-hit--npc-f", 0x5a386d7a3106d856ULL, 160, 28, 1, 255, 255, 0},   // MV3_M_2H_SWING1
-    {"ellie-knife-combo-slash-1-hit--ellie", 0xa20be4f7ee296b52ULL, "ellie-knife-combo-slash-1-hit--npc-m", 0x974c7823a22806beULL, 196, 22, 1, 255, 255, 0},   // MV3_M_KNIFE_SWING1
-    {"abby-fist-combo-punch-1-hit--abby", 0x55917081bb3fb328ULL, "abby-fist-combo-punch-1-hit--npc-f", 0x4031aeb2eef8d99aULL, 100, 22, 1, 255, 255, 0},   // MV3_M_FIST_SWING2
-    {"abby-1hblunt-combo-swing-2-hit--abby", 0x00b530ab9be5cc1dULL, "abby-1hblunt-combo-swing-2-hit--npc-f", 0xa1b4039b16418df5ULL, 60, 34, 1, 255, 255, 0},   // MV3_M_1HBLUNT_SWING2
-    {"ellie-machete-combo-slash-2-hit--ellie", 0x952d2ece1c2c0f23ULL, "ellie-machete-combo-slash-2-hit--npc-m", 0xbae5a2fd2deb2e27ULL, 234, 22, 1, 255, 255, 0},   // MV3_M_1HBLADE_SWING2
-    {"ellie-2hblunt-open-combo-2-hit--ellie", 0x99711e27a88bd2a4ULL, "ellie-2hblunt-open-combo-2-hit--npc-f", 0x74045930ace0c469ULL, 132, 28, 1, 255, 255, 0},   // MV3_M_2H_SWING2
-    {"ellie-knife-combo-slash-2-hit--ellie", 0xf0efb25a9bd62569ULL, "ellie-knife-combo-slash-2-hit--npc-m", 0x44477ab9f31f4dc5ULL, 214, 24, 1, 255, 255, 0},   // MV3_M_KNIFE_SWING2
-    {"abby-fist-combo-punch-2-hit--abby", 0x3b67e3bc1031c175ULL, "abby-fist-combo-punch-2-hit--npc-f", 0x355431044ae2164dULL, 90, 26, 1, 255, 255, 0},   // MV3_M_FIST_SWING3
-    {"abby-1hblunt-combo-swing-3-hit--abby", 0xa97a4633d3f2872eULL, "abby-1hblunt-combo-swing-3-hit--npc-f", 0x314e75c74552b328ULL, 90, 34, 1, 255, 255, 0},   // MV3_M_1HBLUNT_SWING3
-    {"ellie-machete-combo-slash-3-hit--ellie", 0x236b26b89a028b1eULL, "ellie-machete-combo-slash-3-hit--npc-m", 0x42344a46fd0547d2ULL, 216, 26, 1, 255, 255, 0},   // MV3_M_1HBLADE_SWING3
-    {"ellie-2hblunt-open-combo-3-hit--ellie", 0x795c01ab55d55aa1ULL, "ellie-2hblunt-open-combo-3-hit--npc-f", 0x779f301dbcb5f60cULL, 168, 26, 1, 255, 255, 0},   // MV3_M_2H_SWING3
-    {"ellie-knife-combo-slash-3-hit--ellie", 0x4e88f65c2c17b66cULL, "ellie-knife-combo-slash-3-hit--npc-m", 0x2531cdbb5cab7470ULL, 176, 22, 1, 255, 255, 0},   // MV3_M_KNIFE_SWING3
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_OPEN_IDLE_FORWARD_LEFT_FT
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_OPEN_IDLE_FORWARD_RIGHT_FT
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_FORWARD_COMBAT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_FORWARD_COMBAT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_FORWARD_COMBAT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_F_FORWARD_COMBAT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_UPWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_E
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0},   // MV3_M_DODGE_L_LEFT_COMBAT_UPWARD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_R_2H_COMBAT_RIGHT_HORIZ_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_E
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0},   // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0},   // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_B_OPEN_IDLE_BACK_LEFT_FT
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_DODGE_B_OPEN_IDLE_BACK_RIGHT_FT
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_MISS_F_STUMBLE
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0},   // MV3_M_MISS_L
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0},   // MV3_M_MISS_R
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0},   // MV3_M_MISS_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_CHEST_FRONT_HORIZONTAL_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_CHEST_FRONT_UPWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_RT_FT_CHEST_FRONT_HORIZONTAL_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HEAD_FRONT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HEAD_FRONT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HEAD_FRONT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_F_HEAD_FRONT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_UPWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_UPWARD_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_DOWNWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_HORIZONTAL_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_HORIZONTAL_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_HORIZONTAL_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_LEFT_HORIZONTAL_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_L_HEAD_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_UPWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_RIGHT_HORIZONTAL_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_HEAD_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_R_HEAD_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_LEFT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_D
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_RIGHT_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HIP_BACK_RIGHT_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_LEFT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_RIGHT_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_RIGHT_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_CHEST_BACK_UPWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_CENTER_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_CENTER_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_CENTER_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_BACK_CENTER_UPWARD_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HEAD_BACK_CENTER_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HEAD_BACK_CENTER_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_HEAD_BACK_CENTER_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_2H_BACK_CENTER_A
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_2H_BACK_CENTER_B
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_REACT_B_2H_BACK_CENTER_C
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_FIST_FW
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_FIST_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_FIST_HAYMAKER
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_1HBLUNT_FW
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_1HBLUNT_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_1HBLADE_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_1HBLADE_HEAVY
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_2H_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_KNIFE_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTER_KNIFE_PALM
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_FIST_FW
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_FIST_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_FIST_HAYMAKER
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_1HBLUNT_FW
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_1HBLUNT_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_1HBLADE_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_1HBLADE_HEAVY
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_2H_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_KNIFE_BACK
-    {NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0},   // MV3_M_COUNTERED_KNIFE_PALM
+    const char *hit_clip;       // swings: the attacker's synced follow-through played from the contact (SP "<move>-hit"), NULL otherwise
+    uint64_t hit_sid;
+    const char *hit_vic;        // swings: the victim half of that -hit pair (the --npc-f / --npc-m retarget ctxdown / melee_seq play), NULL if none
+    uint64_t hit_vic_sid;
+    uint16_t hit_dur_f;         // the -hit clip length
+    uint16_t dodge_cancel_f;    // swings: a dodge may cut the connected swing from here (SP: 102-170 ms after the contact)
+    uint8_t resident;           // 1 = every clip of the row is resident in an MP-loaded melee pak (plays through animate_), 0 = missing / streamed
+    uint8_t ang, side;          // dodges: the blow angle the clip answers (0 horiz 1 downward 2 upward) and side (0 left 1 right), 0xff = any
+    uint8_t pad;
+} Mv3MoveX;
+static const Mv3MoveX MV3_MOVES_X[MV3_MOVES_COUNT] = {
+    { "abby-fist-combo-punch-1-left-hit--abby", 0xa6ad5eafb5cb188eULL, "abby-fist-combo-punch-1-left-hit--npc-f", 0x45ffb04806e09188ULL, 90, 24, 1, 255, 255, 0 },      // MV3_M_FIST_SWING1
+    { "abby-1hblunt-combo-swing-1-hit--abby", 0xe36f8656baeb0990ULL, "abby-1hblunt-combo-swing-1-hit--npc-f", 0xca585e1e19ecfac2ULL, 120, 34, 1, 255, 255, 0 }, // MV3_M_1HBLUNT_SWING1
+    { "ellie-machete-combo-slash-1-hit--ellie", 0x20fb06d5ac1c7c78ULL, "ellie-machete-combo-slash-1-hit--npc-m", 0x9241467a2a3fbdf4ULL, 276, 26, 1, 255, 255, 0 },      // MV3_M_1HBLADE_SWING1
+    { "ellie-2hblunt-open-combo-1-hit--ellie", 0xef8126fd7f2e893fULL, "ellie-2hblunt-open-combo-1-hit--npc-f", 0x5a386d7a3106d856ULL, 160, 28, 1, 255, 255, 0 },        // MV3_M_2H_SWING1
+    { "ellie-knife-combo-slash-1-hit--ellie", 0xa20be4f7ee296b52ULL, "ellie-knife-combo-slash-1-hit--npc-m", 0x974c7823a22806beULL, 196, 22, 1, 255, 255, 0 },  // MV3_M_KNIFE_SWING1
+    { "abby-fist-combo-punch-1-hit--abby", 0x55917081bb3fb328ULL, "abby-fist-combo-punch-1-hit--npc-f", 0x4031aeb2eef8d99aULL, 100, 22, 1, 255, 255, 0 },       // MV3_M_FIST_SWING2
+    { "abby-1hblunt-combo-swing-2-hit--abby", 0x00b530ab9be5cc1dULL, "abby-1hblunt-combo-swing-2-hit--npc-f", 0xa1b4039b16418df5ULL, 60, 34, 1, 255, 255, 0 },  // MV3_M_1HBLUNT_SWING2
+    { "ellie-machete-combo-slash-2-hit--ellie", 0x952d2ece1c2c0f23ULL, "ellie-machete-combo-slash-2-hit--npc-m", 0xbae5a2fd2deb2e27ULL, 234, 22, 1, 255, 255, 0 },      // MV3_M_1HBLADE_SWING2
+    { "ellie-2hblunt-open-combo-2-hit--ellie", 0x99711e27a88bd2a4ULL, "ellie-2hblunt-open-combo-2-hit--npc-f", 0x74045930ace0c469ULL, 132, 28, 1, 255, 255, 0 },        // MV3_M_2H_SWING2
+    { "ellie-knife-combo-slash-2-hit--ellie", 0xf0efb25a9bd62569ULL, "ellie-knife-combo-slash-2-hit--npc-m", 0x44477ab9f31f4dc5ULL, 214, 24, 1, 255, 255, 0 },  // MV3_M_KNIFE_SWING2
+    { "abby-fist-combo-punch-2-hit--abby", 0x3b67e3bc1031c175ULL, "abby-fist-combo-punch-2-hit--npc-f", 0x355431044ae2164dULL, 90, 26, 1, 255, 255, 0 },        // MV3_M_FIST_SWING3
+    { "abby-1hblunt-combo-swing-3-hit--abby", 0xa97a4633d3f2872eULL, "abby-1hblunt-combo-swing-3-hit--npc-f", 0x314e75c74552b328ULL, 90, 34, 1, 255, 255, 0 },  // MV3_M_1HBLUNT_SWING3
+    { "ellie-machete-combo-slash-3-hit--ellie", 0x236b26b89a028b1eULL, "ellie-machete-combo-slash-3-hit--npc-m", 0x42344a46fd0547d2ULL, 216, 26, 1, 255, 255, 0 },      // MV3_M_1HBLADE_SWING3
+    { "ellie-2hblunt-open-combo-3-hit--ellie", 0x795c01ab55d55aa1ULL, "ellie-2hblunt-open-combo-3-hit--npc-f", 0x779f301dbcb5f60cULL, 168, 26, 1, 255, 255, 0 },        // MV3_M_2H_SWING3
+    { "ellie-knife-combo-slash-3-hit--ellie", 0x4e88f65c2c17b66cULL, "ellie-knife-combo-slash-3-hit--npc-m", 0x2531cdbb5cab7470ULL, 176, 22, 1, 255, 255, 0 },  // MV3_M_KNIFE_SWING3
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_OPEN_IDLE_FORWARD_LEFT_FT
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_OPEN_IDLE_FORWARD_RIGHT_FT
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_FORWARD_COMBAT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_FORWARD_COMBAT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_FORWARD_COMBAT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_F_FORWARD_COMBAT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_UPWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_E
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_HORIZ_LEFT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_LEFT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_DOWNWARD_RIGHT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0 },     // MV3_M_DODGE_L_LEFT_COMBAT_UPWARD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_HORIZ_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_R_2H_COMBAT_RIGHT_HORIZ_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_DOWNWARD_RIGHT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_R_RIGHT_COMBAT_UPWARD_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_LEFT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 0, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_HORIZ_RIGHT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_LEFT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 1, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_DOWNWARD_RIGHT_E
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 0, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 2, 1, 0 },     // MV3_M_DODGE_B_BACK_COMBAT_UPWARD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_B_OPEN_IDLE_BACK_LEFT_FT
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_DODGE_B_OPEN_IDLE_BACK_RIGHT_FT
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_MISS_F_STUMBLE
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0 }, // MV3_M_MISS_L
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0 }, // MV3_M_MISS_R
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 0, 255, 255, 0 }, // MV3_M_MISS_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_LEFT_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_LEFT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HIP_FRONT_RIGHT_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_CHEST_FRONT_HORIZONTAL_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_CHEST_FRONT_UPWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_RT_FT_CHEST_FRONT_HORIZONTAL_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_CHEST_FRONT_DOWNWARD_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HEAD_FRONT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HEAD_FRONT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HEAD_FRONT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_F_HEAD_FRONT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_UPWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_UPWARD_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_DOWNWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_HORIZONTAL_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_HORIZONTAL_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_HORIZONTAL_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_LEFT_HORIZONTAL_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_L_HEAD_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_SHOULDER_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_UPWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_RIGHT_HORIZONTAL_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_HEAD_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_R_HEAD_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_LEFT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_LEFT_FROM_RIGHT_D
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_RIGHT_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HIP_BACK_RIGHT_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_LEFT_SHOULDER_FROM_RIGHT_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_LEFT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_RIGHT_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_RIGHT_SHOULDER_FROM_RIGHT_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_CHEST_BACK_UPWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_CENTER_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_CENTER_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_CENTER_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_BACK_CENTER_UPWARD_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HEAD_BACK_CENTER_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HEAD_BACK_CENTER_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_HEAD_BACK_CENTER_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_2H_BACK_CENTER_A
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_2H_BACK_CENTER_B
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_REACT_B_2H_BACK_CENTER_C
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_FIST_FW
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_FIST_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_FIST_HAYMAKER
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_1HBLUNT_FW
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_1HBLUNT_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_1HBLADE_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_1HBLADE_HEAVY
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_2H_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_KNIFE_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTER_KNIFE_PALM
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_FIST_FW
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_FIST_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_FIST_HAYMAKER
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_1HBLUNT_FW
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_1HBLUNT_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_1HBLADE_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_1HBLADE_HEAVY
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_2H_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_KNIFE_BACK
+    { NULL, 0x0000000000000000ULL, NULL, 0x0000000000000000ULL, 0, 0, 1, 255, 255, 0 }, // MV3_M_COUNTERED_KNIFE_PALM
 };
 
 // cumulative root motion samples, cm: [k] = at move frame (k + 1) * dur_f / MV3_RM_N; {fwd, right}. All zero = no root channel (use root_fwd / root_side linearly)
 static const int16_t MV3_MOVES_RM[MV3_MOVES_COUNT][MV3_RM_N][2] = {
-    {{25, -1}, {39, -1}, {62, -1}, {75, -6}, {79, -8}, {79, -7}, {73, -5}, {65, -3}, {62, -2}, {63, -2}, {66, -3}, {69, -4}, {67, -4}, {65, -3}, {64, -3}, {67, -3}},
-    {{3, 1}, {20, -1}, {65, -11}, {87, -7}, {87, 4}, {78, 14}, {78, 15}, {82, 11}, {86, 7}, {86, 5}, {83, 6}, {83, 8}, {83, 8}, {87, 10}, {96, 10}, {111, 8}},
-    {{82, 13}, {109, 4}, {149, 2}, {160, 5}, {164, 8}, {161, 15}, {157, 22}, {158, 26}, {163, 26}, {172, 24}, {179, 20}, {179, 18}, {174, 19}, {169, 19}, {170, 19}, {173, 18}},
-    {{43, -2}, {73, -10}, {103, -16}, {121, -12}, {140, -4}, {153, 1}, {155, 1}, {147, -3}, {130, -10}, {116, -11}, {100, -8}, {85, -5}, {79, -4}, {82, -7}, {88, -10}, {88, -10}},
-    {{29, -4}, {102, -8}, {122, -9}, {128, -9}, {133, -10}, {142, -12}, {151, -12}, {153, -13}, {152, -16}, {143, -21}, {127, -26}, {112, -27}, {94, -27}, {81, -26}, {78, -27}, {81, -28}},
-    {{39, -5}, {81, -10}, {93, -12}, {96, -11}, {93, -9}, {85, -6}, {77, -2}, {74, 1}, {75, 0}, {80, -1}, {81, -2}, {78, -1}, {74, 0}, {71, 0}, {71, 0}, {74, -1}},
-    {{2, 3}, {17, 3}, {60, -2}, {88, 0}, {113, 6}, {122, 8}, {124, 7}, {121, 4}, {112, -2}, {102, -6}, {92, -8}, {83, -7}, {73, -6}, {63, -4}, {57, -3}, {55, -2}},
-    {{24, 2}, {55, 12}, {72, 8}, {91, 9}, {105, 6}, {119, 1}, {126, -1}, {127, 0}, {125, 3}, {124, 5}, {126, 5}, {132, 5}, {136, 5}, {135, 6}, {131, 8}, {129, 10}},
-    {{30, -9}, {56, -5}, {83, 6}, {122, 1}, {148, -5}, {167, -11}, {179, -14}, {185, -15}, {179, -16}, {170, -13}, {163, -9}, {153, -10}, {150, -12}, {151, -13}, {151, -14}, {151, -15}},
-    {{12, 1}, {39, -1}, {49, 1}, {57, 0}, {58, -2}, {51, -4}, {48, -3}, {46, -2}, {39, -3}, {26, -5}, {14, -3}, {0, 1}, {-9, 4}, {-8, 3}, {-2, 1}, {0, 0}},
-    {{17, -1}, {40, -1}, {72, 1}, {102, 0}, {112, -1}, {115, -1}, {114, 0}, {108, 2}, {101, 4}, {98, 5}, {99, 4}, {102, 3}, {105, 2}, {103, 3}, {100, 4}, {100, 4}},
-    {{28, 0}, {45, 1}, {76, 7}, {129, 6}, {166, 0}, {184, -2}, {187, -2}, {180, 0}, {171, 5}, {167, 6}, {167, 6}, {169, 4}, {169, 4}, {169, 3}, {169, 3}, {169, 4}},
-    {{21, -4}, {58, -19}, {87, -24}, {96, -26}, {97, -24}, {93, -18}, {90, -14}, {90, -16}, {92, -19}, {90, -19}, {87, -17}, {86, -16}, {90, -17}, {92, -17}, {91, -17}, {94, -17}},
-    {{66, 0}, {120, 1}, {150, 5}, {186, 13}, {201, 14}, {201, 12}, {190, 7}, {176, 8}, {159, 12}, {149, 11}, {152, 6}, {157, 2}, {156, 4}, {153, 6}, {153, 5}, {153, 5}},
-    {{22, -3}, {53, -7}, {71, -4}, {73, -3}, {76, -2}, {72, -4}, {64, -8}, {60, -11}, {58, -13}, {46, -16}, {32, -20}, {17, -19}, {0, -17}, {-13, -15}, {-18, -15}, {-17, -16}},
-    {{67, 0}, {134, 2}, {188, 4}, {221, 7}, {229, 10}, {223, 10}, {216, 10}, {208, 10}, {203, 10}, {199, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}},
-    {{67, 0}, {134, 2}, {188, 4}, {221, 7}, {229, 10}, {223, 10}, {216, 10}, {208, 10}, {203, 10}, {199, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}, {198, 10}},
-    {{25, -2}, {88, -4}, {153, 0}, {197, -2}, {221, -5}, {227, -6}, {223, -6}, {218, -5}, {216, -6}, {216, -6}, {218, -5}, {222, -5}, {225, -5}, {227, -4}, {227, -3}, {227, -2}},
-    {{22, -1}, {56, 0}, {89, 1}, {128, 4}, {155, 6}, {180, 5}, {206, 3}, {231, 1}, {240, -1}, {240, 0}, {238, 0}, {236, 1}, {235, 2}, {235, 3}, {235, 3}, {235, 4}},
-    {{9, -1}, {31, -2}, {66, -3}, {104, -2}, {137, 1}, {165, 3}, {188, 0}, {203, -1}, {211, -2}, {215, -3}, {215, -3}, {215, -3}, {214, -2}, {212, -1}, {212, 0}, {212, 0}},
-    {{13, -1}, {40, -4}, {76, -6}, {117, -6}, {163, -4}, {198, -2}, {222, -5}, {234, -6}, {238, -7}, {237, -7}, {234, -5}, {230, -3}, {229, -3}, {231, -3}, {234, -3}, {236, -3}},
-    {{-10, -9}, {-16, -23}, {-17, -50}, {-18, -76}, {-20, -100}, {-22, -124}, {-20, -139}, {-17, -151}, {-17, -158}, {-19, -162}, {-23, -164}, {-27, -165}, {-28, -165}, {-27, -165}, {-27, -165}, {-27, -165}},
-    {{9, -12}, {16, -39}, {23, -76}, {24, -112}, {24, -133}, {24, -154}, {25, -176}, {25, -193}, {23, -202}, {19, -207}, {14, -210}, {10, -212}, {9, -213}, {9, -216}, {11, -218}, {11, -219}},
-    {{-10, -3}, {-17, -22}, {-12, -68}, {-4, -118}, {3, -152}, {6, -176}, {6, -195}, {2, -201}, {-2, -201}, {-5, -201}, {-6, -202}, {-6, -203}, {-6, -205}, {-6, -205}, {-7, -204}, {-9, -202}},
-    {{3, -16}, {11, -49}, {21, -85}, {29, -116}, {39, -146}, {44, -161}, {42, -162}, {38, -159}, {37, -158}, {38, -159}, {40, -160}, {40, -160}, {39, -160}, {38, -160}, {38, -160}, {38, -160}},
-    {{-12, -2}, {-18, -21}, {-20, -56}, {-18, -85}, {-16, -118}, {-11, -153}, {-7, -179}, {-4, -200}, {-6, -213}, {-14, -218}, {-19, -218}, {-21, -218}, {-22, -218}, {-22, -219}, {-22, -219}, {-22, -219}},
-    {{3, -14}, {2, -29}, {7, -60}, {16, -92}, {28, -120}, {37, -138}, {41, -151}, {44, -162}, {44, -170}, {43, -175}, {41, -176}, {38, -175}, {36, -175}, {34, -176}, {34, -177}, {34, -179}},
-    {{1, -4}, {6, -20}, {9, -49}, {8, -74}, {7, -97}, {2, -125}, {-3, -147}, {-6, -166}, {-11, -178}, {-20, -181}, {-27, -182}, {-30, -183}, {-31, -184}, {-29, -186}, {-27, -187}, {-26, -187}},
-    {{1, -6}, {7, -32}, {19, -70}, {32, -110}, {44, -146}, {50, -171}, {52, -185}, {50, -187}, {46, -183}, {45, -181}, {46, -182}, {49, -184}, {50, -185}, {51, -186}, {50, -186}, {49, -186}},
-    {{0, -6}, {-4, -15}, {-4, -34}, {0, -60}, {1, -91}, {2, -122}, {0, -141}, {-5, -157}, {-10, -168}, {-15, -172}, {-20, -172}, {-25, -171}, {-28, -170}, {-29, -170}, {-28, -171}, {-27, -172}},
-    {{0, -2}, {2, -11}, {6, -34}, {7, -59}, {3, -87}, {-2, -114}, {-8, -143}, {-13, -171}, {-22, -188}, {-32, -201}, {-35, -207}, {-32, -211}, {-30, -214}, {-32, -214}, {-36, -212}, {-38, -210}},
-    {{1, -7}, {6, -29}, {15, -63}, {20, -84}, {21, -102}, {20, -120}, {21, -135}, {26, -147}, {28, -153}, {24, -154}, {20, -154}, {19, -157}, {21, -160}, {23, -162}, {23, -164}, {22, -164}},
-    {{10, -14}, {18, -34}, {28, -62}, {32, -94}, {35, -128}, {41, -159}, {42, -177}, {36, -184}, {30, -186}, {28, -189}, {31, -192}, {35, -195}, {37, -196}, {35, -195}, {32, -193}, {29, -192}},
-    {{5, -10}, {10, -27}, {18, -58}, {26, -85}, {36, -112}, {48, -142}, {57, -163}, {63, -181}, {64, -189}, {61, -190}, {58, -189}, {57, -189}, {57, -190}, {57, -191}, {57, -192}, {57, -192}},
-    {{0, -17}, {11, -55}, {24, -90}, {42, -130}, {54, -163}, {60, -180}, {60, -180}, {59, -176}, {61, -178}, {63, -180}, {63, -181}, {63, -183}, {64, -185}, {63, -186}, {62, -186}, {61, -185}},
-    {{1, -4}, {6, -19}, {11, -37}, {13, -60}, {10, -90}, {7, -112}, {5, -134}, {3, -152}, {-2, -161}, {-8, -166}, {-13, -167}, {-17, -168}, {-19, -169}, {-19, -170}, {-19, -172}, {-18, -173}},
-    {{-13, 1}, {-20, 11}, {-23, 29}, {-23, 52}, {-20, 77}, {-16, 105}, {-10, 133}, {-9, 151}, {-13, 164}, {-16, 172}, {-20, 177}, {-22, 180}, {-22, 182}, {-22, 183}, {-22, 185}, {-21, 186}},
-    {{3, 6}, {5, 14}, {4, 33}, {3, 50}, {6, 65}, {8, 82}, {11, 105}, {12, 130}, {9, 146}, {3, 161}, {-2, 175}, {-3, 182}, {0, 185}, {2, 186}, {2, 188}, {2, 190}},
-    {{3, 2}, {5, 7}, {5, 20}, {8, 36}, {13, 54}, {18, 76}, {19, 95}, {15, 112}, {9, 130}, {4, 147}, {1, 157}, {1, 163}, {3, 166}, {5, 168}, {7, 170}, {8, 171}},
-    {{-4, 10}, {-9, 27}, {-18, 67}, {-21, 97}, {-22, 127}, {-18, 156}, {-20, 176}, {-27, 190}, {-30, 198}, {-30, 203}, {-28, 205}, {-24, 207}, {-22, 207}, {-22, 208}, {-23, 209}, {-24, 209}},
-    {{-10, 22}, {-19, 43}, {-30, 80}, {-33, 110}, {-33, 140}, {-32, 169}, {-39, 188}, {-46, 201}, {-47, 207}, {-41, 207}, {-38, 207}, {-40, 210}, {-43, 212}, {-43, 213}, {-43, 213}, {-42, 213}},
-    {{1, 19}, {-2, 35}, {-7, 66}, {-6, 95}, {-1, 121}, {6, 149}, {5, 170}, {-3, 188}, {-5, 196}, {-1, 200}, {4, 202}, {4, 203}, {1, 205}, {-1, 205}, {-1, 205}, {1, 205}},
-    {{0, 24}, {-8, 85}, {-10, 114}, {-12, 141}, {-16, 167}, {-26, 188}, {-34, 203}, {-35, 209}, {-31, 211}, {-24, 209}, {-20, 208}, {-21, 209}, {-25, 212}, {-28, 213}, {-28, 214}, {-27, 213}},
-    {{4, 24}, {3, 72}, {-4, 108}, {-18, 146}, {-29, 178}, {-35, 199}, {-38, 210}, {-39, 215}, {-36, 215}, {-31, 212}, {-26, 209}, {-22, 205}, {-21, 205}, {-24, 206}, {-27, 208}, {-28, 209}},
-    {{1, 14}, {11, 49}, {16, 90}, {10, 132}, {6, 160}, {3, 177}, {2, 188}, {-3, 195}, {-10, 200}, {-12, 203}, {-9, 203}, {-6, 203}, {-5, 203}, {-5, 203}, {-6, 204}, {-8, 205}},
-    {{-4, 13}, {-10, 46}, {-12, 91}, {-10, 141}, {-12, 172}, {-18, 192}, {-20, 201}, {-19, 205}, {-14, 208}, {-15, 211}, {-18, 213}, {-18, 214}, {-17, 215}, {-17, 215}, {-17, 216}, {-17, 216}},
-    {{-4, 17}, {-4, 57}, {-7, 82}, {-16, 112}, {-30, 143}, {-39, 172}, {-44, 195}, {-45, 206}, {-42, 210}, {-38, 211}, {-37, 211}, {-38, 212}, {-36, 211}, {-33, 211}, {-31, 211}, {-31, 211}},
-    {{3, 9}, {1, 31}, {-2, 54}, {-11, 77}, {-27, 106}, {-40, 133}, {-45, 161}, {-44, 174}, {-38, 178}, {-35, 180}, {-33, 181}, {-34, 182}, {-33, 182}, {-32, 182}, {-31, 182}, {-30, 183}},
-    {{-4, 12}, {-8, 51}, {-18, 95}, {-31, 130}, {-38, 163}, {-40, 183}, {-36, 189}, {-31, 190}, {-30, 192}, {-33, 194}, {-36, 195}, {-38, 196}, {-38, 195}, {-36, 194}, {-33, 193}, {-32, 193}},
-    {{-8, 2}, {-27, 2}, {-51, 5}, {-77, 10}, {-99, 11}, {-128, 9}, {-155, 7}, {-182, 9}, {-205, 10}, {-215, 10}, {-218, 8}, {-218, 5}, {-217, 2}, {-216, 1}, {-217, 2}, {-220, 3}},
-    {{-16, 0}, {-45, 2}, {-88, 11}, {-124, 14}, {-165, 15}, {-202, 14}, {-220, 14}, {-222, 13}, {-219, 10}, {-217, 8}, {-217, 8}, {-219, 7}, {-221, 8}, {-223, 8}, {-224, 8}, {-225, 9}},
-    {{-39, -3}, {-85, -8}, {-140, -8}, {-198, -8}, {-234, -4}, {-243, -4}, {-242, -7}, {-239, -9}, {-236, -11}, {-233, -11}, {-235, -9}, {-239, -7}, {-241, -5}, {-241, -4}, {-240, -4}, {-240, -4}},
-    {{-16, 0}, {-40, -2}, {-68, -3}, {-98, -2}, {-128, -6}, {-160, -11}, {-190, -15}, {-211, -16}, {-216, -17}, {-217, -19}, {-215, -19}, {-213, -19}, {-212, -18}, {-212, -17}, {-214, -15}, {-216, -13}},
-    {{-30, 0}, {-80, -2}, {-116, -3}, {-149, -5}, {-172, -7}, {-178, -7}, {-177, -8}, {-172, -9}, {-172, -9}, {-178, -6}, {-180, -5}, {-176, -6}, {-173, -7}, {-173, -6}, {-175, -5}, {-176, -5}},
-    {{-11, 1}, {-46, 5}, {-87, 5}, {-130, 2}, {-173, 2}, {-200, 1}, {-203, 0}, {-199, -1}, {-195, -2}, {-195, -2}, {-200, 1}, {-206, 4}, {-209, 5}, {-208, 4}, {-204, 2}, {-204, 2}},
-    {{-74, 7}, {-177, 2}, {-211, 5}, {-206, -2}, {-206, -2}, {-211, 1}, {-206, -1}, {-209, 2}, {-210, 2}, {-205, 0}, {-205, 0}, {-200, -1}, {-208, 8}, {-205, 6}, {-203, 5}, {-203, 6}},
-    {{-18, 2}, {-72, 8}, {-132, 5}, {-187, 4}, {-208, 1}, {-201, -2}, {-195, -4}, {-195, -3}, {-201, 0}, {-202, -1}, {-199, -3}, {-197, -3}, {-198, -2}, {-198, -1}, {-199, -1}, {-200, -1}},
-    {{-11, -1}, {-53, 8}, {-91, 9}, {-135, 4}, {-180, 7}, {-203, 5}, {-207, 4}, {-205, 3}, {-207, 4}, {-211, 6}, {-215, 8}, {-216, 9}, {-215, 10}, {-214, 11}, {-212, 10}, {-211, 10}},
-    {{-2, 1}, {-45, 7}, {-90, 9}, {-139, 7}, {-190, 9}, {-208, 11}, {-208, 14}, {-211, 17}, {-216, 20}, {-214, 19}, {-210, 17}, {-209, 15}, {-210, 15}, {-211, 16}, {-212, 16}, {-212, 16}},
-    {{-7, 8}, {-52, 27}, {-96, 29}, {-146, 26}, {-199, 35}, {-216, 34}, {-213, 28}, {-210, 23}, {-214, 23}, {-217, 24}, {-217, 24}, {-216, 24}, {-216, 24}, {-216, 25}, {-214, 26}, {-213, 25}},
-    {{-6, -1}, {-33, 4}, {-73, 10}, {-112, 11}, {-153, 9}, {-194, 7}, {-217, 6}, {-233, 7}, {-246, 10}, {-253, 11}, {-255, 10}, {-255, 9}, {-256, 8}, {-256, 8}, {-256, 7}, {-256, 7}},
-    {{-14, -8}, {-70, -8}, {-113, -10}, {-154, -9}, {-190, -4}, {-201, -4}, {-199, -6}, {-191, -8}, {-185, -10}, {-186, -9}, {-191, -7}, {-192, -6}, {-190, -7}, {-186, -7}, {-185, -7}, {-186, -6}},
-    {{-14, -4}, {-47, -2}, {-81, -4}, {-120, -12}, {-157, -12}, {-172, -12}, {-171, -12}, {-164, -13}, {-158, -14}, {-161, -11}, {-167, -7}, {-167, -7}, {-161, -8}, {-157, -8}, {-156, -8}, {-157, -7}},
-    {{-21, 1}, {-54, 3}, {-87, 3}, {-125, -2}, {-159, -3}, {-182, -2}, {-187, -2}, {-193, 0}, {-197, 2}, {-195, 1}, {-192, -1}, {-193, -1}, {-199, 1}, {-203, 1}, {-204, 1}, {-204, 0}},
-    {{-7, -8}, {-18, -13}, {-46, -7}, {-81, -7}, {-120, -9}, {-161, -8}, {-194, -7}, {-205, -9}, {-207, -10}, {-206, -11}, {-205, -10}, {-207, -8}, {-209, -6}, {-210, -5}, {-210, -5}, {-210, -5}},
-    {{-12, -5}, {-18, -13}, {-39, -11}, {-59, -9}, {-82, -10}, {-109, -8}, {-139, -4}, {-164, -2}, {-185, -3}, {-205, -2}, {-216, -1}, {-220, -1}, {-219, -1}, {-217, -2}, {-216, -2}, {-216, -2}},
-    {{-10, -7}, {-40, -13}, {-69, -23}, {-97, -34}, {-119, -35}, {-143, -31}, {-161, -26}, {-167, -24}, {-169, -23}, {-172, -22}, {-178, -20}, {-183, -18}, {-183, -17}, {-181, -18}, {-181, -18}, {-183, -17}},
-    {{-27, 5}, {-61, 12}, {-106, 15}, {-149, 17}, {-178, 17}, {-197, 15}, {-207, 13}, {-212, 10}, {-217, 9}, {-224, 10}, {-228, 10}, {-230, 10}, {-230, 10}, {-228, 10}, {-226, 10}, {-225, 10}},
-    {{-2, 3}, {-18, 16}, {-32, 22}, {-46, 26}, {-62, 28}, {-82, 29}, {-105, 28}, {-127, 28}, {-150, 28}, {-170, 25}, {-185, 16}, {-197, 9}, {-210, 6}, {-221, 4}, {-228, 2}, {-232, 1}},
-    {{-3, 1}, {-34, 15}, {-79, 31}, {-117, 38}, {-154, 42}, {-187, 35}, {-218, 23}, {-230, 17}, {-232, 11}, {-231, 8}, {-232, 7}, {-236, 7}, {-240, 7}, {-242, 7}, {-243, 6}, {-242, 5}},
-    {{-44, 0}, {-104, 1}, {-162, 1}, {-213, -3}, {-256, -11}, {-287, -18}, {-305, -20}, {-313, -21}, {-317, -23}, {-316, -25}, {-314, -27}, {-313, -28}, {-312, -28}, {-312, -28}, {-312, -28}, {-312, -28}},
-    {{-44, 0}, {-104, 1}, {-162, 1}, {-213, -3}, {-256, -11}, {-287, -18}, {-305, -20}, {-313, -21}, {-317, -23}, {-316, -25}, {-314, -27}, {-313, -28}, {-312, -28}, {-312, -28}, {-312, -28}, {-312, -28}},
-    {{4, 0}, {8, 0}, {11, 0}, {15, 0}, {19, 0}, {22, 0}, {26, 0}, {30, 0}, {34, 0}, {38, 0}, {41, 0}, {45, 0}, {49, 0}, {52, 0}, {56, 0}, {60, 0}},
-    {{0, -2}, {0, -4}, {0, -6}, {0, -8}, {0, -9}, {0, -11}, {0, -13}, {0, -15}, {0, -17}, {0, -19}, {0, -21}, {0, -22}, {0, -24}, {0, -26}, {0, -28}, {0, -30}},
-    {{0, 2}, {0, 4}, {0, 6}, {0, 8}, {0, 9}, {0, 11}, {0, 13}, {0, 15}, {0, 17}, {0, 19}, {0, 21}, {0, 22}, {0, 24}, {0, 26}, {0, 28}, {0, 30}},
-    {{-2, 0}, {-4, 0}, {-6, 0}, {-8, 0}, {-9, 0}, {-11, 0}, {-13, 0}, {-15, 0}, {-17, 0}, {-19, 0}, {-21, 0}, {-22, 0}, {-24, 0}, {-26, 0}, {-28, 0}, {-30, 0}},
-    {{-2, -1}, {-14, 1}, {-30, 3}, {-39, 0}, {-49, -4}, {-59, -8}, {-70, -10}, {-82, -9}, {-97, -5}, {-109, -2}, {-114, -2}, {-117, -5}, {-118, -8}, {-118, -10}, {-120, -10}, {-121, -7}},
-    {{-11, 14}, {-19, 26}, {-27, 40}, {-36, 59}, {-46, 73}, {-60, 83}, {-70, 90}, {-73, 93}, {-72, 94}, {-71, 94}, {-70, 94}, {-71, 95}, {-73, 97}, {-75, 97}, {-75, 96}, {-75, 96}},
-    {{-12, 18}, {-19, 31}, {-22, 45}, {-23, 66}, {-28, 77}, {-38, 84}, {-45, 89}, {-48, 91}, {-48, 92}, {-44, 91}, {-42, 90}, {-42, 89}, {-43, 88}, {-42, 89}, {-46, 91}, {-51, 95}},
-    {{7, -21}, {8, -36}, {8, -50}, {5, -65}, {7, -82}, {13, -99}, {16, -110}, {12, -112}, {6, -110}, {3, -110}, {3, -110}, {6, -113}, {9, -115}, {10, -116}, {9, -115}, {7, -114}},
-    {{5, -10}, {8, -19}, {10, -28}, {10, -38}, {9, -49}, {5, -61}, {2, -75}, {3, -93}, {6, -112}, {8, -126}, {6, -133}, {5, -138}, {2, -140}, {0, -141}, {-2, -141}, {-4, -140}},
-    {{8, -20}, {11, -38}, {6, -57}, {4, -77}, {4, -97}, {7, -114}, {8, -126}, {7, -136}, {4, -144}, {0, -150}, {-7, -159}, {-8, -166}, {-4, -173}, {-1, -178}, {-1, -180}, {-3, -181}},
-    {{4, -14}, {7, -24}, {5, -33}, {-1, -44}, {-9, -61}, {-15, -81}, {-17, -101}, {-19, -113}, {-22, -120}, {-27, -125}, {-32, -128}, {-36, -129}, {-37, -131}, {-36, -133}, {-34, -133}, {-34, -132}},
-    {{-18, -2}, {-40, -5}, {-58, -10}, {-74, -10}, {-93, -8}, {-110, -6}, {-115, -7}, {-114, -11}, {-114, -16}, {-115, -19}, {-119, -19}, {-123, -18}, {-127, -16}, {-127, -17}, {-123, -18}, {-122, -18}},
-    {{-14, 2}, {-39, 3}, {-63, 1}, {-89, 5}, {-108, 11}, {-117, 14}, {-118, 12}, {-114, 6}, {-109, -1}, {-109, -2}, {-113, 1}, {-114, 3}, {-115, 5}, {-114, 4}, {-113, 3}, {-112, 2}},
-    {{-14, 2}, {-37, 2}, {-63, 0}, {-93, -3}, {-128, -2}, {-144, 0}, {-143, 2}, {-138, 3}, {-135, 5}, {-139, 8}, {-148, 12}, {-153, 13}, {-152, 13}, {-149, 11}, {-146, 10}, {-145, 10}},
-    {{-12, -3}, {-42, -8}, {-74, -25}, {-95, -32}, {-119, -34}, {-124, -43}, {-127, -49}, {-133, -48}, {-140, -46}, {-140, -49}, {-146, -46}, {-149, -43}, {-147, -43}, {-144, -44}, {-144, -44}, {-145, -44}},
-    {{-13, 2}, {-30, 2}, {-53, -8}, {-80, -15}, {-108, -14}, {-121, -15}, {-120, -15}, {-119, -14}, {-116, -12}, {-111, -12}, {-115, -9}, {-123, -5}, {-124, -5}, {-123, -6}, {-123, -7}, {-124, -7}},
-    {{-14, -1}, {-38, 0}, {-64, -18}, {-89, -28}, {-114, -30}, {-123, -39}, {-125, -46}, {-132, -45}, {-139, -43}, {-139, -45}, {-142, -44}, {-148, -40}, {-148, -41}, {-145, -41}, {-143, -41}, {-144, -41}},
-    {{-12, 2}, {-27, 1}, {-42, 1}, {-62, 0}, {-82, -4}, {-103, -4}, {-125, -6}, {-146, -9}, {-165, -12}, {-181, -12}, {-194, -12}, {-202, -13}, {-205, -14}, {-206, -14}, {-206, -14}, {-204, -13}},
-    {{-20, 3}, {-41, 1}, {-68, -5}, {-97, -9}, {-126, -11}, {-150, -13}, {-158, -14}, {-162, -18}, {-166, -21}, {-171, -19}, {-177, -15}, {-178, -13}, {-177, -14}, {-175, -16}, {-174, -17}, {-174, -17}},
-    {{-11, 2}, {-36, 1}, {-56, -4}, {-80, -13}, {-109, -16}, {-141, -13}, {-161, -12}, {-166, -13}, {-167, -15}, {-162, -16}, {-159, -18}, {-158, -16}, {-155, -16}, {-148, -18}, {-146, -18}, {-152, -14}},
-    {{-9, 1}, {-28, -2}, {-50, -13}, {-83, -30}, {-125, -40}, {-153, -49}, {-174, -56}, {-194, -59}, {-212, -59}, {-221, -60}, {-223, -65}, {-221, -71}, {-222, -69}, {-225, -64}, {-227, -62}, {-228, -61}},
-    {{-9, 6}, {-29, 11}, {-51, 12}, {-75, 13}, {-111, 19}, {-139, 24}, {-143, 22}, {-141, 19}, {-144, 19}, {-147, 19}, {-150, 19}, {-149, 17}, {-145, 16}, {-142, 16}, {-141, 17}, {-142, 17}},
-    {{-4, 15}, {-6, 28}, {-3, 42}, {1, 63}, {6, 89}, {-1, 107}, {-12, 125}, {-15, 131}, {-13, 129}, {-8, 124}, {-8, 122}, {-12, 125}, {-15, 126}, {-15, 126}, {-14, 126}, {-13, 127}},
-    {{1, 15}, {0, 27}, {3, 42}, {11, 61}, {19, 86}, {19, 103}, {12, 118}, {6, 130}, {5, 134}, {5, 136}, {6, 136}, {11, 134}, {17, 130}, {20, 128}, {19, 129}, {17, 133}},
-    {{-6, 15}, {-8, 42}, {-8, 75}, {-24, 94}, {-43, 108}, {-41, 107}, {-33, 105}, {-25, 102}, {-21, 100}, {-27, 104}, {-32, 107}, {-32, 107}, {-31, 105}, {-29, 103}, {-29, 103}, {-30, 104}},
-    {{-25, 12}, {-49, 20}, {-80, 30}, {-112, 28}, {-142, 23}, {-169, 11}, {-194, 3}, {-215, 4}, {-221, 5}, {-221, 3}, {-219, 0}, {-219, -2}, {-222, -1}, {-225, 0}, {-227, 1}, {-228, 1}},
-    {{-1, 9}, {-1, 21}, {2, 36}, {14, 55}, {24, 77}, {24, 99}, {15, 121}, {6, 144}, {5, 149}, {8, 149}, {6, 150}, {1, 154}, {-1, 155}, {0, 155}, {2, 153}, {4, 152}},
-    {{-7, 16}, {-12, 32}, {-10, 51}, {-3, 78}, {-4, 104}, {-13, 124}, {-24, 146}, {-26, 155}, {-20, 155}, {-14, 152}, {-11, 150}, {-14, 153}, {-19, 157}, {-20, 158}, {-18, 158}, {-16, 157}},
-    {{-17, 25}, {-21, 45}, {-25, 65}, {-34, 88}, {-48, 113}, {-55, 130}, {-58, 137}, {-58, 140}, {-58, 142}, {-56, 142}, {-52, 142}, {-51, 142}, {-50, 142}, {-51, 142}, {-53, 142}, {-54, 142}},
-    {{-4, 16}, {-7, 35}, {-6, 52}, {-2, 72}, {7, 99}, {8, 114}, {3, 128}, {1, 137}, {0, 143}, {-1, 147}, {-2, 151}, {-3, 154}, {-2, 157}, {0, 156}, {5, 154}, {7, 153}},
-    {{3, -16}, {4, -37}, {2, -55}, {4, -73}, {8, -90}, {12, -105}, {12, -111}, {9, -113}, {3, -113}, {-4, -113}, {-9, -114}, {-9, -117}, {-8, -121}, {-6, -125}, {-6, -125}, {-7, -125}},
-    {{2, -8}, {3, -16}, {5, -25}, {4, -34}, {0, -46}, {-8, -62}, {-14, -82}, {-15, -105}, {-16, -123}, {-21, -125}, {-27, -123}, {-30, -121}, {-27, -123}, {-25, -125}, {-25, -124}, {-27, -123}},
-    {{-32, -8}, {-61, -24}, {-86, -31}, {-96, -37}, {-98, -45}, {-105, -46}, {-113, -45}, {-107, -45}, {-102, -43}, {-108, -36}, {-109, -35}, {-106, -37}, {-104, -38}, {-104, -39}, {-105, -40}, {-106, -40}},
-    {{5, -23}, {2, -44}, {-5, -64}, {-5, -78}, {-1, -95}, {4, -114}, {-1, -121}, {-8, -124}, {-10, -127}, {-9, -132}, {-8, -134}, {-7, -136}, {-7, -137}, {-9, -137}, {-10, -136}, {-12, -136}},
-    {{4, -11}, {7, -26}, {4, -43}, {-2, -66}, {-5, -88}, {-3, -109}, {-5, -119}, {-9, -123}, {-14, -127}, {-17, -129}, {-17, -130}, {-18, -129}, {-18, -130}, {-20, -130}, {-21, -129}, {-21, -129}},
-    {{-1, -27}, {-22, -54}, {-25, -90}, {-30, -105}, {-39, -113}, {-48, -126}, {-45, -143}, {-33, -157}, {-33, -157}, {-37, -153}, {-42, -150}, {-43, -148}, {-42, -148}, {-39, -149}, {-37, -149}, {-37, -148}},
-    {{5, -16}, {2, -34}, {-10, -61}, {-19, -88}, {-23, -111}, {-27, -141}, {-36, -155}, {-43, -158}, {-48, -158}, {-48, -159}, {-46, -160}, {-45, -161}, {-46, -160}, {-47, -159}, {-48, -158}, {-48, -157}},
-    {{5, -7}, {5, -19}, {4, -33}, {3, -51}, {0, -73}, {-3, -102}, {-5, -130}, {-11, -156}, {-16, -176}, {-21, -183}, {-27, -181}, {-34, -174}, {-40, -168}, {-41, -166}, {-38, -168}, {-31, -171}},
-    {{10, -2}, {22, 0}, {40, 6}, {57, 15}, {78, 21}, {96, 20}, {111, 13}, {129, 3}, {136, -1}, {134, -2}, {129, -1}, {124, -1}, {123, -3}, {125, -8}, {128, -11}, {130, -11}},
-    {{1, 19}, {5, 36}, {13, 53}, {17, 69}, {18, 84}, {21, 100}, {27, 110}, {32, 114}, {40, 115}, {47, 116}, {50, 116}, {50, 118}, {47, 122}, {44, 125}, {41, 127}, {40, 126}},
-    {{16, 7}, {32, 8}, {56, 9}, {69, 8}, {77, 9}, {85, 11}, {95, 12}, {107, 11}, {120, 11}, {123, 11}, {123, 11}, {119, 12}, {115, 14}, {113, 15}, {112, 15}, {114, 14}},
-    {{11, 4}, {38, 4}, {57, 4}, {77, 2}, {103, 0}, {131, -2}, {150, -3}, {167, -8}, {177, -9}, {180, -9}, {182, -8}, {181, -6}, {180, -3}, {177, 0}, {175, 1}, {174, 2}},
-    {{27, -2}, {47, -2}, {67, 2}, {88, 7}, {104, 7}, {123, 5}, {146, 3}, {154, 1}, {151, 4}, {144, 8}, {139, 10}, {138, 8}, {141, 6}, {144, 4}, {145, 4}, {145, 6}},
-    {{-2, 14}, {-3, 29}, {-1, 47}, {-6, 64}, {-16, 82}, {-21, 90}, {-22, 91}, {-20, 89}, {-16, 84}, {-18, 84}, {-22, 88}, {-24, 92}, {-25, 93}, {-24, 93}, {-23, 92}, {-23, 92}},
-    {{19, -3}, {30, -5}, {39, 0}, {48, 5}, {60, 8}, {77, 11}, {94, 10}, {107, 6}, {116, 1}, {119, -3}, {116, -6}, {112, -6}, {107, -7}, {104, -8}, {103, -9}, {104, -10}},
-    {{23, -12}, {45, -17}, {67, -18}, {86, -18}, {103, -20}, {119, -18}, {138, -16}, {152, -14}, {157, -13}, {156, -10}, {152, -7}, {148, -3}, {144, 1}, {142, 2}, {145, 1}, {149, 0}},
-    {{-4, 19}, {-6, 36}, {-8, 55}, {-9, 72}, {-13, 90}, {-16, 102}, {-15, 108}, {-10, 108}, {-8, 103}, {-9, 99}, {-12, 100}, {-15, 103}, {-17, 104}, {-16, 104}, {-14, 103}, {-13, 103}},
-    {{4, 0}, {11, 0}, {20, 2}, {35, 9}, {52, 20}, {71, 34}, {85, 42}, {96, 48}, {108, 53}, {109, 58}, {102, 64}, {99, 66}, {99, 64}, {102, 61}, {105, 58}, {106, 57}},
-    {{14, 0}, {40, 3}, {52, 5}, {61, 8}, {76, 13}, {94, 20}, {117, 30}, {144, 39}, {171, 39}, {187, 41}, {185, 45}, {176, 50}, {173, 52}, {174, 52}, {177, 49}, {180, 47}},
-    {{-1, 10}, {-7, 29}, {-8, 56}, {-5, 95}, {-8, 119}, {-20, 135}, {-35, 150}, {-41, 151}, {-37, 151}, {-29, 153}, {-24, 155}, {-24, 156}, {-29, 158}, {-34, 157}, {-35, 154}, {-34, 154}},
-    {{7, 2}, {31, -6}, {51, -8}, {72, -2}, {101, 6}, {130, 7}, {158, 3}, {167, 2}, {164, 5}, {156, 10}, {151, 10}, {157, 7}, {161, 5}, {162, 3}, {163, 4}, {161, 5}},
-    {{21, -23}, {34, -39}, {52, -53}, {67, -63}, {76, -67}, {88, -71}, {95, -71}, {95, -65}, {88, -51}, {81, -33}, {80, -24}, {85, -21}, {87, -20}, {88, -18}, {88, -18}, {87, -19}},
-    {{16, -12}, {28, -20}, {40, -23}, {55, -23}, {74, -22}, {89, -17}, {102, -12}, {116, -5}, {125, 1}, {125, 7}, {123, 13}, {124, 16}, {124, 16}, {125, 14}, {126, 11}, {127, 8}},
-    {{10, -2}, {21, 2}, {37, 8}, {58, 13}, {84, 17}, {103, 14}, {121, 6}, {127, 2}, {125, 3}, {119, 9}, {115, 11}, {114, 10}, {116, 9}, {117, 9}, {117, 9}, {118, 9}},
-    {{17, -4}, {56, -13}, {99, -23}, {131, -30}, {142, -34}, {142, -34}, {141, -30}, {137, -20}, {139, -17}, {154, -17}, {161, -15}, {165, -9}, {163, -5}, {161, -3}, {161, -3}, {161, -3}},
-    {{7, -2}, {20, -4}, {31, -3}, {46, -2}, {71, 7}, {102, 15}, {139, 12}, {163, 8}, {163, 9}, {163, 12}, {163, 14}, {164, 14}, {166, 13}, {168, 12}, {168, 12}, {169, 12}},
-    {{17, -5}, {43, -9}, {63, -3}, {76, -3}, {87, -5}, {99, -7}, {114, -9}, {128, -11}, {135, -8}, {146, -7}, {170, -16}, {176, -17}, {177, -15}, {177, -13}, {177, -13}, {177, -13}},
-    {{18, -10}, {31, -17}, {43, -23}, {59, -28}, {80, -34}, {99, -42}, {117, -52}, {120, -54}, {117, -51}, {111, -46}, {108, -43}, {107, -42}, {108, -42}, {110, -43}, {112, -45}, {112, -45}},
-    {{17, -4}, {34, -1}, {51, 7}, {84, 20}, {112, 23}, {127, 18}, {129, 17}, {126, 17}, {119, 14}, {117, 4}, {117, -5}, {109, -4}, {98, 1}, {93, 2}, {93, 0}, {96, -2}},
-    {{10, -4}, {27, -5}, {51, 2}, {82, 12}, {108, 9}, {125, 6}, {124, 8}, {118, 11}, {111, 13}, {111, 11}, {116, 7}, {119, 4}, {117, 5}, {115, 7}, {113, 7}, {112, 7}},
-    {{6, -1}, {23, -3}, {44, -2}, {75, 5}, {104, 8}, {122, 2}, {132, -3}, {134, -4}, {131, 2}, {127, 8}, {131, 10}, {142, 9}, {144, 10}, {139, 13}, {136, 15}, {135, 15}},
-    {{17, 1}, {38, -1}, {46, 1}, {58, 4}, {68, 3}, {73, 1}, {78, -6}, {81, -17}, {92, -20}, {111, -12}, {139, 3}, {164, 8}, {190, 4}, {206, 1}, {202, 3}, {195, 6}},
-    {{15, -6}, {27, -10}, {41, -8}, {60, -2}, {83, 3}, {106, 2}, {134, -3}, {153, -6}, {157, -4}, {153, 0}, {146, 6}, {145, 7}, {148, 5}, {152, 2}, {152, 2}, {150, 3}},
-    {{10, -2}, {21, -2}, {33, -2}, {47, -5}, {61, -5}, {76, -2}, {92, 5}, {114, 18}, {140, 27}, {169, 27}, {200, 26}, {210, 27}, {209, 30}, {203, 35}, {200, 36}, {203, 35}},
-    {{31, -3}, {99, -7}, {164, -15}, {211, -18}, {232, -12}, {246, -1}, {267, 6}, {294, 0}, {316, -4}, {315, -1}, {309, 3}, {303, 5}, {307, 4}, {312, 1}, {315, 2}, {315, 4}},
-    {{67, 4}, {151, -1}, {206, -6}, {244, -4}, {272, 1}, {294, 1}, {311, -9}, {319, -13}, {316, -13}, {311, -14}, {311, -14}, {313, -16}, {314, -16}, {313, -15}, {312, -15}, {312, -14}},
-    {{9, -1}, {23, -3}, {37, -4}, {49, -5}, {59, -6}, {67, -6}, {74, -6}, {80, -7}, {86, -8}, {93, -9}, {102, -11}, {113, -14}, {125, -17}, {135, -20}, {144, -23}, {150, -27}},
-    {{18, -4}, {64, -4}, {131, -2}, {227, -15}, {279, -12}, {311, -1}, {344, 12}, {368, 20}, {385, 24}, {390, 26}, {386, 27}, {381, 27}, {382, 26}, {385, 24}, {388, 23}, {390, 23}},
-    {{36, -4}, {101, -5}, {131, -10}, {189, -19}, {236, -20}, {256, -17}, {277, -13}, {295, -11}, {308, -12}, {320, -15}, {324, -16}, {323, -15}, {323, -14}, {325, -13}, {327, -13}, {329, -13}},
-    {{37, -7}, {99, -13}, {141, -22}, {179, -37}, {201, -39}, {218, -39}, {232, -34}, {241, -28}, {254, -26}, {262, -27}, {260, -26}, {256, -24}, {257, -25}, {262, -27}, {263, -27}, {263, -25}},
-    {{23, 0}, {63, 0}, {124, 0}, {183, 0}, {240, 0}, {279, 0}, {299, 0}, {312, 0}, {325, 0}, {335, 0}, {338, 0}, {338, 0}, {338, 0}, {338, 0}, {337, 0}, {337, 0}},
-    {{34, -1}, {93, 0}, {140, 0}, {205, -8}, {242, -11}, {246, -8}, {237, 2}, {226, 9}, {227, 5}, {234, -2}, {241, -9}, {241, -13}, {233, -12}, {230, -11}, {234, -12}, {236, -12}},
-    {{7, 0}, {35, 0}, {73, 0}, {115, 0}, {173, 0}, {212, 0}, {232, 0}, {250, 0}, {268, 0}, {278, 0}, {280, 0}, {277, 0}, {272, 0}, {268, 0}, {266, 0}, {266, 0}},
-    {{2, 0}, {4, 0}, {7, -1}, {10, -1}, {13, 0}, {16, 0}, {20, 1}, {24, 2}, {28, 3}, {33, 4}, {38, 6}, {43, 8}, {49, 10}, {55, 12}, {60, 14}, {64, 16}},
-    {{-18, 2}, {-37, 3}, {-60, 2}, {-88, -1}, {-118, -2}, {-150, 0}, {-179, -2}, {-206, -5}, {-234, -4}, {-257, -5}, {-264, -8}, {-265, -12}, {-260, -16}, {-255, -19}, {-254, -20}, {-254, -19}},
-    {{-23, 7}, {-47, 14}, {-66, 18}, {-86, 15}, {-109, 10}, {-132, 6}, {-163, 3}, {-181, 0}, {-183, -3}, {-177, -6}, {-169, -8}, {-165, -8}, {-166, -6}, {-168, -3}, {-168, -3}, {-168, -3}},
-    {{-6, 3}, {-19, 6}, {-41, 6}, {-73, 4}, {-117, 4}, {-152, 2}, {-171, -2}, {-172, -2}, {-171, -2}, {-171, -2}, {-170, -2}, {-170, -2}, {-170, -2}, {-170, -2}, {-170, -2}, {-171, -3}},
-    {{-24, 0}, {-51, 0}, {-82, -4}, {-115, -8}, {-151, -12}, {-184, -12}, {-219, -8}, {-252, -5}, {-282, -7}, {-308, -10}, {-319, -11}, {-320, -12}, {-316, -12}, {-310, -12}, {-308, -12}, {-310, -11}},
-    {{-7, 0}, {-21, 3}, {-37, 6}, {-52, 10}, {-70, 15}, {-91, 20}, {-113, 26}, {-139, 26}, {-167, 28}, {-187, 31}, {-204, 35}, {-220, 38}, {-230, 38}, {-233, 37}, {-232, 34}, {-230, 32}},
-    {{-15, 5}, {-30, 8}, {-46, 10}, {-63, 11}, {-81, 13}, {-103, 14}, {-119, 13}, {-134, 12}, {-148, 11}, {-162, 11}, {-175, 12}, {-188, 14}, {-195, 15}, {-198, 15}, {-197, 14}, {-194, 12}},
-    {{-13, -28}, {-33, -49}, {-51, -68}, {-65, -92}, {-75, -106}, {-85, -114}, {-98, -117}, {-114, -118}, {-123, -121}, {-124, -126}, {-126, -129}, {-135, -135}, {-145, -140}, {-150, -142}, {-149, -143}, {-150, -144}},
-    {{-10, 1}, {-29, 6}, {-47, 14}, {-65, 23}, {-83, 34}, {-102, 36}, {-124, 36}, {-143, 38}, {-161, 40}, {-173, 38}, {-175, 32}, {-171, 22}, {-170, 14}, {-177, 11}, {-174, 7}, {-172, 6}},
-    {{-52, 1}, {-75, 5}, {-106, 7}, {-136, 15}, {-155, 12}, {-170, 5}, {-178, 2}, {-185, 5}, {-187, 7}, {-186, 7}, {-181, 3}, {-175, 1}, {-173, 3}, {-175, 5}, {-176, 7}, {-176, 8}},
-    {{-58, 18}, {-102, 26}, {-109, 43}, {-103, 42}, {-90, 28}, {-87, 26}, {-91, 36}, {-92, 44}, {-87, 42}, {-78, 34}, {-78, 31}, {-84, 31}, {-83, 26}, {-74, 13}, {-72, 6}, {-79, 6}},
+    { { 25, -1}, { 39, -1}, { 62, -1}, { 75, -6}, { 79, -8}, { 79, -7},
+     { 73, -5}, { 65, -3}, { 62, -2}, { 63, -2}, { 66, -3}, { 69, -4},
+     { 67, -4}, { 65, -3}, { 64, -3}, { 67, -3} },
+    { { 3, 1}, { 20, -1}, { 65, -11}, { 87, -7}, { 87, 4}, { 78, 14},
+     { 78, 15}, { 82, 11}, { 86, 7}, { 86, 5}, { 83, 6}, { 83, 8}, { 83,
+                                                                    8},
+     { 87, 10}, { 96, 10}, { 111, 8} },
+    { { 82, 13}, { 109, 4}, { 149, 2}, { 160, 5}, { 164, 8}, { 161, 15},
+     { 157, 22}, { 158, 26}, { 163, 26}, { 172, 24}, { 179, 20}, { 179,
+                                                                  18},
+     { 174, 19}, { 169, 19}, { 170, 19}, { 173, 18} },
+    { { 43, -2}, { 73, -10}, { 103, -16}, { 121, -12}, { 140, -4},
+     { 153, 1}, { 155, 1}, { 147, -3}, { 130, -10}, { 116, -11}, { 100,
+                                                                  -8},
+     { 85, -5}, { 79, -4}, { 82, -7}, { 88, -10}, { 88, -10} },
+    { { 29, -4}, { 102, -8}, { 122, -9}, { 128, -9}, { 133, -10},
+     { 142, -12}, { 151, -12}, { 153, -13}, { 152, -16}, { 143, -21},
+     { 127, -26}, { 112, -27}, { 94, -27}, { 81, -26}, { 78, -27}, { 81,
+                                                                    -28} },
+    { { 39, -5}, { 81, -10}, { 93, -12}, { 96, -11}, { 93, -9}, { 85, -6},
+     { 77, -2}, { 74, 1}, { 75, 0}, { 80, -1}, { 81, -2}, { 78, -1}, { 74,
+                                                                      0},
+     { 71, 0}, { 71, 0}, { 74, -1} },
+    { { 2, 3}, { 17, 3}, { 60, -2}, { 88, 0}, { 113, 6}, { 122, 8},
+     { 124, 7}, { 121, 4}, { 112, -2}, { 102, -6}, { 92, -8}, { 83, -7},
+     { 73, -6}, { 63, -4}, { 57, -3}, { 55, -2} },
+    { { 24, 2}, { 55, 12}, { 72, 8}, { 91, 9}, { 105, 6}, { 119, 1},
+     { 126, -1}, { 127, 0}, { 125, 3}, { 124, 5}, { 126, 5}, { 132, 5},
+     { 136, 5}, { 135, 6}, { 131, 8}, { 129, 10} },
+    { { 30, -9}, { 56, -5}, { 83, 6}, { 122, 1}, { 148, -5}, { 167, -11},
+     { 179, -14}, { 185, -15}, { 179, -16}, { 170, -13}, { 163, -9}, { 153,
+                                                                      -10},
+     { 150, -12}, { 151, -13}, { 151, -14}, { 151, -15} },
+    { { 12, 1}, { 39, -1}, { 49, 1}, { 57, 0}, { 58, -2}, { 51, -4},
+     { 48, -3}, { 46, -2}, { 39, -3}, { 26, -5}, { 14, -3}, { 0, 1}, { -9,
+                                                                      4},
+     { -8, 3}, { -2, 1}, { 0, 0} },
+    { { 17, -1}, { 40, -1}, { 72, 1}, { 102, 0}, { 112, -1}, { 115, -1},
+     { 114, 0}, { 108, 2}, { 101, 4}, { 98, 5}, { 99, 4}, { 102, 3}, { 105,
+                                                                      2},
+     { 103, 3}, { 100, 4}, { 100, 4} },
+    { { 28, 0}, { 45, 1}, { 76, 7}, { 129, 6}, { 166, 0}, { 184, -2},
+     { 187, -2}, { 180, 0}, { 171, 5}, { 167, 6}, { 167, 6}, { 169, 4},
+     { 169, 4}, { 169, 3}, { 169, 3}, { 169, 4} },
+    { { 21, -4}, { 58, -19}, { 87, -24}, { 96, -26}, { 97, -24},
+     { 93, -18}, { 90, -14}, { 90, -16}, { 92, -19}, { 90, -19}, { 87,
+                                                                  -17},
+     { 86, -16}, { 90, -17}, { 92, -17}, { 91, -17}, { 94, -17} },
+    { { 66, 0}, { 120, 1}, { 150, 5}, { 186, 13}, { 201, 14}, { 201, 12},
+     { 190, 7}, { 176, 8}, { 159, 12}, { 149, 11}, { 152, 6}, { 157, 2},
+     { 156, 4}, { 153, 6}, { 153, 5}, { 153, 5} },
+    { { 22, -3}, { 53, -7}, { 71, -4}, { 73, -3}, { 76, -2}, { 72, -4},
+     { 64, -8}, { 60, -11}, { 58, -13}, { 46, -16}, { 32, -20}, { 17, -19},
+     { 0, -17}, { -13, -15}, { -18, -15}, { -17, -16} },
+    { { 67, 0}, { 134, 2}, { 188, 4}, { 221, 7}, { 229, 10}, { 223, 10},
+     { 216, 10}, { 208, 10}, { 203, 10}, { 199, 10}, { 198, 10}, { 198,
+                                                                  10},
+     { 198, 10}, { 198, 10}, { 198, 10}, { 198, 10} },
+    { { 67, 0}, { 134, 2}, { 188, 4}, { 221, 7}, { 229, 10}, { 223, 10},
+     { 216, 10}, { 208, 10}, { 203, 10}, { 199, 10}, { 198, 10}, { 198,
+                                                                  10},
+     { 198, 10}, { 198, 10}, { 198, 10}, { 198, 10} },
+    { { 25, -2}, { 88, -4}, { 153, 0}, { 197, -2}, { 221, -5}, { 227, -6},
+     { 223, -6}, { 218, -5}, { 216, -6}, { 216, -6}, { 218, -5}, { 222,
+                                                                  -5},
+     { 225, -5}, { 227, -4}, { 227, -3}, { 227, -2} },
+    { { 22, -1}, { 56, 0}, { 89, 1}, { 128, 4}, { 155, 6}, { 180, 5},
+     { 206, 3}, { 231, 1}, { 240, -1}, { 240, 0}, { 238, 0}, { 236, 1},
+     { 235, 2}, { 235, 3}, { 235, 3}, { 235, 4} },
+    { { 9, -1}, { 31, -2}, { 66, -3}, { 104, -2}, { 137, 1}, { 165, 3},
+     { 188, 0}, { 203, -1}, { 211, -2}, { 215, -3}, { 215, -3}, { 215, -3},
+     { 214, -2}, { 212, -1}, { 212, 0}, { 212, 0} },
+    { { 13, -1}, { 40, -4}, { 76, -6}, { 117, -6}, { 163, -4}, { 198, -2},
+     { 222, -5}, { 234, -6}, { 238, -7}, { 237, -7}, { 234, -5}, { 230,
+                                                                  -3},
+     { 229, -3}, { 231, -3}, { 234, -3}, { 236, -3} },
+    { { -10, -9}, { -16, -23}, { -17, -50}, { -18, -76}, { -20, -100},
+     { -22, -124}, { -20, -139}, { -17, -151}, { -17, -158}, { -19, -162},
+     { -23, -164}, { -27, -165}, { -28, -165}, { -27, -165}, { -27, -165},
+     { -27, -165} },
+    { { 9, -12}, { 16, -39}, { 23, -76}, { 24, -112}, { 24, -133},
+     { 24, -154}, { 25, -176}, { 25, -193}, { 23, -202}, { 19, -207}, { 14,
+                                                                       -210},
+     { 10, -212}, { 9, -213}, { 9, -216}, { 11, -218}, { 11, -219} },
+    { { -10, -3}, { -17, -22}, { -12, -68}, { -4, -118}, { 3, -152},
+     { 6, -176}, { 6, -195}, { 2, -201}, { -2, -201}, { -5, -201}, { -6,
+                                                                    -202},
+     { -6, -203}, { -6, -205}, { -6, -205}, { -7, -204}, { -9, -202} },
+    { { 3, -16}, { 11, -49}, { 21, -85}, { 29, -116}, { 39, -146},
+     { 44, -161}, { 42, -162}, { 38, -159}, { 37, -158}, { 38, -159}, { 40,
+                                                                       -160},
+     { 40, -160}, { 39, -160}, { 38, -160}, { 38, -160}, { 38, -160} },
+    { { -12, -2}, { -18, -21}, { -20, -56}, { -18, -85}, { -16, -118},
+     { -11, -153}, { -7, -179}, { -4, -200}, { -6, -213}, { -14, -218},
+     { -19, -218}, { -21, -218}, { -22, -218}, { -22, -219}, { -22, -219},
+     { -22, -219} },
+    { { 3, -14}, { 2, -29}, { 7, -60}, { 16, -92}, { 28, -120},
+     { 37, -138}, { 41, -151}, { 44, -162}, { 44, -170}, { 43, -175}, { 41,
+                                                                       -176},
+     { 38, -175}, { 36, -175}, { 34, -176}, { 34, -177}, { 34, -179} },
+    { { 1, -4}, { 6, -20}, { 9, -49}, { 8, -74}, { 7, -97}, { 2, -125},
+     { -3, -147}, { -6, -166}, { -11, -178}, { -20, -181}, { -27, -182},
+     { -30, -183}, { -31, -184}, { -29, -186}, { -27, -187}, { -26,
+                                                              -187} },
+    { { 1, -6}, { 7, -32}, { 19, -70}, { 32, -110}, { 44, -146},
+     { 50, -171}, { 52, -185}, { 50, -187}, { 46, -183}, { 45, -181}, { 46,
+                                                                       -182},
+     { 49, -184}, { 50, -185}, { 51, -186}, { 50, -186}, { 49, -186} },
+    { { 0, -6}, { -4, -15}, { -4, -34}, { 0, -60}, { 1, -91}, { 2, -122},
+     { 0, -141}, { -5, -157}, { -10, -168}, { -15, -172}, { -20, -172},
+     { -25, -171}, { -28, -170}, { -29, -170}, { -28, -171}, { -27,
+                                                              -172} },
+    { { 0, -2}, { 2, -11}, { 6, -34}, { 7, -59}, { 3, -87}, { -2, -114},
+     { -8, -143}, { -13, -171}, { -22, -188}, { -32, -201}, { -35, -207},
+     { -32, -211}, { -30, -214}, { -32, -214}, { -36, -212}, { -38,
+                                                              -210} },
+    { { 1, -7}, { 6, -29}, { 15, -63}, { 20, -84}, { 21, -102},
+     { 20, -120}, { 21, -135}, { 26, -147}, { 28, -153}, { 24, -154}, { 20,
+                                                                       -154},
+     { 19, -157}, { 21, -160}, { 23, -162}, { 23, -164}, { 22, -164} },
+    { { 10, -14}, { 18, -34}, { 28, -62}, { 32, -94}, { 35, -128},
+     { 41, -159}, { 42, -177}, { 36, -184}, { 30, -186}, { 28, -189}, { 31,
+                                                                       -192},
+     { 35, -195}, { 37, -196}, { 35, -195}, { 32, -193}, { 29, -192} },
+    { { 5, -10}, { 10, -27}, { 18, -58}, { 26, -85}, { 36, -112},
+     { 48, -142}, { 57, -163}, { 63, -181}, { 64, -189}, { 61, -190}, { 58,
+                                                                       -189},
+     { 57, -189}, { 57, -190}, { 57, -191}, { 57, -192}, { 57, -192} },
+    { { 0, -17}, { 11, -55}, { 24, -90}, { 42, -130}, { 54, -163},
+     { 60, -180}, { 60, -180}, { 59, -176}, { 61, -178}, { 63, -180}, { 63,
+                                                                       -181},
+     { 63, -183}, { 64, -185}, { 63, -186}, { 62, -186}, { 61, -185} },
+    { { 1, -4}, { 6, -19}, { 11, -37}, { 13, -60}, { 10, -90}, { 7, -112},
+     { 5, -134}, { 3, -152}, { -2, -161}, { -8, -166}, { -13, -167}, { -17,
+                                                                      -168},
+     { -19, -169}, { -19, -170}, { -19, -172}, { -18, -173} },
+    { { -13, 1}, { -20, 11}, { -23, 29}, { -23, 52}, { -20, 77},
+     { -16, 105}, { -10, 133}, { -9, 151}, { -13, 164}, { -16, 172}, { -20,
+                                                                      177},
+     { -22, 180}, { -22, 182}, { -22, 183}, { -22, 185}, { -21, 186} },
+    { { 3, 6}, { 5, 14}, { 4, 33}, { 3, 50}, { 6, 65}, { 8, 82},
+     { 11, 105}, { 12, 130}, { 9, 146}, { 3, 161}, { -2, 175}, { -3, 182},
+     { 0, 185}, { 2, 186}, { 2, 188}, { 2, 190} },
+    { { 3, 2}, { 5, 7}, { 5, 20}, { 8, 36}, { 13, 54}, { 18, 76},
+     { 19, 95}, { 15, 112}, { 9, 130}, { 4, 147}, { 1, 157}, { 1, 163},
+     { 3, 166}, { 5, 168}, { 7, 170}, { 8, 171} },
+    { { -4, 10}, { -9, 27}, { -18, 67}, { -21, 97}, { -22, 127},
+     { -18, 156}, { -20, 176}, { -27, 190}, { -30, 198}, { -30, 203},
+     { -28, 205}, { -24, 207}, { -22, 207}, { -22, 208}, { -23, 209},
+     { -24, 209} },
+    { { -10, 22}, { -19, 43}, { -30, 80}, { -33, 110}, { -33, 140},
+     { -32, 169}, { -39, 188}, { -46, 201}, { -47, 207}, { -41, 207},
+     { -38, 207}, { -40, 210}, { -43, 212}, { -43, 213}, { -43, 213},
+     { -42, 213} },
+    { { 1, 19}, { -2, 35}, { -7, 66}, { -6, 95}, { -1, 121}, { 6, 149},
+     { 5, 170}, { -3, 188}, { -5, 196}, { -1, 200}, { 4, 202}, { 4, 203},
+     { 1, 205}, { -1, 205}, { -1, 205}, { 1, 205} },
+    { { 0, 24}, { -8, 85}, { -10, 114}, { -12, 141}, { -16, 167},
+     { -26, 188}, { -34, 203}, { -35, 209}, { -31, 211}, { -24, 209},
+     { -20, 208}, { -21, 209}, { -25, 212}, { -28, 213}, { -28, 214},
+     { -27, 213} },
+    { { 4, 24}, { 3, 72}, { -4, 108}, { -18, 146}, { -29, 178},
+     { -35, 199}, { -38, 210}, { -39, 215}, { -36, 215}, { -31, 212},
+     { -26, 209}, { -22, 205}, { -21, 205}, { -24, 206}, { -27, 208},
+     { -28, 209} },
+    { { 1, 14}, { 11, 49}, { 16, 90}, { 10, 132}, { 6, 160}, { 3, 177},
+     { 2, 188}, { -3, 195}, { -10, 200}, { -12, 203}, { -9, 203}, { -6,
+                                                                   203},
+     { -5, 203}, { -5, 203}, { -6, 204}, { -8, 205} },
+    { { -4, 13}, { -10, 46}, { -12, 91}, { -10, 141}, { -12, 172},
+     { -18, 192}, { -20, 201}, { -19, 205}, { -14, 208}, { -15, 211},
+     { -18, 213}, { -18, 214}, { -17, 215}, { -17, 215}, { -17, 216},
+     { -17, 216} },
+    { { -4, 17}, { -4, 57}, { -7, 82}, { -16, 112}, { -30, 143},
+     { -39, 172}, { -44, 195}, { -45, 206}, { -42, 210}, { -38, 211},
+     { -37, 211}, { -38, 212}, { -36, 211}, { -33, 211}, { -31, 211},
+     { -31, 211} },
+    { { 3, 9}, { 1, 31}, { -2, 54}, { -11, 77}, { -27, 106}, { -40, 133},
+     { -45, 161}, { -44, 174}, { -38, 178}, { -35, 180}, { -33, 181},
+     { -34, 182}, { -33, 182}, { -32, 182}, { -31, 182}, { -30, 183} },
+    { { -4, 12}, { -8, 51}, { -18, 95}, { -31, 130}, { -38, 163},
+     { -40, 183}, { -36, 189}, { -31, 190}, { -30, 192}, { -33, 194},
+     { -36, 195}, { -38, 196}, { -38, 195}, { -36, 194}, { -33, 193},
+     { -32, 193} },
+    { { -8, 2}, { -27, 2}, { -51, 5}, { -77, 10}, { -99, 11}, { -128, 9},
+     { -155, 7}, { -182, 9}, { -205, 10}, { -215, 10}, { -218, 8}, { -218,
+                                                                    5},
+     { -217, 2}, { -216, 1}, { -217, 2}, { -220, 3} },
+    { { -16, 0}, { -45, 2}, { -88, 11}, { -124, 14}, { -165, 15},
+     { -202, 14}, { -220, 14}, { -222, 13}, { -219, 10}, { -217, 8},
+     { -217, 8}, { -219, 7}, { -221, 8}, { -223, 8}, { -224, 8}, { -225,
+                                                                  9} },
+    { { -39, -3}, { -85, -8}, { -140, -8}, { -198, -8}, { -234, -4},
+     { -243, -4}, { -242, -7}, { -239, -9}, { -236, -11}, { -233, -11},
+     { -235, -9}, { -239, -7}, { -241, -5}, { -241, -4}, { -240, -4},
+     { -240, -4} },
+    { { -16, 0}, { -40, -2}, { -68, -3}, { -98, -2}, { -128, -6},
+     { -160, -11}, { -190, -15}, { -211, -16}, { -216, -17}, { -217, -19},
+     { -215, -19}, { -213, -19}, { -212, -18}, { -212, -17}, { -214, -15},
+     { -216, -13} },
+    { { -30, 0}, { -80, -2}, { -116, -3}, { -149, -5}, { -172, -7},
+     { -178, -7}, { -177, -8}, { -172, -9}, { -172, -9}, { -178, -6},
+     { -180, -5}, { -176, -6}, { -173, -7}, { -173, -6}, { -175, -5},
+     { -176, -5} },
+    { { -11, 1}, { -46, 5}, { -87, 5}, { -130, 2}, { -173, 2}, { -200, 1},
+     { -203, 0}, { -199, -1}, { -195, -2}, { -195, -2}, { -200, 1}, { -206,
+                                                                     4},
+     { -209, 5}, { -208, 4}, { -204, 2}, { -204, 2} },
+    { { -74, 7}, { -177, 2}, { -211, 5}, { -206, -2}, { -206, -2},
+     { -211, 1}, { -206, -1}, { -209, 2}, { -210, 2}, { -205, 0}, { -205,
+                                                                   0},
+     { -200, -1}, { -208, 8}, { -205, 6}, { -203, 5}, { -203, 6} },
+    { { -18, 2}, { -72, 8}, { -132, 5}, { -187, 4}, { -208, 1},
+     { -201, -2}, { -195, -4}, { -195, -3}, { -201, 0}, { -202, -1},
+     { -199, -3}, { -197, -3}, { -198, -2}, { -198, -1}, { -199, -1},
+     { -200, -1} },
+    { { -11, -1}, { -53, 8}, { -91, 9}, { -135, 4}, { -180, 7}, { -203, 5},
+     { -207, 4}, { -205, 3}, { -207, 4}, { -211, 6}, { -215, 8}, { -216,
+                                                                  9},
+     { -215, 10}, { -214, 11}, { -212, 10}, { -211, 10} },
+    { { -2, 1}, { -45, 7}, { -90, 9}, { -139, 7}, { -190, 9}, { -208, 11},
+     { -208, 14}, { -211, 17}, { -216, 20}, { -214, 19}, { -210, 17},
+     { -209, 15}, { -210, 15}, { -211, 16}, { -212, 16}, { -212, 16} },
+    { { -7, 8}, { -52, 27}, { -96, 29}, { -146, 26}, { -199, 35},
+     { -216, 34}, { -213, 28}, { -210, 23}, { -214, 23}, { -217, 24},
+     { -217, 24}, { -216, 24}, { -216, 24}, { -216, 25}, { -214, 26},
+     { -213, 25} },
+    { { -6, -1}, { -33, 4}, { -73, 10}, { -112, 11}, { -153, 9},
+     { -194, 7}, { -217, 6}, { -233, 7}, { -246, 10}, { -253, 11}, { -255,
+                                                                    10},
+     { -255, 9}, { -256, 8}, { -256, 8}, { -256, 7}, { -256, 7} },
+    { { -14, -8}, { -70, -8}, { -113, -10}, { -154, -9}, { -190, -4},
+     { -201, -4}, { -199, -6}, { -191, -8}, { -185, -10}, { -186, -9},
+     { -191, -7}, { -192, -6}, { -190, -7}, { -186, -7}, { -185, -7},
+     { -186, -6} },
+    { { -14, -4}, { -47, -2}, { -81, -4}, { -120, -12}, { -157, -12},
+     { -172, -12}, { -171, -12}, { -164, -13}, { -158, -14}, { -161, -11},
+     { -167, -7}, { -167, -7}, { -161, -8}, { -157, -8}, { -156, -8},
+     { -157, -7} },
+    { { -21, 1}, { -54, 3}, { -87, 3}, { -125, -2}, { -159, -3},
+     { -182, -2}, { -187, -2}, { -193, 0}, { -197, 2}, { -195, 1}, { -192,
+                                                                    -1},
+     { -193, -1}, { -199, 1}, { -203, 1}, { -204, 1}, { -204, 0} },
+    { { -7, -8}, { -18, -13}, { -46, -7}, { -81, -7}, { -120, -9},
+     { -161, -8}, { -194, -7}, { -205, -9}, { -207, -10}, { -206, -11},
+     { -205, -10}, { -207, -8}, { -209, -6}, { -210, -5}, { -210, -5},
+     { -210, -5} },
+    { { -12, -5}, { -18, -13}, { -39, -11}, { -59, -9}, { -82, -10},
+     { -109, -8}, { -139, -4}, { -164, -2}, { -185, -3}, { -205, -2},
+     { -216, -1}, { -220, -1}, { -219, -1}, { -217, -2}, { -216, -2},
+     { -216, -2} },
+    { { -10, -7}, { -40, -13}, { -69, -23}, { -97, -34}, { -119, -35},
+     { -143, -31}, { -161, -26}, { -167, -24}, { -169, -23}, { -172, -22},
+     { -178, -20}, { -183, -18}, { -183, -17}, { -181, -18}, { -181, -18},
+     { -183, -17} },
+    { { -27, 5}, { -61, 12}, { -106, 15}, { -149, 17}, { -178, 17},
+     { -197, 15}, { -207, 13}, { -212, 10}, { -217, 9}, { -224, 10},
+     { -228, 10}, { -230, 10}, { -230, 10}, { -228, 10}, { -226, 10},
+     { -225, 10} },
+    { { -2, 3}, { -18, 16}, { -32, 22}, { -46, 26}, { -62, 28}, { -82, 29},
+     { -105, 28}, { -127, 28}, { -150, 28}, { -170, 25}, { -185, 16},
+     { -197, 9}, { -210, 6}, { -221, 4}, { -228, 2}, { -232, 1} },
+    { { -3, 1}, { -34, 15}, { -79, 31}, { -117, 38}, { -154, 42},
+     { -187, 35}, { -218, 23}, { -230, 17}, { -232, 11}, { -231, 8},
+     { -232, 7}, { -236, 7}, { -240, 7}, { -242, 7}, { -243, 6}, { -242,
+                                                                  5} },
+    { { -44, 0}, { -104, 1}, { -162, 1}, { -213, -3}, { -256, -11},
+     { -287, -18}, { -305, -20}, { -313, -21}, { -317, -23}, { -316, -25},
+     { -314, -27}, { -313, -28}, { -312, -28}, { -312, -28}, { -312, -28},
+     { -312, -28} },
+    { { -44, 0}, { -104, 1}, { -162, 1}, { -213, -3}, { -256, -11},
+     { -287, -18}, { -305, -20}, { -313, -21}, { -317, -23}, { -316, -25},
+     { -314, -27}, { -313, -28}, { -312, -28}, { -312, -28}, { -312, -28},
+     { -312, -28} },
+    { { 4, 0}, { 8, 0}, { 11, 0}, { 15, 0}, { 19, 0}, { 22, 0}, { 26, 0},
+     { 30, 0}, { 34, 0}, { 38, 0}, { 41, 0}, { 45, 0}, { 49, 0}, { 52, 0},
+     { 56, 0}, { 60, 0} },
+    { { 0, -2}, { 0, -4}, { 0, -6}, { 0, -8}, { 0, -9}, { 0, -11},
+     { 0, -13}, { 0, -15}, { 0, -17}, { 0, -19}, { 0, -21}, { 0, -22}, { 0,
+                                                                        -24},
+     { 0, -26}, { 0, -28}, { 0, -30} },
+    { { 0, 2}, { 0, 4}, { 0, 6}, { 0, 8}, { 0, 9}, { 0, 11}, { 0, 13},
+     { 0, 15}, { 0, 17}, { 0, 19}, { 0, 21}, { 0, 22}, { 0, 24}, { 0, 26},
+     { 0, 28}, { 0, 30} },
+    { { -2, 0}, { -4, 0}, { -6, 0}, { -8, 0}, { -9, 0}, { -11, 0},
+     { -13, 0}, { -15, 0}, { -17, 0}, { -19, 0}, { -21, 0}, { -22, 0},
+     { -24, 0}, { -26, 0}, { -28, 0}, { -30, 0} },
+    { { -2, -1}, { -14, 1}, { -30, 3}, { -39, 0}, { -49, -4}, { -59, -8},
+     { -70, -10}, { -82, -9}, { -97, -5}, { -109, -2}, { -114, -2}, { -117,
+                                                                     -5},
+     { -118, -8}, { -118, -10}, { -120, -10}, { -121, -7} },
+    { { -11, 14}, { -19, 26}, { -27, 40}, { -36, 59}, { -46, 73},
+     { -60, 83}, { -70, 90}, { -73, 93}, { -72, 94}, { -71, 94}, { -70,
+                                                                  94},
+     { -71, 95}, { -73, 97}, { -75, 97}, { -75, 96}, { -75, 96} },
+    { { -12, 18}, { -19, 31}, { -22, 45}, { -23, 66}, { -28, 77},
+     { -38, 84}, { -45, 89}, { -48, 91}, { -48, 92}, { -44, 91}, { -42,
+                                                                  90},
+     { -42, 89}, { -43, 88}, { -42, 89}, { -46, 91}, { -51, 95} },
+    { { 7, -21}, { 8, -36}, { 8, -50}, { 5, -65}, { 7, -82}, { 13, -99},
+     { 16, -110}, { 12, -112}, { 6, -110}, { 3, -110}, { 3, -110}, { 6,
+                                                                    -113},
+     { 9, -115}, { 10, -116}, { 9, -115}, { 7, -114} },
+    { { 5, -10}, { 8, -19}, { 10, -28}, { 10, -38}, { 9, -49}, { 5, -61},
+     { 2, -75}, { 3, -93}, { 6, -112}, { 8, -126}, { 6, -133}, { 5, -138},
+     { 2, -140}, { 0, -141}, { -2, -141}, { -4, -140} },
+    { { 8, -20}, { 11, -38}, { 6, -57}, { 4, -77}, { 4, -97}, { 7, -114},
+     { 8, -126}, { 7, -136}, { 4, -144}, { 0, -150}, { -7, -159}, { -8,
+                                                                   -166},
+     { -4, -173}, { -1, -178}, { -1, -180}, { -3, -181} },
+    { { 4, -14}, { 7, -24}, { 5, -33}, { -1, -44}, { -9, -61}, { -15, -81},
+     { -17, -101}, { -19, -113}, { -22, -120}, { -27, -125}, { -32, -128},
+     { -36, -129}, { -37, -131}, { -36, -133}, { -34, -133}, { -34,
+                                                              -132} },
+    { { -18, -2}, { -40, -5}, { -58, -10}, { -74, -10}, { -93, -8},
+     { -110, -6}, { -115, -7}, { -114, -11}, { -114, -16}, { -115, -19},
+     { -119, -19}, { -123, -18}, { -127, -16}, { -127, -17}, { -123, -18},
+     { -122, -18} },
+    { { -14, 2}, { -39, 3}, { -63, 1}, { -89, 5}, { -108, 11}, { -117, 14},
+     { -118, 12}, { -114, 6}, { -109, -1}, { -109, -2}, { -113, 1}, { -114,
+                                                                     3},
+     { -115, 5}, { -114, 4}, { -113, 3}, { -112, 2} },
+    { { -14, 2}, { -37, 2}, { -63, 0}, { -93, -3}, { -128, -2}, { -144, 0},
+     { -143, 2}, { -138, 3}, { -135, 5}, { -139, 8}, { -148, 12}, { -153,
+                                                                   13},
+     { -152, 13}, { -149, 11}, { -146, 10}, { -145, 10} },
+    { { -12, -3}, { -42, -8}, { -74, -25}, { -95, -32}, { -119, -34},
+     { -124, -43}, { -127, -49}, { -133, -48}, { -140, -46}, { -140, -49},
+     { -146, -46}, { -149, -43}, { -147, -43}, { -144, -44}, { -144, -44},
+     { -145, -44} },
+    { { -13, 2}, { -30, 2}, { -53, -8}, { -80, -15}, { -108, -14},
+     { -121, -15}, { -120, -15}, { -119, -14}, { -116, -12}, { -111, -12},
+     { -115, -9}, { -123, -5}, { -124, -5}, { -123, -6}, { -123, -7},
+     { -124, -7} },
+    { { -14, -1}, { -38, 0}, { -64, -18}, { -89, -28}, { -114, -30},
+     { -123, -39}, { -125, -46}, { -132, -45}, { -139, -43}, { -139, -45},
+     { -142, -44}, { -148, -40}, { -148, -41}, { -145, -41}, { -143, -41},
+     { -144, -41} },
+    { { -12, 2}, { -27, 1}, { -42, 1}, { -62, 0}, { -82, -4}, { -103, -4},
+     { -125, -6}, { -146, -9}, { -165, -12}, { -181, -12}, { -194, -12},
+     { -202, -13}, { -205, -14}, { -206, -14}, { -206, -14}, { -204,
+                                                              -13} },
+    { { -20, 3}, { -41, 1}, { -68, -5}, { -97, -9}, { -126, -11},
+     { -150, -13}, { -158, -14}, { -162, -18}, { -166, -21}, { -171, -19},
+     { -177, -15}, { -178, -13}, { -177, -14}, { -175, -16}, { -174, -17},
+     { -174, -17} },
+    { { -11, 2}, { -36, 1}, { -56, -4}, { -80, -13}, { -109, -16},
+     { -141, -13}, { -161, -12}, { -166, -13}, { -167, -15}, { -162, -16},
+     { -159, -18}, { -158, -16}, { -155, -16}, { -148, -18}, { -146, -18},
+     { -152, -14} },
+    { { -9, 1}, { -28, -2}, { -50, -13}, { -83, -30}, { -125, -40},
+     { -153, -49}, { -174, -56}, { -194, -59}, { -212, -59}, { -221, -60},
+     { -223, -65}, { -221, -71}, { -222, -69}, { -225, -64}, { -227, -62},
+     { -228, -61} },
+    { { -9, 6}, { -29, 11}, { -51, 12}, { -75, 13}, { -111, 19},
+     { -139, 24}, { -143, 22}, { -141, 19}, { -144, 19}, { -147, 19},
+     { -150, 19}, { -149, 17}, { -145, 16}, { -142, 16}, { -141, 17},
+     { -142, 17} },
+    { { -4, 15}, { -6, 28}, { -3, 42}, { 1, 63}, { 6, 89}, { -1, 107},
+     { -12, 125}, { -15, 131}, { -13, 129}, { -8, 124}, { -8, 122}, { -12,
+                                                                     125},
+     { -15, 126}, { -15, 126}, { -14, 126}, { -13, 127} },
+    { { 1, 15}, { 0, 27}, { 3, 42}, { 11, 61}, { 19, 86}, { 19, 103},
+     { 12, 118}, { 6, 130}, { 5, 134}, { 5, 136}, { 6, 136}, { 11, 134},
+     { 17, 130}, { 20, 128}, { 19, 129}, { 17, 133} },
+    { { -6, 15}, { -8, 42}, { -8, 75}, { -24, 94}, { -43, 108},
+     { -41, 107}, { -33, 105}, { -25, 102}, { -21, 100}, { -27, 104},
+     { -32, 107}, { -32, 107}, { -31, 105}, { -29, 103}, { -29, 103},
+     { -30, 104} },
+    { { -25, 12}, { -49, 20}, { -80, 30}, { -112, 28}, { -142, 23},
+     { -169, 11}, { -194, 3}, { -215, 4}, { -221, 5}, { -221, 3}, { -219,
+                                                                   0},
+     { -219, -2}, { -222, -1}, { -225, 0}, { -227, 1}, { -228, 1} },
+    { { -1, 9}, { -1, 21}, { 2, 36}, { 14, 55}, { 24, 77}, { 24, 99},
+     { 15, 121}, { 6, 144}, { 5, 149}, { 8, 149}, { 6, 150}, { 1, 154},
+     { -1, 155}, { 0, 155}, { 2, 153}, { 4, 152} },
+    { { -7, 16}, { -12, 32}, { -10, 51}, { -3, 78}, { -4, 104},
+     { -13, 124}, { -24, 146}, { -26, 155}, { -20, 155}, { -14, 152},
+     { -11, 150}, { -14, 153}, { -19, 157}, { -20, 158}, { -18, 158},
+     { -16, 157} },
+    { { -17, 25}, { -21, 45}, { -25, 65}, { -34, 88}, { -48, 113},
+     { -55, 130}, { -58, 137}, { -58, 140}, { -58, 142}, { -56, 142},
+     { -52, 142}, { -51, 142}, { -50, 142}, { -51, 142}, { -53, 142},
+     { -54, 142} },
+    { { -4, 16}, { -7, 35}, { -6, 52}, { -2, 72}, { 7, 99}, { 8, 114},
+     { 3, 128}, { 1, 137}, { 0, 143}, { -1, 147}, { -2, 151}, { -3, 154},
+     { -2, 157}, { 0, 156}, { 5, 154}, { 7, 153} },
+    { { 3, -16}, { 4, -37}, { 2, -55}, { 4, -73}, { 8, -90}, { 12, -105},
+     { 12, -111}, { 9, -113}, { 3, -113}, { -4, -113}, { -9, -114}, { -9,
+                                                                     -117},
+     { -8, -121}, { -6, -125}, { -6, -125}, { -7, -125} },
+    { { 2, -8}, { 3, -16}, { 5, -25}, { 4, -34}, { 0, -46}, { -8, -62},
+     { -14, -82}, { -15, -105}, { -16, -123}, { -21, -125}, { -27, -123},
+     { -30, -121}, { -27, -123}, { -25, -125}, { -25, -124}, { -27,
+                                                              -123} },
+    { { -32, -8}, { -61, -24}, { -86, -31}, { -96, -37}, { -98, -45},
+     { -105, -46}, { -113, -45}, { -107, -45}, { -102, -43}, { -108, -36},
+     { -109, -35}, { -106, -37}, { -104, -38}, { -104, -39}, { -105, -40},
+     { -106, -40} },
+    { { 5, -23}, { 2, -44}, { -5, -64}, { -5, -78}, { -1, -95}, { 4, -114},
+     { -1, -121}, { -8, -124}, { -10, -127}, { -9, -132}, { -8, -134},
+     { -7, -136}, { -7, -137}, { -9, -137}, { -10, -136}, { -12, -136} },
+    { { 4, -11}, { 7, -26}, { 4, -43}, { -2, -66}, { -5, -88}, { -3, -109},
+     { -5, -119}, { -9, -123}, { -14, -127}, { -17, -129}, { -17, -130},
+     { -18, -129}, { -18, -130}, { -20, -130}, { -21, -129}, { -21,
+                                                              -129} },
+    { { -1, -27}, { -22, -54}, { -25, -90}, { -30, -105}, { -39, -113},
+     { -48, -126}, { -45, -143}, { -33, -157}, { -33, -157}, { -37, -153},
+     { -42, -150}, { -43, -148}, { -42, -148}, { -39, -149}, { -37, -149},
+     { -37, -148} },
+    { { 5, -16}, { 2, -34}, { -10, -61}, { -19, -88}, { -23, -111},
+     { -27, -141}, { -36, -155}, { -43, -158}, { -48, -158}, { -48, -159},
+     { -46, -160}, { -45, -161}, { -46, -160}, { -47, -159}, { -48, -158},
+     { -48, -157} },
+    { { 5, -7}, { 5, -19}, { 4, -33}, { 3, -51}, { 0, -73}, { -3, -102},
+     { -5, -130}, { -11, -156}, { -16, -176}, { -21, -183}, { -27, -181},
+     { -34, -174}, { -40, -168}, { -41, -166}, { -38, -168}, { -31,
+                                                              -171} },
+    { { 10, -2}, { 22, 0}, { 40, 6}, { 57, 15}, { 78, 21}, { 96, 20},
+     { 111, 13}, { 129, 3}, { 136, -1}, { 134, -2}, { 129, -1}, { 124, -1},
+     { 123, -3}, { 125, -8}, { 128, -11}, { 130, -11} },
+    { { 1, 19}, { 5, 36}, { 13, 53}, { 17, 69}, { 18, 84}, { 21, 100},
+     { 27, 110}, { 32, 114}, { 40, 115}, { 47, 116}, { 50, 116}, { 50,
+                                                                  118},
+     { 47, 122}, { 44, 125}, { 41, 127}, { 40, 126} },
+    { { 16, 7}, { 32, 8}, { 56, 9}, { 69, 8}, { 77, 9}, { 85, 11},
+     { 95, 12}, { 107, 11}, { 120, 11}, { 123, 11}, { 123, 11}, { 119, 12},
+     { 115, 14}, { 113, 15}, { 112, 15}, { 114, 14} },
+    { { 11, 4}, { 38, 4}, { 57, 4}, { 77, 2}, { 103, 0}, { 131, -2},
+     { 150, -3}, { 167, -8}, { 177, -9}, { 180, -9}, { 182, -8}, { 181,
+                                                                  -6},
+     { 180, -3}, { 177, 0}, { 175, 1}, { 174, 2} },
+    { { 27, -2}, { 47, -2}, { 67, 2}, { 88, 7}, { 104, 7}, { 123, 5},
+     { 146, 3}, { 154, 1}, { 151, 4}, { 144, 8}, { 139, 10}, { 138, 8},
+     { 141, 6}, { 144, 4}, { 145, 4}, { 145, 6} },
+    { { -2, 14}, { -3, 29}, { -1, 47}, { -6, 64}, { -16, 82}, { -21, 90},
+     { -22, 91}, { -20, 89}, { -16, 84}, { -18, 84}, { -22, 88}, { -24,
+                                                                  92},
+     { -25, 93}, { -24, 93}, { -23, 92}, { -23, 92} },
+    { { 19, -3}, { 30, -5}, { 39, 0}, { 48, 5}, { 60, 8}, { 77, 11},
+     { 94, 10}, { 107, 6}, { 116, 1}, { 119, -3}, { 116, -6}, { 112, -6},
+     { 107, -7}, { 104, -8}, { 103, -9}, { 104, -10} },
+    { { 23, -12}, { 45, -17}, { 67, -18}, { 86, -18}, { 103, -20},
+     { 119, -18}, { 138, -16}, { 152, -14}, { 157, -13}, { 156, -10},
+     { 152, -7}, { 148, -3}, { 144, 1}, { 142, 2}, { 145, 1}, { 149, 0} },
+    { { -4, 19}, { -6, 36}, { -8, 55}, { -9, 72}, { -13, 90}, { -16, 102},
+     { -15, 108}, { -10, 108}, { -8, 103}, { -9, 99}, { -12, 100}, { -15,
+                                                                    103},
+     { -17, 104}, { -16, 104}, { -14, 103}, { -13, 103} },
+    { { 4, 0}, { 11, 0}, { 20, 2}, { 35, 9}, { 52, 20}, { 71, 34},
+     { 85, 42}, { 96, 48}, { 108, 53}, { 109, 58}, { 102, 64}, { 99, 66},
+     { 99, 64}, { 102, 61}, { 105, 58}, { 106, 57} },
+    { { 14, 0}, { 40, 3}, { 52, 5}, { 61, 8}, { 76, 13}, { 94, 20},
+     { 117, 30}, { 144, 39}, { 171, 39}, { 187, 41}, { 185, 45}, { 176,
+                                                                  50},
+     { 173, 52}, { 174, 52}, { 177, 49}, { 180, 47} },
+    { { -1, 10}, { -7, 29}, { -8, 56}, { -5, 95}, { -8, 119}, { -20, 135},
+     { -35, 150}, { -41, 151}, { -37, 151}, { -29, 153}, { -24, 155},
+     { -24, 156}, { -29, 158}, { -34, 157}, { -35, 154}, { -34, 154} },
+    { { 7, 2}, { 31, -6}, { 51, -8}, { 72, -2}, { 101, 6}, { 130, 7},
+     { 158, 3}, { 167, 2}, { 164, 5}, { 156, 10}, { 151, 10}, { 157, 7},
+     { 161, 5}, { 162, 3}, { 163, 4}, { 161, 5} },
+    { { 21, -23}, { 34, -39}, { 52, -53}, { 67, -63}, { 76, -67},
+     { 88, -71}, { 95, -71}, { 95, -65}, { 88, -51}, { 81, -33}, { 80,
+                                                                  -24},
+     { 85, -21}, { 87, -20}, { 88, -18}, { 88, -18}, { 87, -19} },
+    { { 16, -12}, { 28, -20}, { 40, -23}, { 55, -23}, { 74, -22},
+     { 89, -17}, { 102, -12}, { 116, -5}, { 125, 1}, { 125, 7}, { 123, 13},
+     { 124, 16}, { 124, 16}, { 125, 14}, { 126, 11}, { 127, 8} },
+    { { 10, -2}, { 21, 2}, { 37, 8}, { 58, 13}, { 84, 17}, { 103, 14},
+     { 121, 6}, { 127, 2}, { 125, 3}, { 119, 9}, { 115, 11}, { 114, 10},
+     { 116, 9}, { 117, 9}, { 117, 9}, { 118, 9} },
+    { { 17, -4}, { 56, -13}, { 99, -23}, { 131, -30}, { 142, -34},
+     { 142, -34}, { 141, -30}, { 137, -20}, { 139, -17}, { 154, -17},
+     { 161, -15}, { 165, -9}, { 163, -5}, { 161, -3}, { 161, -3}, { 161,
+                                                                   -3} },
+    { { 7, -2}, { 20, -4}, { 31, -3}, { 46, -2}, { 71, 7}, { 102, 15},
+     { 139, 12}, { 163, 8}, { 163, 9}, { 163, 12}, { 163, 14}, { 164, 14},
+     { 166, 13}, { 168, 12}, { 168, 12}, { 169, 12} },
+    { { 17, -5}, { 43, -9}, { 63, -3}, { 76, -3}, { 87, -5}, { 99, -7},
+     { 114, -9}, { 128, -11}, { 135, -8}, { 146, -7}, { 170, -16}, { 176,
+                                                                    -17},
+     { 177, -15}, { 177, -13}, { 177, -13}, { 177, -13} },
+    { { 18, -10}, { 31, -17}, { 43, -23}, { 59, -28}, { 80, -34},
+     { 99, -42}, { 117, -52}, { 120, -54}, { 117, -51}, { 111, -46}, { 108,
+                                                                      -43},
+     { 107, -42}, { 108, -42}, { 110, -43}, { 112, -45}, { 112, -45} },
+    { { 17, -4}, { 34, -1}, { 51, 7}, { 84, 20}, { 112, 23}, { 127, 18},
+     { 129, 17}, { 126, 17}, { 119, 14}, { 117, 4}, { 117, -5}, { 109, -4},
+     { 98, 1}, { 93, 2}, { 93, 0}, { 96, -2} },
+    { { 10, -4}, { 27, -5}, { 51, 2}, { 82, 12}, { 108, 9}, { 125, 6},
+     { 124, 8}, { 118, 11}, { 111, 13}, { 111, 11}, { 116, 7}, { 119, 4},
+     { 117, 5}, { 115, 7}, { 113, 7}, { 112, 7} },
+    { { 6, -1}, { 23, -3}, { 44, -2}, { 75, 5}, { 104, 8}, { 122, 2},
+     { 132, -3}, { 134, -4}, { 131, 2}, { 127, 8}, { 131, 10}, { 142, 9},
+     { 144, 10}, { 139, 13}, { 136, 15}, { 135, 15} },
+    { { 17, 1}, { 38, -1}, { 46, 1}, { 58, 4}, { 68, 3}, { 73, 1},
+     { 78, -6}, { 81, -17}, { 92, -20}, { 111, -12}, { 139, 3}, { 164, 8},
+     { 190, 4}, { 206, 1}, { 202, 3}, { 195, 6} },
+    { { 15, -6}, { 27, -10}, { 41, -8}, { 60, -2}, { 83, 3}, { 106, 2},
+     { 134, -3}, { 153, -6}, { 157, -4}, { 153, 0}, { 146, 6}, { 145, 7},
+     { 148, 5}, { 152, 2}, { 152, 2}, { 150, 3} },
+    { { 10, -2}, { 21, -2}, { 33, -2}, { 47, -5}, { 61, -5}, { 76, -2},
+     { 92, 5}, { 114, 18}, { 140, 27}, { 169, 27}, { 200, 26}, { 210, 27},
+     { 209, 30}, { 203, 35}, { 200, 36}, { 203, 35} },
+    { { 31, -3}, { 99, -7}, { 164, -15}, { 211, -18}, { 232, -12},
+     { 246, -1}, { 267, 6}, { 294, 0}, { 316, -4}, { 315, -1}, { 309, 3},
+     { 303, 5}, { 307, 4}, { 312, 1}, { 315, 2}, { 315, 4} },
+    { { 67, 4}, { 151, -1}, { 206, -6}, { 244, -4}, { 272, 1}, { 294, 1},
+     { 311, -9}, { 319, -13}, { 316, -13}, { 311, -14}, { 311, -14}, { 313,
+                                                                      -16},
+     { 314, -16}, { 313, -15}, { 312, -15}, { 312, -14} },
+    { { 9, -1}, { 23, -3}, { 37, -4}, { 49, -5}, { 59, -6}, { 67, -6},
+     { 74, -6}, { 80, -7}, { 86, -8}, { 93, -9}, { 102, -11}, { 113, -14},
+     { 125, -17}, { 135, -20}, { 144, -23}, { 150, -27} },
+    { { 18, -4}, { 64, -4}, { 131, -2}, { 227, -15}, { 279, -12},
+     { 311, -1}, { 344, 12}, { 368, 20}, { 385, 24}, { 390, 26}, { 386,
+                                                                  27},
+     { 381, 27}, { 382, 26}, { 385, 24}, { 388, 23}, { 390, 23} },
+    { { 36, -4}, { 101, -5}, { 131, -10}, { 189, -19}, { 236, -20},
+     { 256, -17}, { 277, -13}, { 295, -11}, { 308, -12}, { 320, -15},
+     { 324, -16}, { 323, -15}, { 323, -14}, { 325, -13}, { 327, -13},
+     { 329, -13} },
+    { { 37, -7}, { 99, -13}, { 141, -22}, { 179, -37}, { 201, -39},
+     { 218, -39}, { 232, -34}, { 241, -28}, { 254, -26}, { 262, -27},
+     { 260, -26}, { 256, -24}, { 257, -25}, { 262, -27}, { 263, -27},
+     { 263, -25} },
+    { { 23, 0}, { 63, 0}, { 124, 0}, { 183, 0}, { 240, 0}, { 279, 0},
+     { 299, 0}, { 312, 0}, { 325, 0}, { 335, 0}, { 338, 0}, { 338, 0},
+     { 338, 0}, { 338, 0}, { 337, 0}, { 337, 0} },
+    { { 34, -1}, { 93, 0}, { 140, 0}, { 205, -8}, { 242, -11}, { 246, -8},
+     { 237, 2}, { 226, 9}, { 227, 5}, { 234, -2}, { 241, -9}, { 241, -13},
+     { 233, -12}, { 230, -11}, { 234, -12}, { 236, -12} },
+    { { 7, 0}, { 35, 0}, { 73, 0}, { 115, 0}, { 173, 0}, { 212, 0},
+     { 232, 0}, { 250, 0}, { 268, 0}, { 278, 0}, { 280, 0}, { 277, 0},
+     { 272, 0}, { 268, 0}, { 266, 0}, { 266, 0} },
+    { { 2, 0}, { 4, 0}, { 7, -1}, { 10, -1}, { 13, 0}, { 16, 0}, { 20, 1},
+     { 24, 2}, { 28, 3}, { 33, 4}, { 38, 6}, { 43, 8}, { 49, 10}, { 55,
+                                                                   12},
+     { 60, 14}, { 64, 16} },
+    { { -18, 2}, { -37, 3}, { -60, 2}, { -88, -1}, { -118, -2}, { -150, 0},
+     { -179, -2}, { -206, -5}, { -234, -4}, { -257, -5}, { -264, -8},
+     { -265, -12}, { -260, -16}, { -255, -19}, { -254, -20}, { -254,
+                                                              -19} },
+    { { -23, 7}, { -47, 14}, { -66, 18}, { -86, 15}, { -109, 10},
+     { -132, 6}, { -163, 3}, { -181, 0}, { -183, -3}, { -177, -6}, { -169,
+                                                                    -8},
+     { -165, -8}, { -166, -6}, { -168, -3}, { -168, -3}, { -168, -3} },
+    { { -6, 3}, { -19, 6}, { -41, 6}, { -73, 4}, { -117, 4}, { -152, 2},
+     { -171, -2}, { -172, -2}, { -171, -2}, { -171, -2}, { -170, -2},
+     { -170, -2}, { -170, -2}, { -170, -2}, { -170, -2}, { -171, -3} },
+    { { -24, 0}, { -51, 0}, { -82, -4}, { -115, -8}, { -151, -12},
+     { -184, -12}, { -219, -8}, { -252, -5}, { -282, -7}, { -308, -10},
+     { -319, -11}, { -320, -12}, { -316, -12}, { -310, -12}, { -308, -12},
+     { -310, -11} },
+    { { -7, 0}, { -21, 3}, { -37, 6}, { -52, 10}, { -70, 15}, { -91, 20},
+     { -113, 26}, { -139, 26}, { -167, 28}, { -187, 31}, { -204, 35},
+     { -220, 38}, { -230, 38}, { -233, 37}, { -232, 34}, { -230, 32} },
+    { { -15, 5}, { -30, 8}, { -46, 10}, { -63, 11}, { -81, 13},
+     { -103, 14}, { -119, 13}, { -134, 12}, { -148, 11}, { -162, 11},
+     { -175, 12}, { -188, 14}, { -195, 15}, { -198, 15}, { -197, 14},
+     { -194, 12} },
+    { { -13, -28}, { -33, -49}, { -51, -68}, { -65, -92}, { -75, -106},
+     { -85, -114}, { -98, -117}, { -114, -118}, { -123, -121}, { -124,
+                                                                -126},
+     { -126, -129}, { -135, -135}, { -145, -140}, { -150, -142}, { -149,
+                                                                  -143},
+     { -150, -144} },
+    { { -10, 1}, { -29, 6}, { -47, 14}, { -65, 23}, { -83, 34},
+     { -102, 36}, { -124, 36}, { -143, 38}, { -161, 40}, { -173, 38},
+     { -175, 32}, { -171, 22}, { -170, 14}, { -177, 11}, { -174, 7},
+     { -172, 6} },
+    { { -52, 1}, { -75, 5}, { -106, 7}, { -136, 15}, { -155, 12},
+     { -170, 5}, { -178, 2}, { -185, 5}, { -187, 7}, { -186, 7}, { -181,
+                                                                  3},
+     { -175, 1}, { -173, 3}, { -175, 5}, { -176, 7}, { -176, 8} },
+    { { -58, 18}, { -102, 26}, { -109, 43}, { -103, 42}, { -90, 28},
+     { -87, 26}, { -91, 36}, { -92, 44}, { -87, 42}, { -78, 34}, { -78,
+                                                                  31},
+     { -84, 31}, { -83, 26}, { -74, 13}, { -72, 6}, { -79, 6} },
 };
 
 // the cumulative root motion of move idx at move frame mf, millimetres (integer only: the sim may call it inside a step)
-static inline void mv3_move_rm_at(int idx, int mf, int32_t *fwd_mm, int32_t *right_mm) {
+static inline void Mv3MoveRmAt(int idx, int mf, int32_t *fwd_mm,
+                                  int32_t *right_mm)
+{
     *fwd_mm = *right_mm = 0;
-    if (idx < 0 || idx >= MV3_MOVES_COUNT || mf <= 0) return;
+    if (idx < 0 || idx >= MV3_MOVES_COUNT || mf <= 0)
+        return;
     int32_t dur = MV3_MOVES[idx].dur_f > 0 ? MV3_MOVES[idx].dur_f : 1;
-    if (mf >= dur) { *fwd_mm = MV3_MOVES_RM[idx][MV3_RM_N - 1][0] * 10; *right_mm = MV3_MOVES_RM[idx][MV3_RM_N - 1][1] * 10; return; }
-    int32_t p = mf * MV3_RM_N, k = p / dur, r = p % dur;          // between sample k - 1 (frame k * dur / N) and sample k
-    int32_t f0 = k ? MV3_MOVES_RM[idx][k - 1][0] : 0, s0 = k ? MV3_MOVES_RM[idx][k - 1][1] : 0;
+    if (mf >= dur) {
+        *fwd_mm = MV3_MOVES_RM[idx][MV3_RM_N - 1][0] * 10;
+        *right_mm = MV3_MOVES_RM[idx][MV3_RM_N - 1][1] * 10;
+        return;
+    }
+    int32_t p = mf * MV3_RM_N, k = p / dur, r = p % dur;        // between sample k - 1 (frame k * dur / N) and sample k
+    int32_t f0 = k ? MV3_MOVES_RM[idx][k - 1][0] : 0, s0 =
+        k ? MV3_MOVES_RM[idx][k - 1][1] : 0;
     int32_t f1 = MV3_MOVES_RM[idx][k][0], s1 = MV3_MOVES_RM[idx][k][1];
     *fwd_mm = (f0 * dur + (f1 - f0) * r) * 10 / dur;
     *right_mm = (s0 * dur + (s1 - s0) * r) * 10 / dur;
@@ -839,52 +1610,85 @@ static inline void mv3_move_rm_at(int idx, int mf, int32_t *fwd_mm, int32_t *rig
 // Row lookup. kind = MV3_K_*; wset = MV3_WS_* (rows of MV3_WS_N match every set); dir 0 front 1 left 2 right 3 back (swings: 0).
 // step: swings - the combo step 0..2 when kind is MV3_K_SWING1 (MV3_K_SWING2 / 3 with step 0 also work); every other kind - the variant
 // (0 = the preferred one: resident rows come first). Returns the MV3_MOVES index or -1.
-static inline int mv3_move_find(int kind, int wset, int dir, int step) {
-    if (kind == MV3_K_SWING1 && step > 0 && step < 3) { kind += step; step = 0; }
-    if (kind <= MV3_K_SWING3) dir = 0;
+static inline int Mv3MoveFind(int kind, int wset, int dir, int step)
+{
+    if (kind == MV3_K_SWING1 && step > 0 && step < 3) {
+        kind += step;
+        step = 0;
+    }
+    if (kind <= MV3_K_SWING3)
+        dir = 0;
     for (int i = 0, n = 0; i < MV3_MOVES_COUNT; i++) {
-        const mv3_move *m = &MV3_MOVES[i];
-        if (m->kind != kind || m->dir != dir || (m->wset != wset && m->wset != MV3_WS_N)) continue;
-        if (n++ == step) return i;
+        const Mv3Move *m = &MV3_MOVES[i];
+        if (m->kind != kind || m->dir != dir
+            || (m->wset != wset && m->wset != MV3_WS_N))
+            continue;
+        if (n++ == step)
+            return i;
     }
     return -1;
 }
+
 // the number of variants mv3_move_find(kind, wset, dir, 0..n-1) can return
-static inline int mv3_move_variants(int kind, int wset, int dir) {
+static inline int Mv3MoveVariants(int kind, int wset, int dir)
+{
     int n = 0;
     for (int i = 0; i < MV3_MOVES_COUNT; i++)
-        if (MV3_MOVES[i].kind == kind && MV3_MOVES[i].dir == dir && (MV3_MOVES[i].wset == wset || MV3_MOVES[i].wset == MV3_WS_N)) n++;
+        if (MV3_MOVES[i].kind == kind && MV3_MOVES[i].dir == dir
+            && (MV3_MOVES[i].wset == wset
+                || MV3_MOVES[i].wset == MV3_WS_N))
+            n++;
     return n;
 }
+
 // reactions by direction + strength (0 light 1 medium 2 heavy); variant picks among them; falls back to the nearest lighter / heavier strength
-static inline int mv3_react_find(int dir, int strength, int variant) {
-    static const int8_t ORD[3][3] = {{0, 1, 2}, {1, 0, 2}, {2, 1, 0}};
-    if (strength < 0 || strength > 2) strength = 0;
+static inline int Mv3ReactFind(int dir, int strength, int variant)
+{
+    static const int8_t ORD[3][3] =
+        { { 0, 1, 2 }, { 1, 0, 2 }, { 2, 1, 0 } };
+    if (strength < 0 || strength > 2)
+        strength = 0;
     for (int o = 0; o < 3; o++) {
         int s = ORD[strength][o], n = 0, k = 0;
-        for (int i = 0; i < MV3_MOVES_COUNT; i++) if (MV3_MOVES[i].kind == MV3_K_REACT && MV3_MOVES[i].dir == dir && MV3_MOVES[i].strength == s) n++;
-        if (!n) continue;
+        for (int i = 0; i < MV3_MOVES_COUNT; i++)
+            if (MV3_MOVES[i].kind == MV3_K_REACT && MV3_MOVES[i].dir == dir
+                && MV3_MOVES[i].strength == s)
+                n++;
+        if (!n)
+            continue;
         variant = ((variant % n) + n) % n;
         for (int i = 0; i < MV3_MOVES_COUNT; i++)
-            if (MV3_MOVES[i].kind == MV3_K_REACT && MV3_MOVES[i].dir == dir && MV3_MOVES[i].strength == s && k++ == variant) return i;
+            if (MV3_MOVES[i].kind == MV3_K_REACT && MV3_MOVES[i].dir == dir
+                && MV3_MOVES[i].strength == s && k++ == variant)
+                return i;
     }
     return -1;
 }
+
 // dodges matching the incoming blow: angle (0 horiz 1 downward 2 upward) and side (0 left 1 right); a row with 0xff fits any blow.
 // Prefers an exact angle + side, then the angle, then anything of that direction; variant rotates within the best tier.
-static inline int mv3_dodge_find(int dir, int ang, int side, int variant) {
+static inline int Mv3DodgeFind(int dir, int ang, int side, int variant)
+{
     for (int tier = 0; tier < 3; tier++) {
         int n = 0, k = 0;
         for (int pass = 0; pass < 2; pass++) {
             for (int i = 0; i < MV3_MOVES_COUNT; i++) {
-                if (MV3_MOVES[i].kind != MV3_K_DODGE || MV3_MOVES[i].dir != dir || !MV3_MOVES_X[i].resident) continue;
+                if (MV3_MOVES[i].kind != MV3_K_DODGE
+                    || MV3_MOVES[i].dir != dir || !MV3_MOVES_X[i].resident)
+                    continue;
                 int a = MV3_MOVES_X[i].ang, s = MV3_MOVES_X[i].side;
-                int ok = tier == 2 || ((a == 0xff || a == ang) && (tier == 1 || s == 0xff || s == side));
-                if (!ok) continue;
-                if (pass == 0) n++;
-                else if (k++ == ((variant % n) + n) % n) return i;
+                int ok = tier == 2 || ((a == 0xff || a == ang)
+                                       && (tier == 1 || s == 0xff
+                                           || s == side));
+                if (!ok)
+                    continue;
+                if (pass == 0)
+                    n++;
+                else if (k++ == ((variant % n) + n) % n)
+                    return i;
             }
-            if (!n) break;
+            if (!n)
+                break;
         }
     }
     return -1;

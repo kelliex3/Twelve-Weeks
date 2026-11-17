@@ -28,30 +28,57 @@
     {"mp-switchblade-left-pistol-parry-sync", 7, 0.03f, 1.00f, 3, 1, {CD_RAW_PAIR("npc-f-pistol-parry-switchblade-backhand--ellie", "npc-f-pistol-parry-switchblade-backhand--npc", 1.0f, 0.0f)}}, \
     {"mp-switchblade-right-pistol-parry-sync", 7, 0.03f, 1.00f, 3, 1, {CD_RAW_PAIR("npc-f-pistol-parry-switchblade-forehand--ellie", "npc-f-pistol-parry-switchblade-forehand--npc", 1.0f, 0.0f)}}, \
 
-typedef struct { const char *pair; uint8_t aset, side, pcls, snd; uint16_t dur_ms; uint8_t mp; uint16_t px_ms, sx_ms; } mdp_row_t;
-static const mdp_row_t MDP_ROWS[] = {
-    {"mp-fist-exhausted-ellie-left-enemy-abby-parry-sync", MDU_FIST, 0, 0, 0, 3600, 0, 1700, 1700},
-    {"mp-fist-exhausted-ellie-right-enemy-abby-parry-sync", MDU_FIST, 1, 0, 0, 2733, 0, 1533, 1533},
-    {"mp-switchblade-exhausted-ellie-left-enemy-abby-parry-sync", MDU_KNIFE, 0, 0, 1, 3600, 0, 1633, 1633},
-    {"mp-switchblade-exhausted-ellie-right-enemy-abby-parry-sync", MDU_KNIFE, 1, 0, 1, 4067, 0, 1633, 1633},
-    {"mp-1h-blunt-left-1h-parry-sync", MDU_1HBLUNT, 0, 1, 2, 1700, 0, 1000, 1000},
-    {"mp-1h-blunt-right-1h-parry-sync", MDU_1HBLUNT, 1, 1, 2, 1600, 0, 1000, 1167},
-    {"mp-fist-left-1h-parry-sync", MDU_FIST, 0, 1, 0, 1567, 0, 833, 967},
-    {"mp-fist-right-1h-parry-sync", MDU_FIST, 1, 1, 0, 1733, 0, 833, 967},
-    {"mp-switchblade-left-1h-parry-enter-sync", MDU_KNIFE, 0, 1, 1, 1767, 0, 800, 967},
-    {"mp-switchblade-right-1h-parry-enter-sync", MDU_KNIFE, 1, 1, 1, 1600, 0, 667, 833},
-    {"mp-1h-blade-left-2h-parry-sync", MDU_1HBLADE, 0, 2, 2, 1833, 0, 1000, 1167},
-    {"mp-1h-blade-right-2h-parry-sync", MDU_1HBLADE, 1, 2, 2, 1600, 0, 1000, 1167},
-    {"mp-1h-blunt-left-2h-parry-sync", MDU_1HBLUNT, 0, 2, 2, 1833, 0, 1000, 1167},
-    {"mp-1h-blunt-right-2h-parry-sync", MDU_1HBLUNT, 1, 2, 2, 1600, 0, 1000, 1167},
-    {"mp-fist-left-2h-parry-sync", MDU_FIST, 0, 2, 0, 1567, 0, 1000, 1133},
-    {"mp-fist-right-2h-parry-sync", MDU_FIST, 1, 2, 0, 1400, 0, 1000, 1133},
-    {"mp-switchblade-left-2h-parry-sync", MDU_KNIFE, 0, 2, 1, 1833, 0, 1000, 1167},
-    {"mp-switchblade-right-2h-parry-sync", MDU_KNIFE, 1, 2, 1, 1600, 0, 1000, 1167},
-    {"mp-fist-light-right-parry-enemy-ellie-hit", MDU_FIST, 1, 3, 1, 933, 0, 400, 400},
-    {"mp-switchblade-left-pistol-parry-sync", MDU_KNIFE, 0, 4, 1, 1767, 0, 1000, 1000},
-    {"mp-switchblade-right-pistol-parry-sync", MDU_KNIFE, 1, 4, 1, 1600, 0, 900, 1000},
+typedef struct {
+    const char *pair;
+    uint8_t aset, side, pcls, snd;
+    uint16_t dur_ms;
+    uint8_t mp;
+    uint16_t px_ms, sx_ms;
+} MdpRowT;
+static const MdpRowT MDP_ROWS[] = {
+    { "mp-fist-exhausted-ellie-left-enemy-abby-parry-sync", MDU_FIST, 0, 0,
+     0, 3600, 0, 1700, 1700 },
+    { "mp-fist-exhausted-ellie-right-enemy-abby-parry-sync", MDU_FIST, 1,
+     0, 0, 2733, 0, 1533, 1533 },
+    { "mp-switchblade-exhausted-ellie-left-enemy-abby-parry-sync",
+     MDU_KNIFE, 0, 0, 1, 3600, 0, 1633, 1633 },
+    { "mp-switchblade-exhausted-ellie-right-enemy-abby-parry-sync",
+     MDU_KNIFE, 1, 0, 1, 4067, 0, 1633, 1633 },
+    { "mp-1h-blunt-left-1h-parry-sync", MDU_1HBLUNT, 0, 1, 2, 1700, 0,
+     1000, 1000 },
+    { "mp-1h-blunt-right-1h-parry-sync", MDU_1HBLUNT, 1, 1, 2, 1600, 0,
+     1000, 1167 },
+    { "mp-fist-left-1h-parry-sync", MDU_FIST, 0, 1, 0, 1567, 0, 833, 967 },
+    { "mp-fist-right-1h-parry-sync", MDU_FIST, 1, 1, 0, 1733, 0, 833,
+     967 },
+    { "mp-switchblade-left-1h-parry-enter-sync", MDU_KNIFE, 0, 1, 1, 1767,
+     0, 800, 967 },
+    { "mp-switchblade-right-1h-parry-enter-sync", MDU_KNIFE, 1, 1, 1, 1600,
+     0, 667, 833 },
+    { "mp-1h-blade-left-2h-parry-sync", MDU_1HBLADE, 0, 2, 2, 1833, 0,
+     1000, 1167 },
+    { "mp-1h-blade-right-2h-parry-sync", MDU_1HBLADE, 1, 2, 2, 1600, 0,
+     1000, 1167 },
+    { "mp-1h-blunt-left-2h-parry-sync", MDU_1HBLUNT, 0, 2, 2, 1833, 0,
+     1000, 1167 },
+    { "mp-1h-blunt-right-2h-parry-sync", MDU_1HBLUNT, 1, 2, 2, 1600, 0,
+     1000, 1167 },
+    { "mp-fist-left-2h-parry-sync", MDU_FIST, 0, 2, 0, 1567, 0, 1000,
+     1133 },
+    { "mp-fist-right-2h-parry-sync", MDU_FIST, 1, 2, 0, 1400, 0, 1000,
+     1133 },
+    { "mp-switchblade-left-2h-parry-sync", MDU_KNIFE, 0, 2, 1, 1833, 0,
+     1000, 1167 },
+    { "mp-switchblade-right-2h-parry-sync", MDU_KNIFE, 1, 2, 1, 1600, 0,
+     1000, 1167 },
+    { "mp-fist-light-right-parry-enemy-ellie-hit", MDU_FIST, 1, 3, 1, 933,
+     0, 400, 400 },
+    { "mp-switchblade-left-pistol-parry-sync", MDU_KNIFE, 0, 4, 1, 1767, 0,
+     1000, 1000 },
+    { "mp-switchblade-right-pistol-parry-sync", MDU_KNIFE, 1, 4, 1, 1600,
+     0, 900, 1000 },
 };
+
 #define MDP_ROWS_N (sizeof MDP_ROWS / sizeof MDP_ROWS[0])
 /* inventory: pair / swinger half (pak) / parrier half (pak) / frames
    pcls 0 FIST     left  mp-fist-exhausted-ellie-left-enemy-abby-parry-sync   ellie-vs-abby-fist-block-pushoff-left--ellie (anim-melee-ellie-abby-fight) / ellie-vs-abby-fist-block-pushoff-left--abby (anim-melee-ellie-abby-fight)  109 / 109 f
