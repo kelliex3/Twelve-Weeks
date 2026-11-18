@@ -59,6 +59,11 @@ def code_diff_check(old, so, new, sn):
         if so[n][0] - sn[n][0] != D:
             raise SystemExit(f"convert: section {n} moved by {so[n][0] - sn[n][0]:#x}, not {D:#x}")
     hook = set(range(pack_file.HOOK_VMA - pack_file.IMAGE_BASE, pack_file.HOOK_VMA - pack_file.IMAGE_BASE + 6))
+    import patch_winmm                               # the server address sites (--port / another target than the finished DLL's)
+    tva, _tvs, _trs, trp = so[".text"]
+    target = set()
+    for o, n in [(o, 4) for o in patch_winmm.IP_OFFS] + [(o, 2) for o in patch_winmm.PORT_OFFS]:
+        target.update(range(o - trp + tva, o - trp + tva + n))
     for nm in (".text",) + tuple(moved):
         va, vs, rs, rp = so[nm]
         vb, _, rsb, rpb = sn[nm]
@@ -66,12 +71,15 @@ def code_diff_check(old, so, new, sn):
             raise SystemExit(f"convert: section {nm} raw size {rs:#x} -> {rsb:#x}")
         xa, xb = bytes(old[rp:rp + rs]), bytes(new[rpb:rpb + rs])
         shift = va - vb
-        cov, kinds, bad = set(), {"abs": 0, "rel": 0, "hook": 0}, []
+        cov, kinds, bad = set(), {"abs": 0, "rel": 0, "hook": 0, "target": 0}, []
         for k in (i for i in range(rs) if xa[i] != xb[i]):
             if k in cov:
                 continue
             if nm == ".text" and va + k in hook:
                 kinds["hook"] += 1
+                continue
+            if nm == ".text" and va + k in target:
+                kinds["target"] += 1
                 continue
             hit = None
             for s in range(max(0, k - 3), min(k, rs - 4) + 1):
@@ -86,7 +94,7 @@ def code_diff_check(old, so, new, sn):
                     break
             if not hit:
                 bad.append(k)
-        print(f"  section {nm:9s} raw {rs:#x}: {kinds['abs']} moved addresses, {kinds['rel']} moved rel32, {kinds['hook']} hook bytes, "
+        print(f"  section {nm:9s} raw {rs:#x}: {kinds['abs']} moved addresses, {kinds['rel']} moved rel32, {kinds['hook']} hook bytes, {kinds['target']} server address bytes, "
               f"{len(bad)} unexplained")
         if bad:
             raise SystemExit(f"convert: {nm} differs at {', '.join(hex(pack_file.IMAGE_BASE + va + k) for k in bad[:12])}: the patch chain "
