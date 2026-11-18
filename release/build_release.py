@@ -292,6 +292,13 @@ def main():
         print("release build: --p1-side: FULL client (no slim), Part I data goes to part1.dat, never into winmm.dll")
     else:
         os.environ.pop("T2R_P1_SIDE", None); os.environ.pop("T2R_P1_CONV", None)
+    # the mod data pack in a file beside winmm.dll (tools/features/pack_file.py): the image stays ~170 MB whatever the content, far from the
+    # Windows loader's ~2,000,000,000-byte edge. Default ON; T2R_PACK_FILE=0 = the old in-image pack. A slim client keeps the old pack.
+    if os.environ.get("T2R_SLIM") == "1":
+        os.environ["T2R_PACK_FILE"] = "0"
+    os.environ.setdefault("T2R_PACK_FILE", "1")
+    pack_file_on = os.environ["T2R_PACK_FILE"] == "1"
+    print("release build: mod data %s" % ("in client/t2r-maps/main/t2r-data.bin (T2R_PACK_FILE=1)" if pack_file_on else "inside winmm.dll (T2R_PACK_FILE=0)"))
     inherited = os.environ.pop("T2R_SP_MAPS", None)        # never inherited: only --sp-maps decides
     os.environ.pop("T2R_P1_LEVELS", None)                  # (isolation-build switch: never in a release)
     with step("setup (sp-maps check, staging folders, git stamp)"):
@@ -348,11 +355,17 @@ def main():
     import pefile
     _soi = pefile.PE(feat, fast_load=True).OPTIONAL_HEADER.SizeOfImage
     print("winmm SizeOfImage 0x%x" % _soi)
+    data_file = None
+    if pack_file_on:
+        data_file = os.path.splitext(feat)[0] + "-t2r-data.bin"        # (= build_dll.pack_file_path)
+        if not os.path.isfile(data_file) or os.path.getmtime(data_file) < wall_start:
+            raise SystemExit("T2R_PACK_FILE: %s was not written by this build" % data_file)
+        print("mod data file %s: %d bytes" % (data_file, os.path.getsize(data_file)))
     if _soi >= 0x71A4E000:      # largest image proven to load (re: winmm-image-limit); 0x79ED5000 failed with 0xC000007B
         raise SystemExit("winmm SizeOfImage 0x%x is over the proven-loadable 0x71A4E000: the game may not start" % _soi)
     with step("payload audit (the finished full DLL's archive read back: suppressed-rifle carrier bank + MP level adds)"):
         # A past build shipped silent suppressed rifles with every staging check green: this reads the FINAL packed bytes the way the game does
-        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "features", "payload_audit.py"), feat], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "features", "payload_audit.py"), data_file or feat], capture_output=True, text=True)
         print((r.stdout + r.stderr).strip()[-1500:])
         if r.returncode:
             raise SystemExit("payload audit failed (see above): the build would ship broken data")
@@ -369,6 +382,9 @@ def main():
     else:
         with step("copy winmm.dll into the client"):
             shutil.copy(feat, os.path.join(client, "winmm.dll"))
+            if data_file:      # the launcher copies client/t2r-maps/** into the game folder (by size + first/last 64 KB; the build id is in both)
+                os.makedirs(os.path.join(client, "t2r-maps", "main"))
+                shutil.copy(data_file, os.path.join(client, "t2r-maps", "main", "t2r-data.bin"))
         chk_job = None
     with step("wait for the t2r-ext dll (compiled beside the data build)"):
         ext_dll = ext_job.result()
@@ -444,7 +460,7 @@ def main():
         write_zip(tmpz, client, out)
         with zipfile.ZipFile(tmpz) as z:
             names = set(z.namelist())
-    required = [m for m in ZIP_REQUIRED if not (sid_in_dat and m == "client/tlou-ii-mp/sidbase.bin")] + (["client/t2r-slim.dat"] if sid_in_dat else [])
+    required = [m for m in ZIP_REQUIRED if not (sid_in_dat and m == "client/tlou-ii-mp/sidbase.bin")] + (["client/t2r-slim.dat"] if sid_in_dat else [])         + (["client/t2r-maps/main/t2r-data.bin"] if data_file else [])
     missing = [m for m in required if m not in names]
     size = os.path.getsize(tmpz)
     if missing or (a.max_zip_mb and size > a.max_zip_mb * 1_000_000):

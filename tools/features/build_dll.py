@@ -2804,6 +2804,14 @@ def join_ext_compile():
 
 
 _P1_VIRT = None
+# T2R_PACK_FILE=1 (tools/features/pack_file.py): the payload goes to <out>-t2r-data.bin (shipped as <game>/t2r-maps/main/t2r-data.bin), the
+# image keeps a 64 KiB stub, so SizeOfImage no longer grows with the content (Windows refuses images over ~2,000,000,000 bytes).
+PACK_FILE = os.environ.get("T2R_PACK_FILE") == "1"
+
+
+def pack_file_path(dll_out):
+    """where build_dll writes the data file of the DLL `dll_out` (build_release copies it into client/t2r-maps/main/t2r-data.bin)"""
+    return os.path.splitext(os.path.abspath(dll_out))[0] + "-t2r-data.bin"
 
 
 def _pack_virt(t2r_pack, finish):
@@ -2894,7 +2902,9 @@ def build(a, salt):
         import slim
         _SLIM_PLAN = slim.plan(STAGE)
         _prof.lap("slim: plan (classify vs the game's files)")
-    if _P1_VIRT:
+    if PACK_FILE:
+        assert not SLIM, "T2R_PACK_FILE=1 and T2R_SLIM=1 cannot be combined"
+    elif _P1_VIRT:
         assert not SLIM, "T2R_P1_SIDE=1 and T2R_SLIM=1 cannot be combined"
     else:
         out = _pack_cached(t2r_pack, _SLIM_PLAN["drop"] if _SLIM_PLAN else ())
@@ -2915,7 +2925,11 @@ def build(a, salt):
         out, _sp_rva, _sp_vs = stubpool.add(out)
         stubpool.check(out)
         print(f"stubpool: .t2rstub rva {_sp_rva:#x} size {_sp_vs:#x}")
-        if _P1_VIRT:        # the side-file cave (p1_side_map.py): maps part1.dat behind the blob at the loader; a probe image (side_info None) only needs the layout
+        if PACK_FILE:       # the data-file cave (pack_file.py): maps t2r-data.bin (+ part1.dat behind it) at the loader
+            import pack_file
+            out = pack_file.add(out, side_info["size1"], side_info["fnv"], side_info["size2"], side_info["build_id"])
+            pack_file.check(out, side_info["size1"], side_info["fnv"], side_info["build_id"])
+        elif _P1_VIRT:        # the side-file cave (p1_side_map.py): maps part1.dat behind the blob at the loader; a probe image (side_info None) only needs the layout
             import p1_side_map
             out = p1_side_map.add(out, side_info["size2"] if side_info else 1, side_info["build_id"] if side_info else bytes(16))
             p1_side_map.check(out)
@@ -2931,7 +2945,12 @@ def build(a, salt):
         return out
 
     side = None
-    if _P1_VIRT:
+    payload = None
+    if PACK_FILE:
+        out, payload, side, _sinfo = t2r_pack.pack_file_bytes(BASE_DLL, STAGE, _P1_VIRT["paths"] if _P1_VIRT else ())
+        out = finish(out, _sinfo)
+        _prof.lap("pack: finish (stub image)")
+    elif _P1_VIRT:
         out, side, _sinfo = _pack_virt(t2r_pack, finish)
     else:
         out = finish(out, None)
@@ -2939,6 +2958,15 @@ def build(a, salt):
     with open(os.path.abspath(a.out), "wb") as f:
         f.write(out)
     print(f"{a.out}: {ips.pop()}:{ports.pop()} -> {patch_winmm.current_target(out)}")
+    if PACK_FILE:
+        import pack_file
+        import pefile
+        dp = pack_file_path(a.out)
+        n = pack_file.write_data_file(dp, payload, _sinfo["fnv"], _sinfo["build_id"])
+        soi = pefile.PE(data=out, fast_load=True).OPTIONAL_HEADER.SizeOfImage
+        print(f"pack file: {dp}: {n} bytes (payload {_sinfo['size1']}, fnv {_sinfo['fnv']:016x}, build id {_sinfo['build_id'].hex()}); "
+              f"winmm {len(out)} bytes, SizeOfImage {soi:#x}; deliver as <game>/{pack_file.DATA_REL}")
+        del payload
     if _P1_VIRT:
         p1_side.write_virt_outputs(p1_side.out_dir(ROOT), _P1_VIRT["entries"], _P1_VIRT["kept"], side)
         print(f"p1 side: deliver {a.out} + {p1_side.out_dir(ROOT)}/part1.dat + manifest.txt (launcher: <game dir>/t2r-maps/part1/); self-test: re/part1/side-selftest.md")

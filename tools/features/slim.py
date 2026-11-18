@@ -264,11 +264,17 @@ class Blob:
         self.np = np
         self.f = open(path, "rb")
         self.mm = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
-        off = _find_blob(path)
-        magic, ver, size, h = struct.unpack_from("<4sIQQ", self.mm, off)
-        if magic != b"T2ME" or ver != 4:
-            raise SystemExit("not a T2ME blob")
-        self.off, self.size, self.hash = off + 0x18, size, h
+        if self.mm[:4] == b"T2RD":          # T2R_PACK_FILE data file (pack_file.py): payload at 0x10000, size + FNV in the header
+            ver, size, h = struct.unpack_from("<IQQ", self.mm, 4)
+            if ver != 1:
+                raise SystemExit("t2r-data.bin: unknown version %d" % ver)
+            self.off, self.size, self.hash = 0x10000, size, h
+        else:
+            off = _find_blob(path)
+            magic, ver, size, h = struct.unpack_from("<4sIQQ", self.mm, off)
+            if magic != b"T2ME" or ver != 4:
+                raise SystemExit("not a T2ME blob")
+            self.off, self.size, self.hash = off + 0x18, size, h
         n = struct.unpack_from("<I", self.dec(8, 12), 0)[0]
         d = self.dec(0x28, 0x28 + n * 0x20)
         self.n = n

@@ -536,6 +536,46 @@ def _gapless(p, data):
     return out
 
 
+STUB_PAYLOAD = 0x10000      # T2R_PACK_FILE: payload bytes kept in the image (tools/features/pack_file.py STUB)
+
+
+def write_dll_stub(dll_bytes, prefix):
+    """T2R_PACK_FILE (tools/features/pack_file.py): a small T2ME blob (header + the payload's first bytes) written IN PLACE of the original
+    resource; the resource entry's size becomes the stub size so shrink_rsrc drops the rest from the file. No `.t2rc` section: SizeOfImage
+    stays the base image's. The loader checks the stub (magic, version, size, FNV) as before; the cave then points [d0]/[d8] at the file."""
+    pe, ent, off = find_blob(dll_bytes)
+    t2me = struct.pack("<4sIQQ", b"T2ME", 4, len(prefix), fnv_payload(prefix)) + bytes(prefix)
+    assert len(t2me) <= ent.Size and len(t2me) < 0x100000, (len(t2me), ent.Size)
+    out = bytearray(dll_bytes)
+    out[off:off + ent.Size] = b"\0" * ent.Size
+    out[off:off + len(t2me)] = t2me
+    struct.pack_into("<I", out, ent.get_file_offset() + 4, len(t2me))
+    struct.pack_into("<I", out, pe.OPTIONAL_HEADER.get_file_offset() + 64, 0)   # CheckSum: not enforced for DLLs
+    return bytes(out)
+
+
+def pack_file_bytes(dll, in_dir, side_paths=()):
+    """T2R_PACK_FILE build: the whole encrypted payload goes to t2r-data.bin (pack_file.write_data_file), the image keeps a stub.
+    side_paths (P1-side builds): their data is laid out last and cut at a 64 KiB boundary (split_payload, delta 0: the payload starts on a
+    view boundary in t2r-data.bin) and returned as part1.dat bytes.
+    -> (image bytes, payload, side file bytes (encrypted tail + 16-byte build id) or None, info {size1, size2, build_id, fnv})"""
+    meta, files = load_dir(in_dir)
+    phys, side, info = split_payload(meta, files, side_paths, 0)
+    if side_paths:
+        assert side and len(phys) % 0x10000 == 0, "pack file: the Part I cut is not on a 64 KiB boundary"
+    fnv = fnv_payload(phys)
+    out = write_dll_stub(dll if isinstance(dll, (bytes, bytearray)) else open(dll, "rb").read(), phys[:STUB_PAYLOAD])
+    enc, _h = read_t2me(out)
+    assert enc == phys[:STUB_PAYLOAD], "T2ME stub in the image differs from the one built"
+    if os.environ.get("T2R_FAST_PACK") != "1":
+        m2, f2 = psarc_read(dsar_read(info["dsar"]), files)
+        assert f2 == files and m2["paths"] == meta["paths"], "round-trip mismatch"
+    del info["dsar"]
+    bid = hashlib.sha256(phys).digest()[:16]
+    print(f"{len(files)} files, data file payload {len(phys) / 1e6:.1f} MB" + (f" + side {len(side) / 1e6:.1f} MB" if side else "") + ", verified")
+    return out, phys, (side + bid) if side else None, {"size1": len(phys), "size2": len(side), "build_id": bid, "fnv": fnv, "cut": info["cut"], "delta": 0}
+
+
 def load_dir(in_dir):
     lines = open(os.path.join(in_dir, "_t2r_manifest.txt")).read().split("\n")
     kv = dict(x.split("=") for x in lines[0].split())
