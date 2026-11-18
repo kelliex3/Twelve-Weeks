@@ -284,6 +284,7 @@ def main():
                 os.remove(os.path.join(game, f))
         shutil.rmtree(os.path.join(game, "tlou-ii-mp"), ignore_errors=True)
         shutil.rmtree(os.path.join(game, "t2r-steam"), ignore_errors=True)
+        shutil.rmtree(os.path.join(game, "t2r-maps", "main"), ignore_errors=True)
         orig = os.path.join(game, "winmm.dll.t2r-original")
         if os.path.exists(orig):
             os.rename(orig, os.path.join(game, "winmm.dll"))
@@ -303,6 +304,25 @@ def main():
         if not os.path.exists(os.path.join(game, f)):
             sys.exit("%s is not in the game folder after copying (read-only folder or a cleanup tool?): %s" % (f, game))
         say("installed %s (%d bytes)" % (f, os.path.getsize(os.path.join(game, f))))
+    # t2r-maps/** beside winmm.dll: the mod data (main/t2r-data.bin, which winmm.dll needs to start at all) and the Part I map data.
+    # copy2 keeps the write time, so size + write time tell a current copy from an older build's one.
+    maps = os.path.join(HERE, "t2r-maps")
+    for root, _dirs, names in os.walk(maps):
+        for n in names:
+            src = os.path.join(root, n)
+            out = os.path.join(game, "t2r-maps", os.path.relpath(src, maps))
+            st = os.stat(src)
+            if os.path.exists(out) and os.path.getsize(out) == st.st_size and int(os.path.getmtime(out)) == int(st.st_mtime):
+                continue
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            say("copying t2r-maps/%s (%d MB) ..." % (os.path.relpath(src, maps).replace(os.sep, "/"), st.st_size >> 20))
+            if os.path.exists(out):
+                os.remove(out)                            # never write through a hard link
+            shutil.copy2(src, out + ".tmp")
+            os.replace(out + ".tmp", out)
+    data = os.path.join(HERE, "t2r-maps", "main", "t2r-data.bin")
+    if os.path.exists(data) and os.path.getsize(os.path.join(game, "t2r-maps", "main", "t2r-data.bin")) != os.path.getsize(data):
+        sys.exit("t2r-maps/main/t2r-data.bin did not copy completely into the game folder (disk full?): %s" % game)
     os.makedirs(os.path.join(game, "tlou-ii-mp"), exist_ok=True)
     for f in glob.glob(os.path.join(HERE, "tlou-ii-mp", "*")):
         shutil.copy(f, os.path.join(game, "tlou-ii-mp"))

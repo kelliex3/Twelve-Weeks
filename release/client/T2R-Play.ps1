@@ -254,6 +254,7 @@ function Sync-ModMaps([string]$game) {
         $p = Join-Path (Join-Path $game "t2r-maps") $rel
         New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
         Write-Host "Copying t2r-maps\$rel ..." -ForegroundColor Cyan
+        Remove-Item $p -Force -ErrorAction SilentlyContinue      # never write through a hard link
         Copy-Item (Join-Path $root $rel) $p -Force
         Write-Log ("t2r-maps\$rel copied: " + (Describe-File $p))
     }
