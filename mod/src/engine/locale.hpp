@@ -15,6 +15,14 @@ namespace engine::locale {
     bool        IsPolish();
     const char* Code();      // "en" / "pl"
 
+    // The ext's loc.c translation layer. Translate() is LocTr (the text of an English
+    // string in the active language) and TranslateDraw() is LocTrDraw (the same, with
+    // diacritics folded for the raw text draws). The generated loc tables are not ported
+    // yet, so both return `s` unchanged -- every caller already treats the returned
+    // pointer as "the text to draw" (a pass-through is a valid answer).
+    const char* Translate(const char* s);       // ext: LocTr
+    const char* TranslateDraw(const char* s);   // ext: LocTrDraw
+
     // Re-read immediately on the next call (test / level-reload helper).
     void Reset();
 

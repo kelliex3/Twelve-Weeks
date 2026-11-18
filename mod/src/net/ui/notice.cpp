@@ -15,6 +15,7 @@
 #include "net-account.hpp"
 #include "net-matchmaking.hpp"
 #include "net-gui2.hpp"
+#include "notify.hpp"
 #include "daemon-rpc.hpp"
 
 #include <atomic>
@@ -76,7 +77,11 @@ namespace net::notice {
         {
             if (!text || !text[0])
                 return;
-            HUD::SHOW_NOTIFICATION(text, secs > 0.0f ? secs : 5.0f, 1);
+            const float s = secs > 0.0f ? secs : 5.0f;
+            // The styled notification takes it in a match and on the menu pages; where it
+            // cannot (older pak, widgets missing) the plain HUD line stays.
+            if (!net::notify::Push(net::notify::NTF_SERVER, text, s))
+                HUD::SHOW_NOTIFICATION(text, s, 1);
         }
 
         bool IsKick(const char* t)

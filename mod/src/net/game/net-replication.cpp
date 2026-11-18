@@ -8,6 +8,8 @@
 #include "kill-feed.hpp"
 #include "net-gui2.hpp"
 #include "scopeglint.hpp"
+#include "notify.hpp"
+#include "glass.hpp"
 #include "net-timer.hpp"
 
 #include <cmath>
@@ -1535,6 +1537,7 @@ namespace net::replication {
             net::gui2::RefreshWidgets();
             DrawKillFeed();
             DrawRadar();
+            net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
         }
 
         const bool mnk = DC::Call<"is-mnk-primary-input-device?">();
@@ -1856,6 +1859,11 @@ namespace net::replication {
 
         case NEVT_SCOPE_GLINT: {
             net::scopeglint::OnEvent(senderSlot, data, size);
+            break;
+        }
+
+        case NEVT_GLASS: {
+            net::glass::OnEvent(senderSlot, data, size);
             break;
         }
 

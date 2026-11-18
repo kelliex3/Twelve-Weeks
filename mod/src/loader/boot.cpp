@@ -15,6 +15,9 @@
 #include "gameplay/barrel-check.hpp"
 #include "net/ui/notice.hpp"
 #include "net/ui/scopeglint.hpp"
+#include "net/ui/notify.hpp"
+#include "net/ui/denynote.hpp"
+#include "net/game/glass.hpp"
 #include "hwid.hpp"
 #include "log.hpp"
 
@@ -146,6 +149,9 @@ namespace boot {
 		NetTick();                // the entire MP driver
 		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
 		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
+		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
+		net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
+		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
 #ifdef TO1_DEBUG
 		engine::debugdraw::Tick();
 #endif

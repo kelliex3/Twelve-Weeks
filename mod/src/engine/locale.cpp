@@ -76,6 +76,18 @@ namespace engine::locale {
         return Current() == Lang::Polish ? "pl" : "en";
     }
 
+    const char* Translate(const char* s)
+    {
+        // No tables yet: the English string is the answer (as LocTr's own miss path).
+        return s;
+    }
+
+    const char* TranslateDraw(const char* s)
+    {
+        // No tables yet: nothing to translate, so nothing to fold.
+        return s;
+    }
+
     void Reset()
     {
         g_at = 0;

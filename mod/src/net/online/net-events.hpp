@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <unordered_set>
 
-constexpr size_t kMaxEventPayload = 200;
+// `size` on the wire is a uint8_t, so 255 is the hard ceiling. Raised from 200 for the
+// glass joiner message (2 + 12 * 20 = 242 bytes); internal buffer only, no wire change.
+constexpr size_t kMaxEventPayload = 255;
 
 struct NetPendingEvent {
     uint32_t id;

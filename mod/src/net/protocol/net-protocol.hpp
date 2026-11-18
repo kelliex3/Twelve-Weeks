@@ -174,6 +174,12 @@ enum NetEventType : uint8_t {
     NEVT_EXECUTION_REQUEST,  // ExecutionRequestEvent -- may I execute you?
     NEVT_EXECUTION_REPLY,    // ExecutionReplyEvent   -- yes / no
 
+    // Ported from tools/ext/glass.c (MSG_GLASS): a broken window piece. Pinned to the ext's
+    // own byte 0x7A so the two transports interoperate during the cutover.
+    //   [u8 1][u64 pane id][u32 piece][u8 nargs][nargs x 16B event arg slots]   one break
+    //   [u8 2][u8 n][n x ([u64 pane id][u32 piece])]                           panes broken here
+    NEVT_GLASS = 0x7A,
+
     // Ported from tools/ext/scopeglint.c (MSG_GLINT): [u8 on] -- that player is scoped in /
     // out. Pinned to the ext's own byte 0x91 so the two transports interoperate during the
     // cutover.
