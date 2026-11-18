@@ -10,6 +10,7 @@
 #include "scopeglint.hpp"
 #include "notify.hpp"
 #include "glass.hpp"
+#include "afk.hpp"
 #include "net-timer.hpp"
 
 #include <cmath>
@@ -1538,6 +1539,7 @@ namespace net::replication {
             DrawKillFeed();
             DrawRadar();
             net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
+            net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
         }
 
         const bool mnk = DC::Call<"is-mnk-primary-input-device?">();

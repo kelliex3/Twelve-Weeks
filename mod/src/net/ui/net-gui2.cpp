@@ -12,6 +12,7 @@
 #include "net-player.hpp"
 #include "net-debug.hpp"
 #include "engine/framecap.hpp"
+#include "engine/local-player.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdio>
@@ -886,6 +887,44 @@ namespace net::gui2 {
     bool PauseMenuOpen()
     {
         return MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/pause-menu"));
+    }
+
+    bool MenuUp()
+    {
+        // ext HUD_MENU_UP() / HudStateTick: in-match, the pause menu anywhere on the
+        // stack, or a page pushed above the match's base page. The ext compares the top
+        // page against the base page's id (0xebfa61ff33c5e658); that id is not identified
+        // in the mod, so this names the in-match menu pages it can instead: the options
+        // sub-page and the scoreboard. The backpack / TAB page is a menu that is part of
+        // play and is deliberately NOT counted (the ext ignores its page too).
+        if (!InMatch())
+            return false;
+        if (MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/pause-menu")))
+            return true;
+        const StringId64 top = MENU2::GET_TOP_PAGE_IN_STACK(MenuStack::hudMenuStack);
+        return top == TO1_HUD("options-menu-ingame") || top == TO1_HUD("scoreboard");
+    }
+
+    int PlayerMenuActive()
+    {
+        // ext PlayerMenuActive(): menu2-player-menu-active? is a TYPED binding -- its rec+8
+        // is a descriptor (calling it there crashed the ext), rec+0x10 the impl, invoked
+        // with the local player object in RCX and answering in the low byte. 1 = open,
+        // 0 = closed, -1 = the native or the player is unavailable.
+        const uintptr_t me = ::engine::local_player::Ptr();
+        if (!me)
+            return -1;
+        const uint64_t raw = DC::CallTyped<"menu2-player-menu-active?">(me);
+        if (raw == static_cast<uint64_t>(-1))
+            return -1;
+        return static_cast<int>(raw & 0xff);
+    }
+
+    bool BackpackOpen()
+    {
+        // ext g_tabOpen (feature_menus): the backpack (or its buy page) is open. TAB
+        // pushes "to1/backpack-menu" on the HUD menu stack.
+        return MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/backpack-menu"));
     }
 
     static void SetDeathBannerWeaponIcon(const char* weaponName);

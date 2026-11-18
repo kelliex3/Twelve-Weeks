@@ -144,6 +144,12 @@ OVERLAP = {
     "clan13": "net/online/net-session.cpp", "clancard": "net/online/net-session.cpp",
     "clanperk": "net/online/net-session.cpp", "clanend": "net/online/net-session.cpp",
     "friends13": "net/ui/*", "weather": "net/game/*", "modepick": "net/ui/net-gui2.cpp",
+    "shiv_sting": "net/audio/shivsting.cpp, engine/pcm.cpp",
+    "alert_sting": "net/audio/alertsting.cpp, engine/pcm.cpp",
+    "afk": "net/match/afk.cpp, engine/pad.cpp",
+    "padinject": "engine/pad.cpp (activity only)",
+    # No overlap: pinned so the heuristic's "sting" token does not match the new audio modules.
+    "pullout_sting": "",
 }
 
 # Porting status, curated by hand: the per-feature workflow adds the module here once its
@@ -152,6 +158,14 @@ OVERLAP = {
 STATUS = {
     "notice": "ported", "scopeglint": "ported", "notify": "ported",
     "denynote": "ported", "glass": "ported",
+    # PCM mixer + the two stings' logic are ported (engine/pcm, net/audio/*); the sting
+    # triggers (xcam / music tier), the music-side drum cut and the PCM data are still
+    # gated, so these are in progress, not ported.
+    "shiv_sting": "in progress", "alert_sting": "in progress",
+    # The AFK watchdog + the pad-activity dependency are ported (net/match/afk,
+    # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
+    # counters are still gated, so it is in progress, not ported.
+    "afk": "in progress",
 }
 
 mod_files = []

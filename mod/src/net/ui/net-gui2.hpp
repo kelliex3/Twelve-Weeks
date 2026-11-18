@@ -72,6 +72,22 @@ namespace net::gui2 {
 
     bool         PauseMenuOpen();
 
+    // ext HUD_MENU_UP() / g_hud_menu: a menu is over the HUD this frame, so every HUD
+    // text draw is masked. In-match only: the pause menu anywhere on the stack, or a
+    // page above the match's base page. Play menus (backpack / TAB) are deliberately
+    // excluded, matching the ext. The ext knows the base-page id; the mod does not, so
+    // this checks the in-match menu pages it can name.
+    bool         MenuUp();
+
+    // ext PlayerMenuActive(): the engine's menu2-player-menu-active? for the local
+    // player. 1 = open, 0 = closed, -1 = the native / the player is unavailable.
+    int          PlayerMenuActive();
+
+    // ext g_tabOpen: the in-match backpack / store page is on the HUD menu stack -- a
+    // menu that is part of play (TAB). Not a menu-up for the HUD, but it does freeze the
+    // AFK count.
+    bool         BackpackOpen();
+
     void SetDeathBannerKiller(const char* killerName, const char* weaponName);
     void SetDeathBannerRespawn(int seconds);
     void SetDeathBannerVisible(bool visible);

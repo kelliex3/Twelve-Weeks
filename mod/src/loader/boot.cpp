@@ -18,6 +18,9 @@
 #include "net/ui/notify.hpp"
 #include "net/ui/denynote.hpp"
 #include "net/game/glass.hpp"
+#include "net/audio/shivsting.hpp"
+#include "net/audio/alertsting.hpp"
+#include "net/match/afk.hpp"
 #include "hwid.hpp"
 #include "log.hpp"
 
@@ -152,6 +155,9 @@ namespace boot {
 		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
 		net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
 		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
+		net::audio::shivsting::Tick();  // shiv victim shock sting (ported from tools/ext/shiv_sting.c)
+		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
+		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 #ifdef TO1_DEBUG
 		engine::debugdraw::Tick();
 #endif

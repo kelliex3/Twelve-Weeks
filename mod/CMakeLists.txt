@@ -239,7 +239,7 @@ endforeach()
 target_include_directories(tlou-ii-mp PRIVATE
     src
     "${CMAKE_BINARY_DIR}/generated"
-    src/net/base src/net/protocol src/net/online src/net/match src/net/anim src/net/game src/net/ui)
+    src/net/base src/net/protocol src/net/online src/net/match src/net/anim src/net/game src/net/ui src/net/audio)
 
 target_compile_definitions(tlou-ii-mp PRIVATE
     _CRT_SECURE_NO_WARNINGS

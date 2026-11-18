@@ -290,6 +290,22 @@ namespace DC
 		return detail::InvokeV2<functionName>(static_cast<int>(sizeof...(Args)), detail::Pack(args...));
 	}
 
+	// A TYPED binding (ext skills.c / afk.c): rec+8 holds a descriptor (the DcCallFunc the
+	// interpreter uses), rec+0x10 the C++ impl called directly -- arguments in RCX/RDX/R8/R9,
+	// the result in RAX. DC::Call jumps into rec+8 and would crash on these ("its rec+8 is a
+	// descriptor", ext PlayerMenuActive). Use this only for the typed-binding natives
+	// (menu2-player-menu-active?, the upgrade natives, ...); a missing native answers -1.
+	template <fixed_string functionName, typename RetT = uint64_t, typename... Args>
+	RetT CallTyped(Args... args)
+	{
+		constexpr StringId64 funcHash = SID(functionName.data);
+		const DcValue* rec = DcManager::Lookup(funcHash);
+		if (!rec || !rec->val[2])
+			return static_cast<RetT>(-1);
+		using Fn = RetT(__fastcall*)(Args...);
+		return reinterpret_cast<Fn>(rec->val[2])(args...);
+	}
+
 	template<fixed_string functionName>
 	uint64_t GetFunctionAddress()
 	{

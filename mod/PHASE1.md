@@ -16,9 +16,9 @@ mod, the deliverable is *verification + extension*, not a rewrite.
 | 1 | Native invocation (DC lookup → call) | `DcCall` / `*(rec+0x10)` | **exists** — `DC::Call`, `DC::Call_V2` | cached-native helper; convention doc |
 | 2 | Net event channel | `SendEvent` (winmm `0x18005DC60`, opcodes `0x41..0xAF`) | **exists** — `NetEventType` + `net::session::SendEvent` | slot reservation + exact-byte compatibility |
 | 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*` | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source |
-| 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c` | **missing** — only engine `AUDIO::PLAY_SOUND` | whole mixer |
+| 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c` | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring |
 | 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV` | render-camera path + track evaluator |
-| 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **missing** — only reads `JOYPAD_COMMAND_ACTIVE` | whole injection path |
+| 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **partial** — `engine/pad.*` (activity only: `Joypad::Update` hook, button-edge / stick stamp for AFK); injection path missing | whole injection path |
 | 7 | Generated data pipeline | 78 headers (`tools/ext/GENERATED.md`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy |
 | 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config |
 
@@ -44,6 +44,9 @@ every frame; `DC::Call` re-looks-up each call). Nothing is missing structurally.
 **Deliverable.** A small `DC::Native<"name">` (lookup once → hold `val[1]`/`val[2]` fn pointer →
 `operator()`) plus a short section in `PORTING.md` documenting the mapping
 `ext DcCall(sid, n, ...)` ⇄ `DC::Call` / `DC::Call_V2`. Verify against a known feature call.
+A third ext route exists: the **typed binding** at `rec+0x10` (ext `skills.c` / `afk.c` — "its
+rec+8 is a descriptor"), called with arguments in RCX/RDX/R8/R9 and the result in RAX; that is
+`DC::CallTyped<"name">` (added with the AFK port, `menu2-player-menu-active?`). Document all three.
 
 **Gate.** Port one native-heavy call path (e.g. the `notice` 0xBA poll) using only mod wrappers; no
 new lookup code.
@@ -116,7 +119,7 @@ and a committed `mod/widgets/*.widget.json`.
 
 ---
 
-## 4. PCM audio mixer — missing
+## 4. PCM audio mixer — partial (`engine/pcm.*`)
 
 **Ext mechanism.** A `waveOut`-based raw-PCM player (`loadseq.c`, `t2r-ext.c`) with per-cue gain,
 fade, loop and (for some) positional playback. ~16 features depend on it (`alert_sting`, `bomb_roll`,
@@ -127,15 +130,29 @@ fade, loop and (for some) positional playback. ~16 features depend on it (`alert
 `PLAY_VOICE_LINE`, `AUDIO_GAMEPLAY_EVENT`, `PLAY_MUSIC_PLAYLIST`, `STOP_MUSIC_PLAYLIST`. There is
 **no** raw-PCM path.
 
-**Gap.** The whole mixer. Design decision: `waveOut` (what the ext does — simple, but a second audio
-device consumer inside winmm) **vs** the engine's own voice API (if a raw-buffer voice is reachable).
-Reproduce the ext's *behaviour* (gain curve, fade in/out, loop points, crossfade for `downed_music`)
-regardless of the backend.
+**Ported.** `src/engine/pcm.hpp/.cpp` reproduces the ext's mixer *behaviour*: one persistent
+`waveOut` stream for the process lifetime (real winmm loaded from System32 by full path — this
+module is itself the winmm proxy), a software mixer thread resampling voices to 48 kHz stereo into
+6 x 20 ms event-callback buffers, 32 voices, a 2 ms fade in / out per voice, the soft limiter (knee
+0.8, tanh to 1.0) and reopen-after-repeated-write-failure. Voices are typed handles (`Voice { slot,
+src }`), so a slot reused by another sound makes `Live()` false and `Cut()` a no-op. The gain model
+(`SfxUserVolume` / `MusicUserVolume`, ext `SfxOptionRaw` / `GeneralVolume` / `exmus_user_volume`)
+reads the game's own sliders times the general volume, degrading to 1.0 when the (still INFERRED)
+engine offsets cannot be read. The first two features sit on it: `net/audio/shivsting.*` and
+`net/audio/alertsting.*`.
 
-**Deliverable.** `src/engine/pcm.hpp/.cpp`: load a PCM buffer, play with gain/fade/loop, stop,
-per-cue handles, and a per-frame `Tick()` (called from the mod's frame hook). Source the buffers from
-generated PCM headers (item 7). `mod/scripts/make-xvag.py` already exists and is the model for the
-generator wiring.
+**Dropped on purpose.** The ext's page-fault / prefetch / warm-worker, lock-timing instrumentation,
+mix-dump file and MMCSS workarounds (dev-only perf, not behaviour), and the 3D voice fields
+(`dyn` / `ent` / `wp` / `rnear` / `rfar` + per-frame gain ramp) — no ported feature is 3D yet.
+
+**Gap.** 3D / positional voices, loop points and the crossfade used by `downed_music`, and the data
+wiring (item 7): the sting PCM blobs are private generators, so `net/audio/*` compiles with the
+`T2R_DATA_*` gates off and `Start()` / `Play()` are no-ops until the headers exist. The sting
+*triggers* (the xcam hook and the music tier) are also unported, so the two stings are wired but
+cannot fire on their own yet.
+
+**Deliverable.** `src/engine/pcm.hpp/.cpp` — done. Source the buffers from generated PCM headers
+(item 7). `mod/scripts/make-xvag.py` already exists and is the model for the generator wiring.
 
 **Gate.** Port one PCM feature (`shiv_sting` or `alert_sting`) and confirm the cue plays, fades and
 loops identically to the ext's.
@@ -162,7 +179,7 @@ update) + a `CameraTrack` evaluator that consumes generated tracks. Keep the DC 
 
 ---
 
-## 6. Pad injection — missing
+## 6. Pad injection — partial (activity detection ported)
 
 **Ext mechanism** (`padinject.c`). The engine's gameplay input is the `Pad`→`Joypad` pipeline, not
 XInput. The ext re-points the 5 `Joypad::Update` call sites (+2 reader sites) to thunks that OR an
@@ -170,14 +187,22 @@ injected button mask into `Pad+0x528` and set the injected stick floats, then ca
 `Joypad::Update` — giving a genuine press edge with timestamps. Gated by
 `t2r-no-pad-inject.txt`. Needed by `bot`, `melee_dodge`, QTE, and the test harnesses.
 
-**Mod today.** Read-only: `DC::JOYPAD_COMMAND_ACTIVE`. No injection.
+**Mod today.** `engine/pad.*` ports only the **activity** half the ext's hook carries: a single
+`safetyhook` inline hook on `Joypad::Update` (RVA `0x1593350`, prologue-checked) stamps
+`ActivityMs()` when any Pad's button mask (`Pad+0x528`) changes or a stick passes 0.3, with a
+per-Pad last-mask table so the engine reading several Pads on alternate frames never looks like a
+press. `Ready()` replaces the ext's `PadinjReady()`. The consumer is the AFK watchdog
+(`net/match/afk.cpp`). The injection path itself — OR-ing a virtual mask / stick into the Pad, the
+command-reader learning hook, and the reader sites — is **not ported**; the ext's bot-injection
+counters (`PadinjApplied()` / `g_padi.st_applied`) are omitted (bot / injection unported).
+`DC::JOYPAD_COMMAND_ACTIVE` is still the only other read.
 
 **Gap.** The whole injection path.
 
-**Deliverable.** `src/engine/pad.hpp/.cpp`: inject button bits / stick axes for a bounded window,
-installed with **safetyhook** (mid-hooks at the same call sites) instead of the ext's hand-built
-thunks, resolved by **pattern scan** rather than the ext's hardcoded RVAs. One place, one registry
-entry.
+**Deliverable.** Extend `src/engine/pad.hpp/.cpp`: inject button bits / stick axes for a bounded
+window, installed with **safetyhook** (mid-hooks at the same call sites) instead of the ext's
+hand-built thunks, resolved by **pattern scan** rather than the ext's hardcoded RVAs. One place,
+one registry entry.
 
 **Gate.** A dev-injected press starts a real melee swing (the ext's acceptance test:
 "engine reads 27").

@@ -30,14 +30,14 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | **Total** | **135** | |
 
 - Generated data headers referenced: **78**; logic/contract headers: **33**.
-- Modules with mod overlap: **59**; modules with toggles: **124**.
+- Modules with mod overlap: **63**; modules with toggles: **124**.
 
 ## Feature modules
 
 | Module | Feature | Domain | Pri | Deps | Toggles | Mod overlap | Status |
 |---|---|---|---|---|---|---|---|
-| `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | — | not started |
-| `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook | 2 e.g. `t2r-no-afk.txt` | — | not started |
+| `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | engine/pad.cpp (activity only) | not started |
+| `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook | 2 e.g. `t2r-no-afk.txt` | net/match/afk.cpp, engine/pad.cpp | in progress |
 | `notice.c` | server notices: 0xBA poll, update / restart countdown / free text (tools/notices.py) | Match lifecycle | P1 | widget | 3 e.g. `t2r-no-notice.txt` | net/ui/notice.cpp, net/ui/notice.hpp | ported |
 | `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | — | not started |
 | `netdirect.c` | direct melee path: melee-critical ext messages also straight to the peer through the Steam helper (re/netdirect-1026.md; t2r-no-direct-melee.txt) | Netcode / sync | P1 | net, hook | 1 e.g. `t2r-no-direct-melee.txt` | net/game/net-replication.cpp | not started |
@@ -54,7 +54,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `radar_box.c` | supply boxes on the radar as TLOU2 lootbox marker icon (radar_box_widgets.py), log radar box: | UI / HUD / menus | P1 | widget, hook | 2 e.g. `t2r-old-radar-box.txt` | — | not started |
 | `sbteam.c` | the scoreboards (ESC + end of match) list OUR team on top, blue; the enemy below, red (t2r-no-sbteam.txt) | UI / HUD / menus | P1 | widget | 1 e.g. `t2r-no-sbteam.txt` | — | not started |
 | `titlebg.c` | title (boat) screen background = Hillcrest overlook: camera + sway + render layer (menu_title.py; t2r-menu-boat.txt = off) | UI / HUD / menus | P1 | widget, camera, hook | 3 e.g. `t2r-menu-boat.txt` | menu/net-menu.cpp | not started |
-| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | — | not started |
+| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | net/audio/alertsting.cpp, engine/pcm.cpp | in progress |
 | `bomb_roll.c` | thrown bombs: impact / bounce / roll sounds from their per-frame position (TLOU2 waves, PCM mixer) | Audio (PCM) | P2 | audio, data | 3 e.g. `t2r-bomb-roll-native.txt` | — | not started |
 | `death_theme.c` | death screen drone: a quiet TLOU2 SP tonal bed under the death sting / execution victim cue, loops, fades out at respawn (PCM mixer) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-death-drone.txt` | — | not started |
 | `downed_music.c` | downed music: three TLOU2 SP layers crossfaded by the bleed-out fraction, darker the closer to bleed-out (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-downed-music.txt` | — | not started |
@@ -68,7 +68,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `intvox.c` | Interrogation voices: the interrogator's demand / the held victim's plea on the 2013 interrogate-enter pairs (real TLOU2 enemy takes, BEG_INT of vox_lines.py; t2r-no-int-vox.txt) | Audio (PCM) | P2 | audio, hook, data | 6 e.g. `t2r-ivx-native.txt` | — | not started |
 | `pmsfx.c` | post-match sounds: No Return's score count / stamp / page waves (rip_postmatch_sfx.py) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-postmatch-sfx.txt` | — | not started |
 | `pullout_sting.c` | Prone pull-out victim feel (SP trace): grab kick + grunt, struggle screen, fail death sfx/vox + the set's decay | Audio (PCM) | P2 | camera | 8 e.g. `t2r-no-pullout-sting.txt` | — | not started |
-| `shiv_sting.c` | shock sting for the shiv victim (PCM mixer, faded when the death sting starts) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | — | not started |
+| `shiv_sting.c` | shock sting for the shiv victim (PCM mixer, faded when the death sting starts) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | net/audio/shivsting.cpp, engine/pcm.cpp | in progress |
 | `sp_parity.c` | SP parity (re/sp-parity.md): our own foley = SP player foley, global level check, opt-in MP sound census | Audio (PCM) | P2 | net, camera, hook | 9 e.g. `t2r-agility-fxdrop-off.txt` | — | not started |
 | `bloodbuild.c` | characters get bloodier / dirtier during a life: SP blood masks + mud, per body, same on every screen | Feel & cosmetics | P2 | — | 7 e.g. `t2r-bb-abort-keep.txt` | — | not started |
 | `clipfx.c` | TLOU2 clip part-effect events through the engine's event path (blood of the takedown clips, SP-exact) | Feel & cosmetics | P2 | audio, pad, hook | 6 e.g. `t2r-clipfx-no-att-masks.txt` | — | not started |
