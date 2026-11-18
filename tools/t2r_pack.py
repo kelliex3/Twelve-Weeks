@@ -568,7 +568,7 @@ def pack_file_bytes(dll, in_dir, side_paths=()):
     enc, _h = read_t2me(out)
     assert enc == phys[:STUB_PAYLOAD], "T2ME stub in the image differs from the one built"
     if os.environ.get("T2R_FAST_PACK") != "1":
-        m2, f2 = psarc_read(dsar_read(info["dsar"]), files)
+        m2, f2 = psarc_read(dsar_read(info["dsar"]))
         assert f2 == files and m2["paths"] == meta["paths"], "round-trip mismatch"
     del info["dsar"]
     bid = hashlib.sha256(phys).digest()[:16]
