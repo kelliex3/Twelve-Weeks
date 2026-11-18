@@ -316,6 +316,16 @@ class EndToEnd(unittest.TestCase):
         whole = bytes(payload) + (bytes(side[:-16]) if side else b"")
         m, f2 = T.psarc_read(T.dsar_read(T.keystream_xor(whole)))
         self.assertEqual((f2, m["paths"]), (files, paths))
+        # the payload audit's reader (slim.Blob) finds the payload through the header: delta 0 (build_dll) and a converted DLL's delta
+        import slim
+        b0 = slim.Blob(os.path.join(d, "t2r-maps", "main", "t2r-data.bin"))
+        dp = os.path.join(td, "delta.bin")
+        M.write_data_file(dp, payload, info["fnv"], info["build_id"], delta=0x2818)
+        b1 = slim.Blob(dp)
+        self.assertGreater(b0.n, 0)
+        self.assertEqual((b1.n, b1.ent, b1.total), (b0.n, b0.ent, b0.total))
+        self.assertEqual(b1.dec(0, 0x1000), b0.dec(0, 0x1000))
+        b0.mm.close(); b0.f.close(); b1.mm.close(); b1.f.close()
 
     def test_with_part1(self):
         self.run_case(["pak68/p1-a.pak", "soundbank4/p1-b.bnk"])

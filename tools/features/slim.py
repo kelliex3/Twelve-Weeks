@@ -264,11 +264,12 @@ class Blob:
         self.np = np
         self.f = open(path, "rb")
         self.mm = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
-        if self.mm[:4] == b"T2RD":          # T2R_PACK_FILE data file (pack_file.py): payload at 0x10000, size + FNV in the header
+        if self.mm[:4] == b"T2RD":          # T2R_PACK_FILE data file (pack_file.py): size + FNV + payload offset in the header
             ver, size, h = struct.unpack_from("<IQQ", self.mm, 4)
             if ver != 1:
                 raise SystemExit("t2r-data.bin: unknown version %d" % ver)
-            self.off, self.size, self.hash = 0x10000, size, h
+            hdr, delta = struct.unpack_from("<QQ", self.mm, 0x28)          # payload at hdr + delta (a converted DLL's file keeps its old delta)
+            self.off, self.size, self.hash = hdr + delta, size, h
         else:
             off = _find_blob(path)
             magic, ver, size, h = struct.unpack_from("<4sIQQ", self.mm, off)
