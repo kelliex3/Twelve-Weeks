@@ -52,12 +52,12 @@ HDR = 0x10000                                # payload offset in t2r-data.bin (a
 STUB = 0x10000                               # payload bytes kept in the image's T2ME stub (only the loader's own FNV reads them)
 TITLE = "Twelve Weeks - code 00-00000000"
 MSG_MISSING = ("Twelve Weeks cannot start: the mod data file is missing.\n\n" + DATA_FILE + " (next to winmm.dll in the game folder)\n\n"
-               "Open the Twelve Weeks launcher and press Play (or Settings > Files > Verify / Repair). "
+               "Open the Twelve Weeks launcher and press Play (or Settings > Files > REPAIR INSTALL). "
                "The launcher puts the file back.")
 MSG_STALE = ("Twelve Weeks cannot start: the mod data file does not belong to this winmm.dll (it is from an older or newer update).\n\n"
-             + DATA_FILE + "\n\nOpen the Twelve Weeks launcher and press Play (or Settings > Files > Verify / Repair) to update both files.")
+             + DATA_FILE + "\n\nOpen the Twelve Weeks launcher and press Play (or Settings > Files > REPAIR INSTALL) to update both files.")
 MSG_BAD = ("Twelve Weeks cannot start: the mod data file could not be read or is damaged.\n\n" + DATA_FILE + "\n\n"
-           "Open the Twelve Weeks launcher and press Settings > Files > Verify / Repair, then Play again. "
+           "Open the Twelve Weeks launcher and press Settings > Files > REPAIR INSTALL, then Play again. "
            "If this comes back, check the drive and the antivirus quarantine.")
 
 OFF_STATUS, OFF_LAYOUT, OFF_STEP, OFF_ERR = 0x08, 0x0C, 0x10, 0x14
