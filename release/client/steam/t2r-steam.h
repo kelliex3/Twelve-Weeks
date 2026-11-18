@@ -69,15 +69,6 @@ static DWORD g_game_seen;
 // so its process is not in our list; t2r-ext touches <game>/t2r-alive.txt every 5 s instead. Alive = written within GAME_GONE_MS.
 static const char *g_alive_file;
 
-// A Steam-licensed copy started directly exits at once and Steam starts it again
-// (RestartAppIfNecessary), so the game can vanish for a few seconds right after launch.
-// Treat the game as gone only after GAME_GONE_MS without it.
-#define GAME_GONE_MS 60000
-static DWORD g_game_seen;
-// Linux external mode (--alive-file, started by t2r-linux.py through Proton in its own prefix): the game runs in another Wine prefix,
-// so its process is not in our list; t2r-ext touches <game>/t2r-alive.txt every 5 s instead. Alive = written within GAME_GONE_MS.
-static const char *g_alive_file;
-
 // ---------------------------------------------------------------- match state
 static struct {
     int active;
