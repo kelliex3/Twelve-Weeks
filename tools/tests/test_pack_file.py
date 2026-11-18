@@ -15,10 +15,11 @@ sys.path.insert(0, os.path.join(HERE, "..", "features"))
 sys.path.insert(0, os.path.join(HERE, ".."))
 import pack_file as M  # noqa: E402
 
-GCC = next((c for c in ("E:/ClaudeTLOU/TLOU2MP Revival/tools/win/ext/msys64/ucrt64/bin/gcc.exe",
-                        os.path.join(HERE, "..", "win", "ext", "msys64", "ucrt64", "bin", "gcc.exe")) if os.path.isfile(c)), None)
-BASE_DLL = next((c for c in ("E:/ClaudeTLOU/TLOU2MP Revival/tools/local/winmm-nocave-127.0.0.1-7001.dll",
-                             os.path.join(HERE, "..", "local", "winmm-nocave-127.0.0.1-7001.dll")) if os.path.isfile(c)), None)
+MAIN = os.environ.get("T2R_MAIN_ROOT", os.path.join(HERE, "..", ".."))          # the checkout that holds tools/win and tools/local
+GCC = next((c for c in (os.path.join(HERE, "..", "win", "ext", "msys64", "ucrt64", "bin", "gcc.exe"),
+                        os.path.join(MAIN, "tools", "win", "ext", "msys64", "ucrt64", "bin", "gcc.exe")) if os.path.isfile(c)), None)
+BASE_DLL = next((c for c in (os.path.join(HERE, "..", "local", "winmm-nocave-127.0.0.1-7001.dll"),
+                             os.path.join(MAIN, "tools", "local", "winmm-nocave-127.0.0.1-7001.dll")) if os.path.isfile(c)), None)
 SEC_VA = 0x200000
 SIZE1 = 5 * 0x10000                    # a Part I build cuts on a 64 KiB boundary
 SIZE2 = 150000

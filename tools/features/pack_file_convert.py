@@ -108,7 +108,7 @@ def main():
     ap.add_argument("--port", type=int, help="server port (default: the finished DLL's)")
     ap.add_argument("--base", default=os.environ.get("T2R_BASE_DLL") or next((c for c in (
         os.path.join(TOOLS, "local", "winmm-nocave-127.0.0.1-7001.dll"),
-        "E:/ClaudeTLOU/TLOU2MP Revival/tools/local/winmm-nocave-127.0.0.1-7001.dll") if os.path.isfile(c)), None))
+        os.path.join(os.environ.get("T2R_MAIN_ROOT", os.path.join(TOOLS, "..")), "tools", "local", "winmm-nocave-127.0.0.1-7001.dll")) if os.path.isfile(c)), None))
     a = ap.parse_args()
     import patch_winmm
     import winmm_patches
