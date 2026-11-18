@@ -8,6 +8,7 @@
 //   then  TIME cave <ms>
 //   then  MEM full-ok | MEM view1-ok-hole-reserved | MEM view1-ok | MEM BAD <what>
 #include <windows.h>
+#include <psapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,7 +100,10 @@ int main(int argc, char **argv) {
     int ret = ((int (*)(void))t)();
     QueryPerformanceCounter(&q1);
     result(ret);
-    printf("TIME cave %.0f ms\n", (double)(q1.QuadPart - q0.QuadPart) * 1000.0 / (double)qf.QuadPart);
+    PROCESS_MEMORY_COUNTERS pmc = {.cb = sizeof pmc};
+    K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
+    printf("TIME cave %.0f ms, working set %.0f MB (peak %.0f MB)\n", (double)(q1.QuadPart - q0.QuadPart) * 1000.0 / (double)qf.QuadPart,
+           pmc.WorkingSetSize / 1048576.0, pmc.PeakWorkingSetSize / 1048576.0);
     if (argc > 7 && !strcmp(argv[7], "nocmp")) return 0;      // real-size files: no second copy in memory
     uint32_t *d = (uint32_t *)(uintptr_t)secva;
     uint64_t d0 = get64(0x1801398D0);

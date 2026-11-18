@@ -64,9 +64,9 @@ OFF_STATUS, OFF_LAYOUT, OFF_STEP, OFF_ERR = 0x08, 0x0C, 0x10, 0x14
 OFF_SIZE1, OFF_SIZE2, OFF_BASE, OFF_PTR, OFF_DELTA, OFF_ACTUAL = 0x18, 0x20, 0x28, 0x30, 0x38, 0x40
 OFF_MSTATUS, OFF_MSTEP, OFF_CACHE = 0x48, 0x4C, 0x50
 OFF_CFG_SIZE2, OFF_CFG_ID = 0x60, 0x68
-OFF_PCFM, OFF_PMVF, OFF_PUMV, OFF_PGFT = 0x80, 0x88, 0x90, 0x98
+OFF_PCFM, OFF_PMVF, OFF_PUMV, OFF_PGFT, OFF_PVUL = 0x80, 0x88, 0x90, 0x98, 0x58
 OFF_CFG_SIZE1, OFF_CFG_FNV, OFF_CFG_DELTA, OFF_CFG_SFNV = 0xA0, 0xA8, 0xB0, 0xB8
-OFF_STR_K32, OFF_N_CFM, OFF_N_MVF, OFF_N_UMV, OFF_N_GFT = 0x100, 0x140, 0x160, 0x180, 0x1A0
+OFF_STR_K32, OFF_N_CFM, OFF_N_MVF, OFF_N_UMV, OFF_N_GFT, OFF_N_VUL = 0x100, 0x140, 0x160, 0x180, 0x1A0, 0x1C0
 OFF_STR_SIDE, OFF_STR_DATA, OFF_STR_OK, OFF_TITLE = 0x200, 0x260, 0x2C0, 0x330
 OFF_MSG_MISSING, OFF_MSG_STALE, OFF_MSG_BAD = 0x400, 0x600, 0x800
 CODE_OFF = 0xA00
@@ -134,6 +134,10 @@ pk_entry:
     test    rax, rax
     jz      pk_f_api
     mov     qword ptr [rip + D_pgft], rax
+    mov     rcx, qword ptr [rsp + 0xD8]
+    lea     rdx, [rip + D_n_vul]
+    call    qword ptr [rip + V_180129690]
+    mov     qword ptr [rip + D_pvul], rax       # VirtualUnlock (0 = skip the working-set drop)
     # --- 2. winmm.dll path -> directory index
     lea     rcx, [rip + V_180000000]
     lea     rdx, [rsp + 0xE0]
@@ -526,6 +530,15 @@ pk_fnv_b:
 pk_fnv_done:
     cmp     r8, qword ptr [rip + D_cfg_fnv]
     jne     pk_f_fnv
+    # the full pass made every payload page resident: drop them from the working set again (VirtualUnlock on pages that are not
+    # locked removes them; they stay in the file cache), so only what a level load reads becomes resident, like on a cache-hit boot
+    mov     rax, qword ptr [rip + D_pvul]
+    test    rax, rax
+    jz      pk_rec
+    mov     rcx, qword ptr [rsp + 0xA8]
+    mov     rdx, qword ptr [rsp + 0x90]
+    call    rax
+pk_rec:
     # record the pass (best effort: a read-only folder only costs the full check at the next boot too)
     mov     dword ptr [rip + D_cache], 3
     cmp     qword ptr [rsp + 0x518], 0
@@ -729,7 +742,7 @@ def build_section(sec_va, size1, fnv, size2, build_id, delta=0, sfnv=None):
         "status": OFF_STATUS, "layout": OFF_LAYOUT, "step": OFF_STEP, "err": OFF_ERR, "size1": OFF_SIZE1, "size2": OFF_SIZE2,
         "base": OFF_BASE, "ptr": OFF_PTR, "delta": OFF_DELTA, "actual": OFF_ACTUAL, "mstatus": OFF_MSTATUS, "mstep": OFF_MSTEP,
         "cfg_size2": OFF_CFG_SIZE2, "cfg_id": OFF_CFG_ID, "cfg_size1": OFF_CFG_SIZE1, "cfg_fnv": OFF_CFG_FNV, "cfg_delta": OFF_CFG_DELTA,
-        "pcfm": OFF_PCFM, "pmvf": OFF_PMVF, "pumv": OFF_PUMV, "pgft": OFF_PGFT, "n_gft": OFF_N_GFT, "str_ok": OFF_STR_OK,
+        "pcfm": OFF_PCFM, "pmvf": OFF_PMVF, "pumv": OFF_PUMV, "pgft": OFF_PGFT, "n_gft": OFF_N_GFT, "pvul": OFF_PVUL, "n_vul": OFF_N_VUL, "str_ok": OFF_STR_OK,
         "cache": OFF_CACHE, "cfg_sfnv": OFF_CFG_SFNV, "str_k32": OFF_STR_K32, "n_cfm": OFF_N_CFM, "n_mvf": OFF_N_MVF,
         "n_umv": OFF_N_UMV, "str_side": OFF_STR_SIDE, "str_data": OFF_STR_DATA, "title": OFF_TITLE,
         "msg_missing": OFF_MSG_MISSING, "msg_stale": OFF_MSG_STALE, "msg_bad": OFF_MSG_BAD}.items()}
@@ -742,7 +755,7 @@ def build_section(sec_va, size1, fnv, size2, build_id, delta=0, sfnv=None):
     assert size1 >= SAMPLE and sfnv is not None, "pack file: the sampled FNV of the payload is needed (sampled_fnv)"
     struct.pack_into("<QQQQ", sec, OFF_CFG_SIZE1, size1, fnv, delta, sfnv)
     sec[OFF_STR_K32:OFF_STR_K32 + 26] = "kernel32.dll".encode("utf-16-le")
-    for off, nm in ((OFF_N_CFM, b"CreateFileMappingW"), (OFF_N_MVF, b"MapViewOfFileEx"), (OFF_N_UMV, b"UnmapViewOfFile"), (OFF_N_GFT, b"GetFileTime")):
+    for off, nm in ((OFF_N_CFM, b"CreateFileMappingW"), (OFF_N_MVF, b"MapViewOfFileEx"), (OFF_N_UMV, b"UnmapViewOfFile"), (OFF_N_GFT, b"GetFileTime"), (OFF_N_VUL, b"VirtualUnlock")):
         sec[off:off + len(nm)] = nm
     for off, s, lim in ((OFF_STR_SIDE, SIDE_FILE, OFF_STR_DATA), (OFF_STR_DATA, DATA_FILE, OFF_STR_OK), (OFF_STR_OK, OK_FILE, OFF_TITLE)):
         b = (s + "\0").encode("utf-16-le")
