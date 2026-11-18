@@ -1,6 +1,5 @@
 #include "boot.hpp"
 #include "config.hpp"
-#include "ext-symbols.hpp"
 
 #include "engine/patterns.hpp"
 #include "engine/memory.hpp"
@@ -10,9 +9,12 @@
 #include "engine/draw.hpp"
 #include "engine/debugdraw.hpp"
 #include "engine/framecap.hpp"
+#include "engine/frame.hpp"
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
 #include "gameplay/barrel-check.hpp"
+#include "net/ui/notice.hpp"
+#include "net/ui/scopeglint.hpp"
 #include "hwid.hpp"
 #include "log.hpp"
 
@@ -127,7 +129,6 @@ namespace boot {
 		static bool    s_done = false;
 		if (!s_done) {
 			s_done = true;
-			loader::InitExtSymbols();      // publish the mod's engine symbols in .t2rsym first
 			s_ext = LoadLibraryW(L"t2r-ext.dll");
 			if (s_ext)
 				s_tick = reinterpret_cast<TickFn>(GetProcAddress(s_ext, "t2r_tick"));
@@ -138,10 +139,13 @@ namespace boot {
 	}
 
 	static void FrameTick(SafetyHookContext&) {
+		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
 #ifdef TO1_DEBUG
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
 		NetTick();                // the entire MP driver
+		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
+		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
 #ifdef TO1_DEBUG
 		engine::debugdraw::Tick();
 #endif

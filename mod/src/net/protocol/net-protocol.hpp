@@ -173,6 +173,11 @@ enum NetEventType : uint8_t {
     NEVT_PLAYER_EXECUTION,   // ExecutionEvent -- the move is starting, play your half
     NEVT_EXECUTION_REQUEST,  // ExecutionRequestEvent -- may I execute you?
     NEVT_EXECUTION_REPLY,    // ExecutionReplyEvent   -- yes / no
+
+    // Ported from tools/ext/scopeglint.c (MSG_GLINT): [u8 on] -- that player is scoped in /
+    // out. Pinned to the ext's own byte 0x91 so the two transports interoperate during the
+    // cutover.
+    NEVT_SCOPE_GLINT = 0x91,
 };
 
 struct ExecutionEvent {

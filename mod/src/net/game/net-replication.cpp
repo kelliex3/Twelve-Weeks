@@ -7,6 +7,7 @@
 #include "net-patches.hpp"
 #include "kill-feed.hpp"
 #include "net-gui2.hpp"
+#include "scopeglint.hpp"
 #include "net-timer.hpp"
 
 #include <cmath>
@@ -1850,6 +1851,11 @@ namespace net::replication {
             const int32_t rttMs = static_cast<int32_t>(NowMs() - evt.sendMs);
             if (rttMs < 0) break;
             sender.RecordPing(static_cast<uint32_t>(rttMs));
+            break;
+        }
+
+        case NEVT_SCOPE_GLINT: {
+            net::scopeglint::OnEvent(senderSlot, data, size);
             break;
         }
 

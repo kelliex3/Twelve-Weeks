@@ -243,7 +243,6 @@ target_include_directories(tlou-ii-mp PRIVATE
 
 target_compile_definitions(tlou-ii-mp PRIVATE
     _CRT_SECURE_NO_WARNINGS
-    TO1_EXT_SYMBOLS_DEF="${CMAKE_CURRENT_SOURCE_DIR}/../tools/ext/t2r-engine-symbols.def"
     TO1_RES_PSARC_ID=${TO1_RES_PSARC_ID}
     TO1_PSARC_KEY=${TO1_PSARC_KEY}ull
     TO1_PSARC_NONCE=${TO1_PSARC_NONCE}ull
