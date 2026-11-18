@@ -42,6 +42,8 @@ HOOK_VMA = 0x1800019A0                       # jne 0x180001adb (6 bytes) after c
 HOOK_ORIG = bytes.fromhex("0f85") + struct.pack("<i", 0x180001ADB - (0x1800019A0 + 6))
 DATA_FILE = "t2r-maps\\main\\t2r-data.bin"
 DATA_REL = "t2r-maps/main/t2r-data.bin"        # (same, as a client / game folder relative path)
+OK_FILE = "t2r-maps\\main\\t2r-data.ok"          # cache record the cave writes after a full check: 'T2OK' u32 1, build id, size, write time, FNV
+SAMPLE, SAMPLE_STEP = 4096, 0x4000000
 SIDE_FILE = "t2r-maps\\part1\\part1.dat"
 MAGIC = 0x44533150                           # 'P1SD'
 DATA_MAGIC = 0x44523254                      # 'T2RD'
@@ -60,12 +62,12 @@ MSG_BAD = ("Twelve Weeks cannot start: the mod data file could not be read or is
 
 OFF_STATUS, OFF_LAYOUT, OFF_STEP, OFF_ERR = 0x08, 0x0C, 0x10, 0x14
 OFF_SIZE1, OFF_SIZE2, OFF_BASE, OFF_PTR, OFF_DELTA, OFF_ACTUAL = 0x18, 0x20, 0x28, 0x30, 0x38, 0x40
-OFF_MSTATUS, OFF_MSTEP = 0x48, 0x4C
+OFF_MSTATUS, OFF_MSTEP, OFF_CACHE = 0x48, 0x4C, 0x50
 OFF_CFG_SIZE2, OFF_CFG_ID = 0x60, 0x68
-OFF_PCFM, OFF_PMVF, OFF_PUMV = 0x80, 0x88, 0x90
-OFF_CFG_SIZE1, OFF_CFG_FNV, OFF_CFG_DELTA = 0xA0, 0xA8, 0xB0
-OFF_STR_K32, OFF_N_CFM, OFF_N_MVF, OFF_N_UMV = 0x100, 0x140, 0x160, 0x180
-OFF_STR_SIDE, OFF_STR_DATA, OFF_TITLE = 0x200, 0x280, 0x300
+OFF_PCFM, OFF_PMVF, OFF_PUMV, OFF_PGFT = 0x80, 0x88, 0x90, 0x98
+OFF_CFG_SIZE1, OFF_CFG_FNV, OFF_CFG_DELTA, OFF_CFG_SFNV = 0xA0, 0xA8, 0xB0, 0xB8
+OFF_STR_K32, OFF_N_CFM, OFF_N_MVF, OFF_N_UMV, OFF_N_GFT = 0x100, 0x140, 0x160, 0x180, 0x1A0
+OFF_STR_SIDE, OFF_STR_DATA, OFF_STR_OK, OFF_TITLE = 0x200, 0x260, 0x2C0, 0x330
 OFF_MSG_MISSING, OFF_MSG_STALE, OFF_MSG_BAD = 0x400, 0x600, 0x800
 CODE_OFF = 0xA00
 
@@ -126,6 +128,12 @@ pk_entry:
     test    rax, rax
     jz      pk_f_api
     mov     qword ptr [rip + D_pumv], rax
+    mov     rcx, qword ptr [rsp + 0xD8]
+    lea     rdx, [rip + D_n_gft]
+    call    qword ptr [rip + V_180129690]
+    test    rax, rax
+    jz      pk_f_api
+    mov     qword ptr [rip + D_pgft], rax
     # --- 2. winmm.dll path -> directory index
     lea     rcx, [rip + V_180000000]
     lea     rdx, [rsp + 0xE0]
@@ -178,6 +186,7 @@ pk_data_open:
     add     rax, 0x10000 + 16
     cmp     rax, qword ptr [rsp + 0xD0]
     jne     pk_f_dsize2
+    mov     qword ptr [rsp + 0x568], rax        # data file size (the cache record)
     mov     rcx, qword ptr [rsp + 0x50]
     xor     edx, edx
     mov     r8d, 2                              # PAGE_READONLY
@@ -406,7 +415,89 @@ pk_fretry:
 pk_have1:
     mov     dword ptr [rip + D_layout], 1
 pk_verify:
-    # --- 5. FNV-1a-64 of the mapped payload (qwords, then the tail bytes) == the value baked into this DLL
+    # --- 5a. every boot: FNV over 4 KiB samples (one per 64 MiB + the last 4 KiB) == baked
+    movabs  r8, 0xcbf29ce484222325
+    movabs  r10, 0x100000001b3
+    xor     r9d, r9d
+pk_smp:
+    lea     rax, [r9 + 4096]
+    cmp     rax, qword ptr [rsp + 0x70]
+    ja      pk_smp_last
+    mov     rcx, qword ptr [rsp + 0xA8]
+    add     rcx, qword ptr [rsp + 0x88]
+    add     rcx, r9
+    mov     r11d, 512
+    call    pk_fnvq
+    add     r9, 0x4000000
+    jmp     pk_smp
+pk_smp_last:
+    mov     rcx, qword ptr [rsp + 0xA8]
+    add     rcx, qword ptr [rsp + 0x88]
+    add     rcx, qword ptr [rsp + 0x70]
+    sub     rcx, 4096
+    mov     r11d, 512
+    call    pk_fnvq
+    cmp     r8, qword ptr [rip + D_cfg_sfnv]
+    jne     pk_f_sfnv
+    # --- 5b. full FNV only when the cache record (t2r-data.ok: build id, size, write time, FNV) does not match this file
+    mov     qword ptr [rsp + 0x518], 0
+    mov     rcx, qword ptr [rsp + 0x50]
+    xor     edx, edx
+    xor     r8d, r8d
+    lea     r9, [rsp + 0x518]
+    call    qword ptr [rip + D_pgft]            # GetFileTime(hData, NULL, NULL, &write time)
+    lea     rdx, [rip + D_str_ok]
+    call    pk_name
+    lea     rcx, [rsp + 0xE0]
+    mov     edx, 0x80000000
+    mov     r8d, 7
+    xor     r9d, r9d
+    mov     qword ptr [rsp + 0x20], 3
+    mov     qword ptr [rsp + 0x28], 0x80
+    mov     qword ptr [rsp + 0x30], 0
+    call    qword ptr [rip + V_180129520]       # CreateFileW(t2r-data.ok, read)
+    cmp     rax, -1
+    je      pk_full
+    mov     qword ptr [rsp + 0x558], rax
+    mov     rcx, rax
+    lea     rdx, [rsp + 0x520]
+    mov     r8d, 0x30
+    lea     r9, [rsp + 0x560]
+    mov     dword ptr [rsp + 0x560], 0
+    mov     qword ptr [rsp + 0x20], 0
+    call    qword ptr [rip + V_1801297d8]       # ReadFile
+    mov     qword ptr [rsp + 0x508], rax
+    mov     rcx, qword ptr [rsp + 0x558]
+    call    qword ptr [rip + V_180129508]       # CloseHandle
+    cmp     dword ptr [rsp + 0x508], 0
+    je      pk_full
+    cmp     dword ptr [rsp + 0x560], 0x30
+    jne     pk_full
+    cmp     dword ptr [rsp + 0x520], 0x4b4f3254 # T2OK
+    jne     pk_full
+    cmp     dword ptr [rsp + 0x524], 1
+    jne     pk_full
+    mov     rax, qword ptr [rsp + 0x528]
+    cmp     rax, qword ptr [rip + D_cfg_id]
+    jne     pk_full
+    mov     rax, qword ptr [rsp + 0x530]
+    cmp     rax, qword ptr [rip + D_cfg_id + 8]
+    jne     pk_full
+    mov     rax, qword ptr [rsp + 0x538]
+    cmp     rax, qword ptr [rsp + 0x568]
+    jne     pk_full
+    mov     rax, qword ptr [rsp + 0x540]
+    test    rax, rax
+    jz      pk_full
+    cmp     rax, qword ptr [rsp + 0x518]
+    jne     pk_full
+    mov     rax, qword ptr [rsp + 0x548]
+    cmp     rax, qword ptr [rip + D_cfg_fnv]
+    jne     pk_full
+    mov     dword ptr [rip + D_cache], 1        # cache hit: this exact file passed the full check before
+    jmp     pk_ok
+pk_full:
+    # --- 5c. FNV-1a-64 of the whole mapped payload (qwords, then the tail bytes) == the value baked into this DLL
     mov     rcx, qword ptr [rsp + 0xA8]
     add     rcx, qword ptr [rsp + 0x88]
     mov     rdx, qword ptr [rsp + 0x70]
@@ -435,6 +526,46 @@ pk_fnv_b:
 pk_fnv_done:
     cmp     r8, qword ptr [rip + D_cfg_fnv]
     jne     pk_f_fnv
+    # record the pass (best effort: a read-only folder only costs the full check at the next boot too)
+    mov     dword ptr [rip + D_cache], 3
+    cmp     qword ptr [rsp + 0x518], 0
+    je      pk_ok
+    mov     dword ptr [rsp + 0x520], 0x4b4f3254
+    mov     dword ptr [rsp + 0x524], 1
+    mov     rax, qword ptr [rip + D_cfg_id]
+    mov     qword ptr [rsp + 0x528], rax
+    mov     rax, qword ptr [rip + D_cfg_id + 8]
+    mov     qword ptr [rsp + 0x530], rax
+    mov     rax, qword ptr [rsp + 0x568]
+    mov     qword ptr [rsp + 0x538], rax
+    mov     rax, qword ptr [rsp + 0x518]
+    mov     qword ptr [rsp + 0x540], rax
+    mov     rax, qword ptr [rip + D_cfg_fnv]
+    mov     qword ptr [rsp + 0x548], rax
+    lea     rcx, [rsp + 0xE0]
+    mov     edx, 0x40000000                     # GENERIC_WRITE
+    xor     r8d, r8d
+    xor     r9d, r9d
+    mov     qword ptr [rsp + 0x20], 2           # CREATE_ALWAYS
+    mov     qword ptr [rsp + 0x28], 0x80
+    mov     qword ptr [rsp + 0x30], 0
+    call    qword ptr [rip + V_180129520]       # CreateFileW(t2r-data.ok, write)
+    cmp     rax, -1
+    je      pk_ok
+    mov     qword ptr [rsp + 0x558], rax
+    mov     rcx, rax
+    lea     rdx, [rsp + 0x520]
+    mov     r8d, 0x30
+    lea     r9, [rsp + 0x560]
+    mov     qword ptr [rsp + 0x20], 0
+    call    qword ptr [rip + V_1801298f8]       # WriteFile
+    test    eax, eax
+    jz      pk_wr_done
+    mov     dword ptr [rip + D_cache], 2        # full check passed, record written
+pk_wr_done:
+    mov     rcx, qword ptr [rsp + 0x558]
+    call    qword ptr [rip + V_180129508]
+pk_ok:
     mov     rax, qword ptr [rsp + 0xA8]
     mov     qword ptr [rip + D_base], rax
     add     rax, qword ptr [rsp + 0x88]         # + delta = the payload
@@ -449,6 +580,13 @@ pk_fnv_done:
     jmp     V_1800019a6
 
 # --- helpers (called with the frame above: rsp + 8 inside)
+pk_fnvq:                                        # r8 = FNV-1a-64 over r11 qwords at rcx (r10 = prime); clobbers rcx, r11
+    xor     r8, qword ptr [rcx]
+    imul    r8, r10
+    add     rcx, 8
+    dec     r11
+    jnz     pk_fnvq
+    ret
 pk_name:                                        # copy the UTF-16 name at rdx behind the directory of the module path
     mov     r11, qword ptr [rsp + 8 + 0xC0]
     lea     rcx, [rsp + 8 + r11*2 + 0xE0]
@@ -532,6 +670,11 @@ pk_f_geom:
     mov     dword ptr [rip + D_err], 0xffff0002
     lea     rdx, [rip + D_msg_bad]
     jmp     pk_fatal
+pk_f_sfnv:
+    mov     dword ptr [rip + D_mstep], 10
+    mov     dword ptr [rip + D_err], 0xffff0006
+    lea     rdx, [rip + D_msg_bad]
+    jmp     pk_fatal
 pk_f_fnv:
     mov     dword ptr [rip + D_mstep], 10
     mov     dword ptr [rip + D_err], 0xffff0005
@@ -576,7 +719,7 @@ pk_hex_d:
 """
 
 
-def build_section(sec_va, size1, fnv, size2, build_id, delta=0):
+def build_section(sec_va, size1, fnv, size2, build_id, delta=0, sfnv=None):
     """-> (section bytes: descriptor / config / strings + linked code, entry VA, labels)"""
     assert len(build_id) == 16
     base = IMAGE_BASE + sec_va
@@ -586,7 +729,8 @@ def build_section(sec_va, size1, fnv, size2, build_id, delta=0):
         "status": OFF_STATUS, "layout": OFF_LAYOUT, "step": OFF_STEP, "err": OFF_ERR, "size1": OFF_SIZE1, "size2": OFF_SIZE2,
         "base": OFF_BASE, "ptr": OFF_PTR, "delta": OFF_DELTA, "actual": OFF_ACTUAL, "mstatus": OFF_MSTATUS, "mstep": OFF_MSTEP,
         "cfg_size2": OFF_CFG_SIZE2, "cfg_id": OFF_CFG_ID, "cfg_size1": OFF_CFG_SIZE1, "cfg_fnv": OFF_CFG_FNV, "cfg_delta": OFF_CFG_DELTA,
-        "pcfm": OFF_PCFM, "pmvf": OFF_PMVF, "pumv": OFF_PUMV, "str_k32": OFF_STR_K32, "n_cfm": OFF_N_CFM, "n_mvf": OFF_N_MVF,
+        "pcfm": OFF_PCFM, "pmvf": OFF_PMVF, "pumv": OFF_PUMV, "pgft": OFF_PGFT, "n_gft": OFF_N_GFT, "str_ok": OFF_STR_OK,
+        "cache": OFF_CACHE, "cfg_sfnv": OFF_CFG_SFNV, "str_k32": OFF_STR_K32, "n_cfm": OFF_N_CFM, "n_mvf": OFF_N_MVF,
         "n_umv": OFF_N_UMV, "str_side": OFF_STR_SIDE, "str_data": OFF_STR_DATA, "title": OFF_TITLE,
         "msg_missing": OFF_MSG_MISSING, "msg_stale": OFF_MSG_STALE, "msg_bad": OFF_MSG_BAD}.items()}
     code = cave.link(data)
@@ -595,11 +739,12 @@ def build_section(sec_va, size1, fnv, size2, build_id, delta=0):
     struct.pack_into("<Q", sec, OFF_CFG_SIZE2, size2)
     sec[OFF_CFG_ID:OFF_CFG_ID + 16] = build_id
     assert 0 <= delta < 0x10000
-    struct.pack_into("<QQQ", sec, OFF_CFG_SIZE1, size1, fnv, delta)
+    assert size1 >= SAMPLE and sfnv is not None, "pack file: the sampled FNV of the payload is needed (sampled_fnv)"
+    struct.pack_into("<QQQQ", sec, OFF_CFG_SIZE1, size1, fnv, delta, sfnv)
     sec[OFF_STR_K32:OFF_STR_K32 + 26] = "kernel32.dll".encode("utf-16-le")
-    for off, nm in ((OFF_N_CFM, b"CreateFileMappingW"), (OFF_N_MVF, b"MapViewOfFileEx"), (OFF_N_UMV, b"UnmapViewOfFile")):
+    for off, nm in ((OFF_N_CFM, b"CreateFileMappingW"), (OFF_N_MVF, b"MapViewOfFileEx"), (OFF_N_UMV, b"UnmapViewOfFile"), (OFF_N_GFT, b"GetFileTime")):
         sec[off:off + len(nm)] = nm
-    for off, s, lim in ((OFF_STR_SIDE, SIDE_FILE, OFF_STR_DATA), (OFF_STR_DATA, DATA_FILE, OFF_TITLE)):
+    for off, s, lim in ((OFF_STR_SIDE, SIDE_FILE, OFF_STR_DATA), (OFF_STR_DATA, DATA_FILE, OFF_STR_OK), (OFF_STR_OK, OK_FILE, OFF_TITLE)):
         b = (s + "\0").encode("utf-16-le")
         assert off + len(b) <= lim
         sec[off:off + len(b)] = b
@@ -613,7 +758,7 @@ def build_section(sec_va, size1, fnv, size2, build_id, delta=0):
     return bytes(sec), cave.label_va("pk_entry"), cave.labels
 
 
-def add(data, size1, fnv, size2, build_id, delta=0):
+def add(data, size1, fnv, size2, build_id, delta=0, sfnv=None):
     """append `.t2rps` (RWX) with the cave and patch the loader's jne; -> new image bytes. Refuses on any unexpected original byte."""
     d = bytearray(data)
     pe = struct.unpack_from("<I", d, 0x3C)[0]
@@ -650,7 +795,7 @@ def add(data, size1, fnv, size2, build_id, delta=0):
     if so + 40 > soh:
         raise SystemExit("pack file: no room for another section header")
     rva = (soi + sa - 1) // sa * sa
-    sec, entry, _labels = build_section(rva, size1, fnv, size2, build_id, delta)
+    sec, entry, _labels = build_section(rva, size1, fnv, size2, build_id, delta, sfnv)
     raw_ptr = (len(d) + fa - 1) // fa * fa
     raw_size = (len(sec) + fa - 1) // fa * fa
     vsize = (len(sec) + sa - 1) // sa * sa
@@ -688,6 +833,18 @@ def check(data, size1=None, fnv=None, build_id=None):
     if found is None:
         raise SystemExit("pack file: .t2rps missing")
     return found
+
+
+def sampled_fnv(payload):
+    """FNV-1a-64 over 4 KiB samples (qword-wise) at every 64 MiB that fits, then the last 4 KiB: what the cave checks on every boot"""
+    import numpy as np
+    n = len(payload)
+    assert n >= SAMPLE
+    h, p = 0xCBF29CE484222325, 0x100000001B3
+    for o in list(range(0, n - SAMPLE + 1, SAMPLE_STEP)) + [n - SAMPLE]:
+        for v in np.frombuffer(bytes(payload[o:o + SAMPLE]), dtype="<u8").tolist():
+            h = ((h ^ v) * p) & 0xFFFFFFFFFFFFFFFF
+    return h
 
 
 def data_header(size1, fnv, build_id, delta=0):

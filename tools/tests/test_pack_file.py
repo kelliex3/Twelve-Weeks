@@ -46,10 +46,10 @@ class BaseDll(unittest.TestCase):
         d = open(BASE_DLL, "rb").read()
         off = pe.get_offset_from_rva(M.HOOK_VMA - M.IMAGE_BASE)
         self.assertEqual(d[off:off + 6], M.HOOK_ORIG)
-        out = M.add(d, SIZE1, 1, SIZE2, BID)
+        out = M.add(d, SIZE1, 1, SIZE2, BID, sfnv=1)
         self.assertGreater(M.check(out, SIZE1, 1, BID), 0)
         with self.assertRaises(SystemExit):
-            M.add(out, SIZE1, 1, SIZE2, BID)          # twice: refused
+            M.add(out, SIZE1, 1, SIZE2, BID, sfnv=1)          # twice: refused
 
 
 @unittest.skipUnless(GCC, "gcc (msys64 ucrt64) not found")
@@ -86,16 +86,38 @@ class Cave(unittest.TestCase):
         if side:
             with open(os.path.join(d, "t2r-maps", "part1", "part1.dat"), "wb") as f:
                 f.write(os.urandom(side_size) + side_id)
-        sec, entry, _ = M.build_section(SEC_VA, size1, h, size2, BID, delta)
+        sec, entry, _ = M.build_section(SEC_VA, size1, h, size2, BID, delta, M.sampled_fnv(payload))
         sb = os.path.join(d, "sec.bin")
         with open(sb, "wb") as f:
             f.write(sec)
+        self.last = (sb, entry, d, size1, size2)
+        return self.rerun()
+
+    def rerun(self):
+        """the same image + folder again (the next boot)"""
+        sb, entry, d, size1, size2 = self.last
         r = subprocess.run([self.exe, sb, "%x" % (M.IMAGE_BASE + SEC_VA), "%x" % entry, d, str(size1), str(size2)],
                            capture_output=True, text=True, env=self.env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         out = r.stdout
         kv = dict(x.split("=") for x in out.split("RESULT ")[1].split("\n")[0].split())
         return kv, out
+
+    def data_path(self, name="t2r-data.bin"):
+        return os.path.join(self.last[2], "t2r-maps", "main", name)
+
+    def flip(self, off, keep_time):
+        p = self.data_path()
+        st = os.stat(p)
+        with open(p, "r+b") as f:
+            f.seek(off)
+            b = f.read(1)
+            f.seek(off)
+            f.write(bytes([b[0] ^ 0x40]))
+        if keep_time:
+            os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+        else:
+            os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000_000))
 
     def fatal(self, out, msg, code):
         self.assertIn("FATAL Twelve Weeks - code " + code, out)
@@ -135,7 +157,7 @@ class Cave(unittest.TestCase):
 
     def test_data_missing_folder_too(self):
         d = tempfile.mkdtemp(dir=self.td.name)                     # no t2r-maps at all: ERROR_PATH_NOT_FOUND = the same message
-        sec, entry, _ = M.build_section(SEC_VA, SIZE1, 5, 0, BID)
+        sec, entry, _ = M.build_section(SEC_VA, SIZE1, 5, 0, BID, sfnv=5)
         sb = os.path.join(d, "sec.bin")
         open(sb, "wb").write(sec)
         r = subprocess.run([self.exe, sb, "%x" % (M.IMAGE_BASE + SEC_VA), "%x" % entry, d, str(SIZE1), "0"], capture_output=True, text=True, env=self.env, timeout=60)
@@ -171,6 +193,59 @@ class Cave(unittest.TestCase):
         kv, out = self.scenario(size1=SIZE1 - 0x1230, delta=0x1230, hdr_delta=0)
         self.fatal(out, M.MSG_STALE, "07-FFFF0004")
 
+    def test_cache_written_then_hit(self):
+        kv, out = self.scenario()
+        self.assertEqual((kv["mstatus"], kv["cache"], kv["ret"]), ("1", "2", "1"), out)      # first boot: full check, record written
+        rec = open(self.data_path("t2r-data.ok"), "rb").read()
+        self.assertEqual(len(rec), 0x30)
+        self.assertEqual(rec[:8] + rec[8:24], struct.pack("<II", 0x4B4F3254, 1) + BID)
+        self.assertEqual(struct.unpack_from("<Q", rec, 24)[0], os.path.getsize(self.data_path()))
+        kv, out = self.rerun()
+        self.assertEqual((kv["mstatus"], kv["cache"], kv["ret"]), ("1", "1", "1"), out)      # next boot: record matches, no full check
+        self.assertIn("MEM full-ok", out)
+
+    def test_cache_changed_file_full_check(self):                  # a rewritten file (new write time): full check again, damage found
+        self.scenario()
+        self.flip(M.HDR + SIZE1 // 2, keep_time=False)             # not in a sample
+        kv, out = self.rerun()
+        self.fatal(out, M.MSG_BAD, "0A-FFFF0005")
+
+    def test_cache_sample_every_boot(self):                        # damage in a sample: found even while the record matches
+        self.scenario()
+        self.flip(M.HDR + 100, keep_time=True)
+        kv, out = self.rerun()
+        self.fatal(out, M.MSG_BAD, "0A-FFFF0006")
+        self.scenario()
+        self.flip(M.HDR + SIZE1 - 5, keep_time=True)               # the last 4 KiB
+        kv, out = self.rerun()
+        self.fatal(out, M.MSG_BAD, "0A-FFFF0006")
+
+    def test_cache_other_build_record(self):                       # a record from another build: full check, record rewritten
+        self.scenario()
+        p = self.data_path("t2r-data.ok")
+        rec = bytearray(open(p, "rb").read())
+        rec[8] ^= 1
+        open(p, "wb").write(rec)
+        kv, out = self.rerun()
+        self.assertEqual((kv["mstatus"], kv["cache"]), ("1", "2"), out)
+        self.assertEqual(open(p, "rb").read()[8:24], BID)
+
+    def test_cache_bad_record(self):                               # short / garbage record: full check
+        self.scenario()
+        open(self.data_path("t2r-data.ok"), "wb").write(b"T2OK")
+        kv, out = self.rerun()
+        self.assertEqual((kv["mstatus"], kv["cache"]), ("1", "2"), out)
+
+    def test_sampled_fnv_python_matches_samples(self):
+        import random
+        b = bytearray(os.urandom(0x4000000 + 9000))
+        h = M.sampled_fnv(b)
+        b[5000] ^= 1                                               # outside every sample: same value
+        self.assertEqual(M.sampled_fnv(b), h)
+        b[0x4000000 + 10] ^= 1                                     # the 64 MiB sample
+        self.assertNotEqual(M.sampled_fnv(b), h)
+        del random
+
     def test_geometry(self):
         kv, out = self.scenario(size1=SIZE1 + 8)                   # the build guarantees the 64 KiB cut; if not, refuse clearly
         self.fatal(out, M.MSG_BAD, "09-FFFF0002")
@@ -202,7 +277,7 @@ class EndToEnd(unittest.TestCase):
             f.write("flags=12 trail=0\n" + "\n".join(paths) + "\n--order--\n" + "\n".join(paths) + "\n")
         base = open(BASE_DLL, "rb").read()
         out, payload, side, info = T.pack_file_bytes(base, stage, side_paths)
-        out = M.add(out, info["size1"], info["fnv"], info["size2"], info["build_id"])
+        out = M.add(out, info["size1"], info["fnv"], info["size2"], info["build_id"], sfnv=info["sfnv"])
         out = shrink_rsrc.shrink(out)
         M.check(out, info["size1"], info["fnv"], info["build_id"])
         pe = pefile.PE(data=out, fast_load=True)

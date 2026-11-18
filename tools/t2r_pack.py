@@ -572,8 +572,12 @@ def pack_file_bytes(dll, in_dir, side_paths=()):
         assert f2 == files and m2["paths"] == meta["paths"], "round-trip mismatch"
     del info["dsar"]
     bid = hashlib.sha256(phys).digest()[:16]
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "features"))
+    import pack_file
+    sfnv = pack_file.sampled_fnv(phys)
     print(f"{len(files)} files, data file payload {len(phys) / 1e6:.1f} MB" + (f" + side {len(side) / 1e6:.1f} MB" if side else "") + ", verified")
-    return out, phys, (side + bid) if side else None, {"size1": len(phys), "size2": len(side), "build_id": bid, "fnv": fnv, "cut": info["cut"], "delta": 0}
+    return out, phys, (side + bid) if side else None, {"size1": len(phys), "size2": len(side), "build_id": bid, "fnv": fnv, "cut": info["cut"], "delta": 0,
+                                                 "sfnv": sfnv}
 
 
 def load_dir(in_dir):

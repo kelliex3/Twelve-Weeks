@@ -2927,7 +2927,8 @@ def build(a, salt):
         print(f"stubpool: .t2rstub rva {_sp_rva:#x} size {_sp_vs:#x}")
         if PACK_FILE:       # the data-file cave (pack_file.py): maps t2r-data.bin (+ part1.dat behind it) at the loader
             import pack_file
-            out = pack_file.add(out, side_info["size1"], side_info["fnv"], side_info["size2"], side_info["build_id"])
+            out = pack_file.add(out, side_info["size1"], side_info["fnv"], side_info["size2"], side_info["build_id"],
+                                 sfnv=side_info["sfnv"])
             pack_file.check(out, side_info["size1"], side_info["fnv"], side_info["build_id"])
         elif _P1_VIRT:        # the side-file cave (p1_side_map.py): maps part1.dat behind the blob at the loader; a probe image (side_info None) only needs the layout
             import p1_side_map

@@ -4,7 +4,8 @@
 // <dir>\fake.dll stands for winmm.dll (only its directory matters), <dir>\t2r-maps\main\t2r-data.bin = the data file,
 // <dir>\t2r-maps\part1\part1.dat = the Part I side file (either may be absent / wrong). IAT slots point at kernel32 except
 // GetModuleFileNameW (-> <dir>\fake.dll), MessageBoxA (prints FATAL <title> | <first line>) and TerminateProcess (prints the RESULT, exits 0).
-// Prints  RESULT status=<n> layout=<n> step=<n> err=<hex> mstatus=<n> mstep=<n> ret=<1 resumed | 0 fail branch> d8=<size>
+// Prints  RESULT status=<n> layout=<n> step=<n> err=<hex> mstatus=<n> mstep=<n> cache=<0 | 1 hit | 2 written | 3 not written> ret=<1 resumed | 0 fail branch> d8=<size>
+//   then  TIME cave <ms>
 //   then  MEM full-ok | MEM view1-ok-hole-reserved | MEM view1-ok | MEM BAD <what>
 #include <windows.h>
 #include <stdio.h>
@@ -25,7 +26,7 @@ static void put64(uint64_t va, uint64_t v) { *(uint64_t *)(uintptr_t)va = v; }
 static uint64_t get64(uint64_t va) { return *(uint64_t *)(uintptr_t)va; }
 static void result(int ret) {
     uint32_t *d = (uint32_t *)(uintptr_t)g_secva;
-    printf("RESULT status=%u layout=%u step=%u err=%x mstatus=%u mstep=%u ret=%d d8=%llu\n", d[2], d[3], d[4], d[5], d[0x48 / 4], d[0x4C / 4], ret,
+    printf("RESULT status=%u layout=%u step=%u err=%x mstatus=%u mstep=%u cache=%u ret=%d d8=%llu\n", d[2], d[3], d[4], d[5], d[0x48 / 4], d[0x4C / 4], d[0x50 / 4], ret,
            (unsigned long long)get64(0x1801398D8));
 }
 static int WINAPI fake_mba(HWND h, LPCSTR text, LPCSTR title, UINT type) {
@@ -74,6 +75,8 @@ int main(int argc, char **argv) {
     put64(0x180129690, (uint64_t)(uintptr_t)GetProcAddress(k, "GetProcAddress"));
     put64(0x1801298B8, (uint64_t)(uintptr_t)GetProcAddress(k, "VirtualAlloc"));
     put64(0x1801298C0, (uint64_t)(uintptr_t)GetProcAddress(k, "VirtualFree"));
+    put64(0x1801297D8, (uint64_t)(uintptr_t)GetProcAddress(k, "ReadFile"));
+    put64(0x1801298F8, (uint64_t)(uintptr_t)GetProcAddress(k, "WriteFile"));
     put64(0x180129908, (uint64_t)(uintptr_t)fake_mba);
     put64(0x180129880, (uint64_t)(uintptr_t)fake_tp);
     uint8_t *stub = (uint8_t *)malloc(0x10000);                   // stands for the T2ME stub in the image
@@ -91,8 +94,13 @@ int main(int argc, char **argv) {
     memcpy((void *)0x1800019A6ULL, res, sizeof res);
     uint8_t fail[] = {0x48, 0x83, 0xC4, 0x08, 0x31, 0xC0, 0xC3};            // 0x180001adb: the loader's failure exit -> return 0
     memcpy((void *)0x180001ADBULL, fail, sizeof fail);
+    LARGE_INTEGER q0, q1, qf;
+    QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q0);
     int ret = ((int (*)(void))t)();
+    QueryPerformanceCounter(&q1);
     result(ret);
+    printf("TIME cave %.0f ms\n", (double)(q1.QuadPart - q0.QuadPart) * 1000.0 / (double)qf.QuadPart);
+    if (argc > 7 && !strcmp(argv[7], "nocmp")) return 0;      // real-size files: no second copy in memory
     uint32_t *d = (uint32_t *)(uintptr_t)secva;
     uint64_t d0 = get64(0x1801398D0);
     char p[MAX_PATH];
