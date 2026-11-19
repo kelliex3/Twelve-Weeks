@@ -21,6 +21,7 @@ mod, the deliverable is *verification + extension*, not a rewrite.
 | 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **partial** — `engine/pad.*` (activity only: `Joypad::Update` hook, button-edge / stick stamp for AFK); injection path missing | whole injection path |
 | 7 | Generated data pipeline | 78 headers (`tools/ext/GENERATED.md`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy |
 | 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config |
+| 9 | Engine RVA call / hook | `*(exe + rva)(…)` + hand-built RWX trampolines (`bp_pick`, `padinject.c`) | **partial** — `engine/transform.*`, `engine/pcm.*`, `engine/backpack-prop.*` call pinned RVAs; `net-patches.cpp` / `loader/boot.cpp` / `engine/pad.cpp` hook via safetyhook | pattern resolution + a shared exe-call helper + version guard |
 
 ---
 
@@ -139,17 +140,24 @@ src }`), so a slot reused by another sound makes `Live()` false and `Cut()` a no
 (`SfxUserVolume` / `MusicUserVolume`, ext `SfxOptionRaw` / `GeneralVolume` / `exmus_user_volume`)
 reads the game's own sliders times the general volume, degrading to 1.0 when the (still INFERRED)
 engine offsets cannot be read. The first two features sit on it: `net/audio/shivsting.*` and
-`net/audio/alertsting.*`.
+`net/audio/alertsting.*`. The blade SFX (`net/audio/bladesfx.*`) sits on the 3D voice path.
 
 **Dropped on purpose.** The ext's page-fault / prefetch / warm-worker, lock-timing instrumentation,
-mix-dump file and MMCSS workarounds (dev-only perf, not behaviour), and the 3D voice fields
-(`dyn` / `ent` / `wp` / `rnear` / `rfar` + per-frame gain ramp) — no ported feature is 3D yet.
+mix-dump file and MMCSS workarounds (dev-only perf, not behaviour).
 
-**Gap.** 3D / positional voices, loop points and the crossfade used by `downed_music`, and the data
-wiring (item 7): the sting PCM blobs are private generators, so `net/audio/*` compiles with the
-`T2R_DATA_*` gates off and `Start()` / `Play()` are no-ops until the headers exist. The sting
-*triggers* (the xcam hook and the music tier) are also unported, so the two stings are wired but
-cannot fire on their own yet.
+**3D voices (ported).** The ext's dynamic voice fields (`dyn` / `ent` / `wp` / `rnear` / `rfar` + the
+per-frame gain ramp) are ported: a dynamic voice follows its body (`ent`, or a world point) and is
+panned / attenuated against the listener every frame by `engine::pcm::VoicesUpdate()` (called from
+`boot::FrameTick`). The listener is the camera-through-reticle locator via the
+`camera-get-dir-through-reticle` native, with the own-body-at-head-height fallback; the ext's
+render-camera (icam) hook is deliberately not ported (documented in `pcm.cpp`). First consumer: the
+blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
+
+**Gap.** Loop points and the crossfade used by `downed_music`, and the data wiring (item 7): the PCM
+blobs are private generators, so `net/audio/*` compiles with the `T2R_DATA_*` gates off and
+`Start()` / `Play()` are no-ops until the headers exist. The sting / blade *triggers* (the xcam hook,
+the music tier, the melee-label hooks) are also unported, so the wired cues cannot fire on their own
+yet.
 
 **Deliverable.** `src/engine/pcm.hpp/.cpp` — done. Source the buffers from generated PCM headers
 (item 7). `mod/scripts/make-xvag.py` already exists and is the model for the generator wiring.
@@ -253,6 +261,62 @@ the `TO1_LOG` prefix convention, and the safetyhook rule.
 
 ---
 
+## 9. Engine RVA calls and hooks — partial
+
+**Ext mechanism.** Beyond the DC natives, the ext calls the shipped exe directly at pinned RVAs
+(`*(exe + rva)(…)`) and, where it must change an engine decision, overwrites a code site with a
+hand-built RWX trampoline (`bp_pick` over the 30-byte prop-pick prologue; `padinject.c` over the
+`Joypad::Update` call sites). Everything is pinned to `tlou-ii.exe 1.6.10721`.
+
+**Mod today.** `engine/transform.cpp` (`ProcessWorld`, RVA `0x133DB30`), `engine/pcm.cpp` (winmm
+from System32 + the engine volume readers), `engine/backpack-prop.cpp` (the
+`PlayerBackpackAnimCtrl` vtable / Enter-Leave RVAs), `engine/clipfx.cpp` (the `part-effect` anim
+event fire path, RVA `0x1b04824`) and `engine/vfx.cpp` (particle spawn + compute-entry / retry)
+already call pinned RVAs; the hook sites use
+**safetyhook** (`net-patches.cpp`, `loader/boot.cpp`, `engine/pad.cpp`), each with a prologue check
+that disables the hook when the bytes differ — i.e. on a game update.
+
+**Ported with the backpack prop spawn.** The ext's `BpSpawnReal` runs the engine's own
+`PlayerBackpackAnimCtrl::SpawnProp` (RVA `0xafd7f0`) on a *copy* of our controller (so `+0x118` is a
+real `Player` and the vfuncs / parent link stay valid) with the puppet's locator; the ext answered
+the art pick by trampolining the site at `0xafd9f6`. The mod keeps the RVA call but replaces the
+trampoline with a **safetyhook mid-hook at the site's `cmp`** (RVA `0xafda06`, `kRvaPickCmp`): the
+callback rewrites the `[rsp+0x198]` art slot, then the original `cmp` / `je` run unchanged
+(0 → skip the spawn, non-zero → spawn). The 30-byte site prologue is verified before the hook is
+installed. `BpSendMsg2` (`0x15734d0`) and the set-parent builder (`0x14cfc60`) are called by RVA,
+both behind `engine::ptr::Readable` staleness guards.
+
+**Ported with the weapon reparent / attach.** The ext reparents the slung weapons onto the bag at
+the bag-off hand-off by hooking **12 call sites** (`bp_reparent_hook`, `fn_bp_reparent` at RVA
+`0xafc740`) and **8 attach sites** (`bp_attach_hook`, `fn_bp_attach` at RVA `0x1cd2140`) with
+hand-built trampolines. The mod instead safetyhook-inlines the **two engine function bodies**
+themselves (the sites all call into them), so one hook covers every caller — a documented deviation.
+A `g_attachBlend` gate selects the bag-off path; a `g_inAttach` re-entry guard passes the blend
+path's own internal call to the instant attach through silently. `t2r-bp-weapons-body.txt` keeps the
+weapons on the body (no reparent).
+
+**Ported with the armour rig.** `engine/armor-rig.*` ports the skinned-armour tables + the typed
+`look2` resolver (RVA `0x13578a0`, 15-byte prologue + the `look2` type sid) + the per-body apply
+(`GvisSet` / `GvisRead` over the draw-control mesh instances). Its per-frame **driver**
+(`feature_armor_visual`, the helmet / vest mask from the armour points) is not ported — no armour
+feature exists in the mod — so the own-side rig stays unprobed and `backpack-prop`'s rig branch is
+inert. The **ps57** put-away-refusal recovery (`CurrentWeapon` + the refusal-frame registry) is
+ported too; its producer (`g_bp57RefuseF`, the unported holster fix) is honestly gated, so the
+recovery is faithful but inert until that lands.
+
+**Gap.** No pattern resolution (the RVAs are pinned); no shared helper for "call an exe RVA" (every
+caller does its own `GetModuleHandleW` + cast). A game update silently disables the prologue-checked
+hooks and mis-calls the unchecked RVA calls.
+
+**Deliverable.** A small `engine/exe.hpp` (raw-call helper, distinct from `engine/exe_side.hpp`,
+which is sidecar-file only): `exe::Base()`, `exe::Call<Ret>(rva, args…)` and a prologue-checked
+`exe::HookMid(rva, bytes, fn)`. Migrate the raw call sites onto it.
+
+**Gate.** The backpack prop spawn works on a ported client (the animated TAB prop appears) and the
+ext's `bp_pick` trampoline can be dropped.
+
+---
+
 ## Sequencing
 
 Ordered by dependency, cheapest-unblock-first:
@@ -290,6 +354,21 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/widgets/*.widget.json` | **new** — widget defs translated from `tools/features/*_widgets.py` |
 | `mod/cmake/gen-*.py` + `mod/CMakeLists.txt` | data-header codegen template + wiring |
 | `mod/src/loader/config.hpp` (+ runtime config if needed) | toggle policy surface |
+| `mod/src/engine/ptr.hpp` | `Readable` / `Writable` guarded pointer reads (ext `IsBadReadPtr` / raw deref) |
+| `mod/src/engine/frame.hpp` + `.cpp` | QPC ms clock (`NowMs`, ext `BpMs`) alongside the 60 Hz frame counter |
+| `mod/src/engine/object.hpp` + `.cpp` | **new** — entity / joint locators, draw-control mesh hide/show, set-locator (ext `XbxLoc` / `GvisDc` / `BpDc` / `PsyncBfFromLoc`) |
+| `mod/src/engine/anim-prims.hpp` + `.cpp` | **new** — `AnimateFrom` / `AnimLen` (ext `animate_` recipe + `get-animation-duration`) |
+| `mod/src/engine/backpack-prop.hpp` + `.cpp` | **new** — own-side backpack hand-off (ext `feature_backpack_prop`) |
+| `mod/src/engine/armor-rig.hpp` + `.cpp` | **new** — skinned-armour tables + `look2` resolver + per-body apply (ext `ARMOR_RIG_*` / `ArmorRigApply`); the armour-visual driver is unported |
+| `mod/src/net/match/backpack.hpp` + `.cpp` | **new** — TAB backpack wire + prop state machine + engine prop spawn (ext `backpack.c` + `bp_pick`) |
+| `mod/src/engine/clipfx.hpp` + `.cpp` | **new** — engine `part-effect` anim-event fire path (ext `clipfx.c`) |
+| `mod/src/engine/vfx.hpp` + `.cpp` | **new** — particle spawn + compute-entry / retry (ext `CfxSpawnRaw` / `ArmorFxSpawn` / `CfxRetryTick`) |
+| `mod/src/gameplay/melee2013.hpp` + `.cpp` | **new** — 2013 melee move table (ext `MELEE2013` / `MxMove` / `MxByMove`) |
+| `mod/src/gameplay/ctxdown.hpp` + `.cpp` + `ctxdown-rows/*.h` | **new** — contextual-down pair table (ext `ctxdown.c` `CD_PAIRS` + `mduel_*` / `pullout_rows.h`) |
+| `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset) |
+| `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
+| `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
+| `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
 | `mod/FEATURES.md` | data-table column: generator availability |
 

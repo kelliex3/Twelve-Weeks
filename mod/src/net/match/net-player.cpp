@@ -10,6 +10,7 @@
 #include "net-debug.hpp"
 #include "net-replication.hpp"
 #include "net-common.hpp"
+#include "engine/backpack-prop.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -109,6 +110,12 @@ static void ResolveLoadout(int slot, StringId64& primary, StringId64& secondary)
 
 void NetPlayers::GiveLocalLoadout()
 {
+    // New life: bump the backpack hand-off's life token (ext g_spawnedFrame). GiveLocalLoadout
+    // runs once per local life -- match start and every RespawnLocal -- so this is the mod's
+    // equivalent of the ext's per-spawn give, and it lets the held-bag state be voided when the
+    // body is replaced. See engine/backpack-prop.hpp.
+    ::engine::backpack_prop::BumpLife();
+
     const StringId64 primary = net::gui2::PrimaryWeaponSid(); // 0 = no primary
     const int primaryStartingAmmo = net::gui2::PrimaryWeaponStartingAmmo();
 

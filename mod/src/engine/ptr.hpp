@@ -28,4 +28,23 @@ namespace engine::ptr {
         return p + bytes <= regionEnd;
     }
 
+    // Is [p, p+bytes) committed and writable? The ext's IsBadWritePtr: the engine's own
+    // allocations (script arrays) are written through directly, and a read-only or guard
+    // page must be refused before the write (the ext's AllocEntryBad).
+    inline bool Writable(uintptr_t p, size_t bytes)
+    {
+        if (!p)
+            return false;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(p), &mbi, sizeof(mbi)))
+            return false;
+        if (mbi.State != MEM_COMMIT)
+            return false;
+        if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD | PAGE_READONLY | PAGE_EXECUTE_READ))
+            return false;
+        const uintptr_t regionEnd =
+            reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        return p + bytes <= regionEnd;
+    }
+
 }

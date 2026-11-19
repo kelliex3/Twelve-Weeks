@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sid/sid.hpp"      // StringId64
+
 #include <cstdint>
 
 // Ported from tools/ext/t2r-ext.c's PCM mixer (the "stereo waveOut" block after
@@ -16,8 +18,11 @@
 // dropped: the ext's page-fault / prefetch / warm-worker and lock-timing instrumentation
 // (dev-only perf work, not behaviour) and the mix-dump dev file.
 //
-// The ext's 3D voice fields (dyn / ent / wp / rnear / rfar and the per-frame gain ramp) are
-// NOT ported: no ported feature is 3D yet. Add them with the first 3D caller.
+// 3D voices (ext g_mixv's dyn/ent/wp/rnear/rfar and sfx_voices_update): a voice whose gain
+// and pan are recomputed every frame from the source body's live position, ramped in the
+// mixer (no zipper noise). The listener is the game camera -- see the divergence note on
+// ListenerPosDir() in pcm.cpp (the ext's primary was a render-camera hook the mod does not
+// port).
 //
 // The gain model (SfxUserVolume / MusicUserVolume) reads the game's own options sliders
 // (volume-sfx / volume-music, squared like the game's taper) times the general volume (mixer
@@ -62,6 +67,27 @@ namespace engine::pcm {
     // caller already applied MusicUserVolume). The ext's raw stereo start used by the stings.
     bool PlayStereoRaw(const Sample* l, const Sample* r, int n, float gain, int rate,
                        Voice& outL, Voice& outR);
+
+    // ---- 3D voices (ext PcmPlayAt2 / sfx_voices_update) ----------------------
+
+    // One voice placed in the world: gain + pan come from the source body's live position
+    // relative to the listener (the camera). `ent` = SID("player") for our own body, a
+    // puppet sid otherwise, or 0 when only `wpos` is known. Our own body plays full-level
+    // 2D if the spatial query fails (it IS ours); another body / a position is never 2D at
+    // full level -- on a failed query its last known position (or wpos) is used, and with
+    // neither the sound is dropped. The voice follows the body live (call VoicesUpdate()).
+    Voice PlayAt(const Sample* src, int n, float gain, int rate, StringId64 ent,
+                 const float* wpos = nullptr);
+
+    // A world-position voice with its own short range: full within rnear m of our body,
+    // ((rfar - d) / (rfar - rnear))^2 to silent at rfar, followed live like any 3D voice.
+    // The ext's pcm_play_at_range (the placed bomb's sizzle).
+    Voice PlayAtRange(const Sample* src, int n, float gain, int rate,
+                      const float* wpos, float rnear, float rfar);
+
+    // Recompute every live 3D voice's target gain/pan from the listener and each source's
+    // live position. Call once per frame (boot::FrameTick). ext sfx_voices_update.
+    void VoicesUpdate();
 
     // The handle still plays its source (ext: g_mixv[slot].on && .src == src).
     bool Live(const Voice& v);

@@ -41,6 +41,16 @@ namespace engine::frame {
     uint64_t T60()     { return g_t60; }
     float    DeltaMs() { return g_deltaMs; }
 
+    double NowMs()
+    {
+        if (!g_qpf.QuadPart)
+            QueryPerformanceFrequency(&g_qpf);
+        LARGE_INTEGER c;
+        QueryPerformanceCounter(&c);
+        return static_cast<double>(c.QuadPart) * 1000.0 /
+               static_cast<double>(g_qpf.QuadPart);
+    }
+
     void Reset()
     {
         g_count = 0;

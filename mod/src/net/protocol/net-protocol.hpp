@@ -184,6 +184,15 @@ enum NetEventType : uint8_t {
     // out. Pinned to the ext's own byte 0x91 so the two transports interoperate during the
     // cutover.
     NEVT_SCOPE_GLINT = 0x91,
+
+    // Ported from tools/ext/backpack.c (MSG_BACKPACK): the TAB backpack (crafting / shop) as
+    // other players see it. One byte carries three shapes, dispatched on data[0] (see
+    // net/match/backpack.cpp):
+    //   [u8 1][u8 phase][u8 bagoff][u8 seq][u32 ms][u16 enter][u16 leave]   the owner's phase
+    //   [u8 0x54][u8 clip][u16 first][u8 n][u8 0][n x {u8 has, i16 x,y,z}]  spinec track chunk
+    //   [u8 0x55][u8 clip][u16 first][u8 n][u8 0][n x {u8 has, i16 x,y,z,w}] root track chunk
+    // Pinned to the ext's own byte 0x5B so the two transports interoperate during the cutover.
+    NEVT_BACKPACK = 0x5B,
 };
 
 struct ExecutionEvent {

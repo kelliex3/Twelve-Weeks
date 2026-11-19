@@ -26,6 +26,11 @@ namespace engine::frame {
     uint64_t T60();        // wall clock in 1/60 s units (ext: g_t60)
     float    DeltaMs();    // smoothed frame time, ms    (ext: g_frameMs)
 
+    // A monotonic millisecond clock (QueryPerformanceCounter), the ext's BpMs(). T60() is
+    // 16.7 ms-quantised; features that carry sub-frame phase timings on the wire (the TAB
+    // backpack's intro / loop / leave deadlines) need this one. Cheap; call freely.
+    double   NowMs();
+
     // Test / level-reload helper.
     void     Reset();
 

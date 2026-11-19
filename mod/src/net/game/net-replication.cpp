@@ -11,6 +11,7 @@
 #include "notify.hpp"
 #include "glass.hpp"
 #include "afk.hpp"
+#include "backpack.hpp"
 #include "net-timer.hpp"
 
 #include <cmath>
@@ -1866,6 +1867,11 @@ namespace net::replication {
 
         case NEVT_GLASS: {
             net::glass::OnEvent(senderSlot, data, size);
+            break;
+        }
+
+        case NEVT_BACKPACK: {
+            net::match::backpack::OnEvent(senderSlot, data, size);
             break;
         }
 

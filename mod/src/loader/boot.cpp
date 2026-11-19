@@ -10,6 +10,7 @@
 #include "engine/debugdraw.hpp"
 #include "engine/framecap.hpp"
 #include "engine/frame.hpp"
+#include "engine/vfx.hpp"
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
 #include "gameplay/barrel-check.hpp"
@@ -18,9 +19,13 @@
 #include "net/ui/notify.hpp"
 #include "net/ui/denynote.hpp"
 #include "net/game/glass.hpp"
+#include "engine/pcm.hpp"
 #include "net/audio/shivsting.hpp"
 #include "net/audio/alertsting.hpp"
+#include "net/audio/bladesfx.hpp"
 #include "net/match/afk.hpp"
+#include "net/match/backpack.hpp"
+#include "net/match/bloodbuild.hpp"
 #include "hwid.hpp"
 #include "log.hpp"
 
@@ -157,7 +162,12 @@ namespace boot {
 		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
 		net::audio::shivsting::Tick();  // shiv victim shock sting (ported from tools/ext/shiv_sting.c)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
+		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
+		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
+		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
+		engine::vfx::RetryTick();     // queued compute-stream particle retries (ported from tools/ext/t2r-ext.c)
+		engine::pcm::VoicesUpdate();  // live 3D voice follow (ported from tools/ext/t2r-ext.c)
 #ifdef TO1_DEBUG
 		engine::debugdraw::Tick();
 #endif

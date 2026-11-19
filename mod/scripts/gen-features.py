@@ -131,7 +131,8 @@ PRI = {
 }
 
 OVERLAP = {
-    "killfeed": "net/ui/kill-feed.cpp", "backpack": "net/ui/net-gui2.cpp",
+    "killfeed": "net/ui/kill-feed.cpp",
+    "backpack": "net/match/backpack.cpp, engine/backpack-prop.cpp, engine/armor-rig.cpp",
     "death_ui": "net/ui/net-gui2.cpp", "rankbadge": "net/ui/net-gui2.cpp",
     "skills": "gameplay/perks/*", "supplybox": "net/match/net-player.cpp",
     "medkits": "net/match/net-player.cpp", "itemspots": "net/match/net-player.cpp",
@@ -148,6 +149,9 @@ OVERLAP = {
     "alert_sting": "net/audio/alertsting.cpp, engine/pcm.cpp",
     "afk": "net/match/afk.cpp, engine/pad.cpp",
     "padinject": "engine/pad.cpp (activity only)",
+    "bloodbuild": "net/match/bloodbuild.cpp, engine/clipfx.cpp, engine/vfx.cpp, "
+                  "gameplay/ctxdown.cpp, gameplay/melee2013.cpp",
+    "clipfx": "engine/clipfx.cpp",
     # No overlap: pinned so the heuristic's "sting" token does not match the new audio modules.
     "pullout_sting": "",
 }
@@ -166,6 +170,33 @@ STATUS = {
     # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
     # counters are still gated, so it is in progress, not ported.
     "afk": "in progress",
+    # Refined scope: the MSG_BACKPACK phase wire, the BPT/BPTR track, the puppet prop
+    # state machine, the own-side bag hand-off, the engine prop spawn (BpSpawnReal +
+    # the bp_pick detour, so the animated TAB prop is reachable), the per-look TAB prop
+    # table (BP_PROP_LOOKS / BpTables / BpLookProp / BpPlayerLook), the weapon reparent /
+    # attach hooks (ext BpReparentHook / BpAttachHook; the mod hooks the two engine
+    # FUNCTION BODIES where the ext hooked 12 call sites) and the ps57 put-away-refusal
+    # recovery (CurrentWeapon + the refusal-frame registry) are ported
+    # (net/match/backpack, engine/backpack-prop, engine/armor-rig). The armour rig
+    # (engine/armor-rig: tables, look resolver, per-body apply) is ported too, but its
+    # per-frame DRIVER (feature_armor_visual, the helmet/vest mask from the armour points)
+    # is not, so the own-side rig stays unprobed and backpack-prop's rig branch is inert;
+    # g_flSpawnStr (puppet pool row) and the puppet body craft clips (left to net/anim) are
+    # gated/dropped, so it is in progress, not ported.
+    "backpack": "in progress",
+    # The whole tick, the escalation, the downed crawl, the gun-execution wound / pool hooks
+    # and the module pin are ported (net/match/bloodbuild + engine/clipfx, engine/vfx,
+    # gameplay/ctxdown, gameplay/melee2013, net/anim/paired). The three private generated
+    # tables (CTX_FX / KNIFE_HIT_FX / FIN_ANIMS) are absent, so the ext's faithful early-out
+    # keeps the feature inert behind T2R_DATA_CTX_FX; MeleeBladeKills and the downed-state
+    # read are honest TODO gates, so it is in progress, not ported.
+    "bloodbuild": "in progress",
+}
+
+# Curated notes for the logic / contract headers (the header table has no status column;
+# append a port note for the ones already folded into mod/).
+HEADER_NOTE = {
+    "blade_sfx.h": " -- ported into net/audio/bladesfx.* (data gated on T2R_DATA_T2BLADE)",
 }
 
 mod_files = []
@@ -297,7 +328,8 @@ w("Included directly by the unity build; carry code or a contract, not bulk data
 w("| Header | Note |")
 w("|---|---|")
 for h in sorted(logic, key=lambda h: h["file"]):
-    w(f"| `{h['file']}` | {cell(h['comment'])} |")
+    note = h["comment"] + HEADER_NOTE.get(h["file"], "")
+    w(f"| `{h['file']}` | {cell(note)} |")
 w("")
 
 sys.stdout.write("\n".join(out) + "\n")

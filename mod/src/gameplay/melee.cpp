@@ -5,6 +5,7 @@
 #include "net-hooks.hpp"
 #include "net-engine.hpp"
 #include "anim.hpp"
+#include "paired.hpp"     // net::anim::paired -- the paired-move surface other features read
 #include "log.hpp"
 
 #include <algorithm>
@@ -203,8 +204,8 @@ namespace gameplay::melee {
     }
 
     namespace {
-        void FinishExecution(const char* why);
-        void FinishBeingExecuted(const char* why);
+        void FinishExecution(const char* why, bool aborted = false);
+        void FinishBeingExecuted(const char* why, bool aborted = false);
         void BeginExecution();
     }
 
@@ -215,7 +216,7 @@ namespace gameplay::melee {
             FinishBeingExecuted("attacker puppet destroyed");
 
         if (s_execution.phase != Execution::Phase::Idle && s_execution.slot == slot)
-            FinishExecution("victim puppet destroyed");
+            FinishExecution("victim puppet destroyed", true);
     }
 
     void Reset()
@@ -232,6 +233,7 @@ namespace gameplay::melee {
         s_promisedAge = 0.0f;
         s_executionCooldown = 0.0f;
         ExemptMeleeTarget(0, 0.0f);
+        net::anim::paired::Reset();
     }
 
     bool QueueExecution(const NetPlayer& victim, uint64_t weapon, float damage)
@@ -356,17 +358,22 @@ namespace gameplay::melee {
 
         NetPlayers::BySlot(attackerSlot).SuspendForEngineAction();
 
+        // Publish the paired move for other features (bloodbuild): we play the victim half.
+        net::anim::paired::BeginVictim(attackerSlot, net::session::MySlot(), attackerNpcSid, moveSid, 0.0f);
+
         TO1_LOG("[MELEE] being executed: attacker puppet slot%d handed to the engine action\n",
             attackerSlot);
     }
 
     namespace {
-        void FinishExecution(const char* why)
+        void FinishExecution(const char* why, bool aborted)
         {
             const Execution exec = s_execution;
             s_execution = Execution{};
             ExemptMeleeTarget(0, 0.0f);
             if (exec.phase == Execution::Phase::Idle) return;
+
+            net::anim::paired::End(aborted);     // the paired move is over here
 
             if (exec.phase == Execution::Phase::Running)
                 s_executionCooldown = kExecutionCooldownSec;
@@ -389,11 +396,13 @@ namespace gameplay::melee {
             }
         }
 
-        void FinishBeingExecuted(const char* why)
+        void FinishBeingExecuted(const char* why, bool aborted)
         {
             const VictimExecution v = s_executedBy;
             s_executedBy = VictimExecution{};
             if (!v.active) return;
+
+            net::anim::paired::End(aborted);     // the paired move is over here
 
             TO1_LOG("[MELEE] being executed by slot%d ended (%s)\n", v.slot, why);
 
@@ -466,6 +475,10 @@ namespace gameplay::melee {
             s_execution.phase = Execution::Phase::Running;
             s_execution.age = 0.0f;
 
+            // Publish the paired move for other features (bloodbuild): we play the attacker half.
+            net::anim::paired::BeginAttacker(net::session::MySlot(), exec.slot, exec.npcSid,
+                exec.weapon, kExecutionMove, 0.0f);
+
             TO1_LOG("[MELEE] execution t=0: move now playing = %llx (sync half sent to slot%d)\n",
                 static_cast<unsigned long long>(MELEE::GET_CURRENT_MELEE_ACTION(SID("player"))),
                 exec.slot);
@@ -522,11 +535,11 @@ namespace gameplay::melee {
         }
 
         if (!net::session::IsConnected() || !ENTITY::DOES_EXIST(s_execution.npcSid)) {
-            FinishExecution("target gone");
+            FinishExecution("target gone", true);
             return;
         }
         if (s_execution.age > kExecutionMaxHoldSec) {
-            FinishExecution("timeout");
+            FinishExecution("timeout", true);
             return;
         }
 
