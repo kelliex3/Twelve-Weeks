@@ -35,8 +35,9 @@ namespace net::jip {
 
         constexpr uint8_t  kClockValid = 0x01;   // rem / dur fields are usable
         constexpr uint8_t  kMatchOver  = 0x02;   // end banner / fade hold
-        // 0x10 (we apply the server's team-swap block) and 0x20 (we requeue ourselves)
-        // are deliberately NOT sent: those features are unported. See the header.
+        constexpr uint8_t  kRequeue    = 0x20;   // net::requeue is ported: keep our ticket
+        // 0x10 (we apply the server's team-swap block) is deliberately NOT sent: that
+        // feature is still owned by the ext. 0x20 is sent only while requeue is enabled.
 
         constexpr uint64_t kHostMs   = 2000;     // ext: hosts poll every 2 s
         constexpr uint64_t kClientMs = 3000;     // ext: clients every 3 s
@@ -226,6 +227,10 @@ namespace net::jip {
             flags |= kClockValid;
         if (net::gui2::ScoreboardShowing() || net::gui2::MatchExpired())
             flags |= kMatchOver;
+        // The server only issues a requeue ticket to clients that asked for it with the clock
+        // report. Same sidecar file requeue.c reads, so a cutover disables both at once.
+        if (engine::flag::Absent("t2r-no-requeue.txt", 300))
+            flags |= kRequeue;
 
         const int myTeam = net::match::Get().TeamOf(net::session::MySlot());
         Ask(now, flags, t.remaining, t.duration,

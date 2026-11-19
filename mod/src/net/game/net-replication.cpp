@@ -11,7 +11,9 @@
 #include "notify.hpp"
 #include "glass.hpp"
 #include "afk.hpp"
+#include "net-direct.hpp"
 #include "jip-report.hpp"
+#include "requeue.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -1911,6 +1913,8 @@ namespace net::replication {
         net::vox::Reset();
         net::afk::Reset();
         net::jip::Reset();
+        net::requeue::Reset();
+        net::direct::Reset();
         net::audio::music_tier::Reset();
 
         kListenModeDurability = 1.0f;

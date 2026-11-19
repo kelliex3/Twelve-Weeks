@@ -27,13 +27,11 @@
 // #endif
 
 #if TO1_LOCAL_MATCHMAKER
-constexpr const char* kModVersion = "v0.14 BETA LOCAL";
+constexpr const char* kModVersion = "v1.08 BETA LOCAL";
 #elif TO1_DEV_MATCHMAKER
-constexpr const char* kModVersion = "v0.14 BETA DEV";
+constexpr const char* kModVersion = "v1.08 BETA DEV";
 #else
-// was winmm_patches.py: version-text ("v1.08 BETA" -> "v0.14 BETA" in the base binary's
-// .rdata). This is the string the main-menu / pause-menu versionText widget shows.
-constexpr const char* kModVersion = "v0.14 BETA";
+constexpr const char* kModVersion = "v1.08 BETA";
 #endif
 
 extern uintptr_t g_base;

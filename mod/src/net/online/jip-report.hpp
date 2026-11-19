@@ -19,12 +19,12 @@
 // net::daemon::TestFlags()) and "enabled = 0" stop, and the no-answer backoff.
 //
 // Honest gates (TODO): the 0xE5 roster merge into the lobby object, the in-match team
-// swap block (0xA7), the late-join query (flags 0x04), ghost peer reaping and the
-// requeue flag (0x20) are separate unported features -- they write engine state the
-// ext still owns while it is the bridge. Consequently this report does NOT set 0x10
-// (we do not apply team swaps) or 0x20 (no requeue), and only consumes the reply's
-// server settings. `t2r-no-jip.txt` turns the report off (the ext honours the same
-// file). Logs "[JIP] ...".
+// swap block (0xA7), the late-join query (flags 0x04) and ghost peer reaping are
+// separate unported features -- they write engine state the ext still owns while it
+// is the bridge. Consequently this report does NOT set 0x10 (we do not apply team
+// swaps). The requeue flag 0x20 IS sent while `t2r-no-requeue.txt` is absent: the
+// ticket check / auto-search lives in net/online/requeue.* now. `t2r-no-jip.txt`
+// turns the report off (the ext honours the same file). Logs "[JIP] ...".
 
 namespace net::jip {
 

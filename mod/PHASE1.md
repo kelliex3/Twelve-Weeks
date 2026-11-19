@@ -244,8 +244,18 @@ the generation check that drops stale replies, "enabled = 0" stop, the 3-miss / 
 backoff, and the 0xE5 reply's test-server / wave-server settings. It runs immediately
 after `net::afk::Tick()` and resets with the session; `t2r-no-jip.txt` turns it off.
 Honest gates: the 0xE5 roster merge into the lobby object, the in-match team-swap block
-(`0xA7`), the late-join query (flags `0x04`), ghost peer reaping and requeue (`0x20`) are
-still owned by the ext. Consequently the mod does not send flags `0x10` / `0x20`.
+(`0xA7`), the late-join query (`0x04`) and ghost peer reaping are still owned by the ext, so
+the mod does not send `0x10`. Requeue (`0x20`) is now ported (`net/online/requeue.*`), so the
+report sends that flag while `t2r-no-requeue.txt` is absent.
+
+**Requeue and the direct melee path (ported with honest gates).** `net/online/requeue.*` owns
+the 0xBC / 0xBD ticket poll, the post-match arm and settle, the `to1/find-match-menu` push and
+the WAITING FOR PLAYERS... label. `net/game/net-direct.*` owns the helper loopback socket and
+the direct message / ping / pong wire, with the 800 ms dedupe ring hooked into the existing
+event channel at `SendEventRaw` and `HandleState`. Both use the same `t2r-*.txt` sidecars as
+the ext. The unported producers are called out in each header: requeue's kick / party /
+post-match latches and netdirect's ext melee opcodes / shared relay RTT baseline stay in the
+ext while it is the bridge.
 
 **Gap.** No binary / RE notes are available locally to verify the call-site scan or the pinned
 RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confirm. The dev-bot

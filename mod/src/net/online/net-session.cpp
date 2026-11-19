@@ -10,6 +10,7 @@
 #include "net-player.hpp"
 #include "match.hpp"
 #include "net-replication.hpp"
+#include "net-direct.hpp"
 #include "net-matchmaking.hpp"
 #include "net-account.hpp"
 #include "net-debug.hpp"
@@ -458,7 +459,10 @@ namespace net::session {
                 {
                     bool forMe = (target == kBroadcastSlot) ||
                         (target == static_cast<uint8_t>(g_mySlot));
-                    if (forMe)
+                    // netdirect: drop the relayed copy when the direct one already delivered
+                    // it here. Host forwarding below still happens: other peers may not have
+                    // a direct path and still need the relay copy.
+                    if (forMe && !net::direct::RelayIn(sender, type, data, sz))
                         replication::HandleNetEvent(sender, type, data, sz);
 
                     if (g_role == NetRole::Host) {
@@ -954,6 +958,10 @@ namespace net::session {
         e.size   = size;
         if (size && data) memcpy(e.data, data, size);
         e.ready.store(1, std::memory_order_release);
+
+        // The direct copy goes out with the relay copy. The receiver's 800 ms dedupe ring
+        // keeps only the first of the two; a repeat on the direct path is a real resend.
+        net::direct::OnSend(type, data, size, targetSlot);
     }
 
     void SendEventString(NetEventType type, const char* str, uint8_t targetSlot)

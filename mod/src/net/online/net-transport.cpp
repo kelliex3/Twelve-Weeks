@@ -149,6 +149,16 @@ namespace net::transport {
         return true;
     }
 
+    bool RelayEndpoint(sockaddr_in* out)
+    {
+        if (!out || !g_relayMode)
+            return false;
+        if (ntohl(g_relayAddr.sin_addr.s_addr) != static_cast<uint32_t>(INADDR_LOOPBACK))
+            return false;
+        *out = g_relayAddr;
+        return true;
+    }
+
     void Close()
     {
         if (g_sock != INVALID_SOCKET) {

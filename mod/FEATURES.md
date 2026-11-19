@@ -39,8 +39,8 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | engine/pad.cpp (full virtual pad, rel32 call-site scan + safetyhook mid-hooks; dev-bot/melee-pace consumers unported) | ported |
 | `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook, net | 2 e.g. `t2r-no-afk.txt` | net/match/afk.cpp, engine/pad.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp | ported |
 | `notice.c` | server notices: 0xBA poll, update / restart countdown / free text (tools/notices.py) | Match lifecycle | P1 | widget | 3 e.g. `t2r-no-notice.txt` | net/ui/notice.cpp, net/ui/notice.hpp | ported |
-| `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | — | not started |
-| `netdirect.c` | direct melee path: melee-critical ext messages also straight to the peer through the Steam helper (re/netdirect-1026.md; t2r-no-direct-melee.txt) | Netcode / sync | P1 | net, hook | 1 e.g. `t2r-no-direct-melee.txt` | net/game/net-replication.cpp | not started |
+| `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | net/online/requeue.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp | ported (gated) |
+| `netdirect.c` | direct melee path: melee-critical ext messages also straight to the peer through the Steam helper (re/netdirect-1026.md; t2r-no-direct-melee.txt) | Netcode / sync | P1 | net, hook | 1 e.g. `t2r-no-direct-melee.txt` | net/game/net-direct.cpp, net/online/net-session.cpp, net/online/net-transport.cpp | ported (gated) |
 | `netsmooth.c` | remote players: jitter buffer, interpolation, net stats (re/netcode.md) | Netcode / sync | P1 | hook | 13 e.g. `t2r-host-bw.txt` | net/anim/*, net/game/net-replication.cpp | not started |
 | `death_ui.c` | death screen, victim POV: fast fade to black, SP death sting + tip, KILLED BY, countdown, spectate | UI / HUD / menus | P1 | audio, widget, camera, pad, data | 8 e.g. `t2r-death-delay.txt` | net/ui/net-gui2.cpp | not started |
 | `denynote.c` | blocked notice panel for picker refusals (denynote_widgets.py), log denynote: | UI / HUD / menus | P1 | widget | 0 | net/ui/denynote.hpp, net/ui/denynote.cpp | ported |
@@ -176,8 +176,26 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 `net/online/jip-report.{hpp,cpp}` owns the 0xE3 clock report (cadence, clock flags, team /
 lives, AFK trailer, bounded RPC, generation check, backoff) and consumes the 0xE5 reply's
 server settings, including the no-AFK test-server flag. Roster merge, in-match team swap,
-late-join query, ghost peer reaping and requeue stay in the ext and are called out as TODO
-gates in that module.
+late-join query and ghost peer reaping stay in the ext and are called out as TODO gates in
+that module. The requeue flag (0x20) is now sent while `t2r-no-requeue.txt` is absent; the
+ticket check / auto-search / WAITING FOR PLAYERS... label live in `net/online/requeue.*`.
+
+`net/online/requeue.*` ports the daemon 0xBC ticket poll (bounded worker through
+`net::daemon::Rpc`), the match-end arm, the MP-menu settle + page push and the status-label
+swap. Honest gates: the exact end byte / MatchSubstate, `g_kickMs`, party leadership
+(`friends13.c`), the post-match screen latches (`clan13x` / `clan-postmatch` / clan event /
+GEAR UP nav) and `g_pqAuto` are unported; a stable top page over the settle window stands in
+for the screens and the ext still owns the latches while it is the bridge.
+
+`net/game/net-direct.*` ports the Steam-helper loopback socket, [06]/[07] hello/ack, the
+[05] ping/pong/message wire, the 800 ms cross-path dedupe ring, direct RTT EWMA gating and
+the send/recv integration (`net::session::SendEventRaw` outgoing, `HandleState` incoming).
+Helper discovery uses `net::transport::RelayEndpoint()` (the mod's `kNetCtx +0/+0x10`). Honest
+gates: the ext's melee-critical opcodes have no mod `NEVT_*` equivalents, so the eligible set
+is the mod's melee / hit events (`NEVT_PLAYER_MELEE_ATTACK`, `NEVT_TAKE_DAMAGE`) with the rest
+of the ext set still on the ext's own path; the RTT baseline is the per-peer `PingMs()` instead
+of `g_psRtt[]`, and the helper's single "ext address" registration means the ext copy must be
+retired before this path is exercised.
 
 `engine/pad.{hpp,cpp}` now ports the whole virtual pad from `padinject.c`: virtual button presses
 and sticks, command-bit learning, bounded delivery, the raw melee / dodge / stick readers and the

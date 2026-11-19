@@ -26,7 +26,9 @@
 #include "net/audio/music-tier.hpp"
 #include "net/audio/bladesfx.hpp"
 #include "net/match/afk.hpp"
+#include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
+#include "net/online/requeue.hpp"
 #include "net/match/backpack.hpp"
 #include "net/match/bloodbuild.hpp"
 #include "hwid.hpp"
@@ -159,6 +161,7 @@ namespace boot {
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
 		NetTick();                // the entire MP driver
+		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
 		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
 		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
 		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
@@ -170,6 +173,7 @@ namespace boot {
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
+		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
 		engine::vfx::RetryTick();     // queued compute-stream particle retries (ported from tools/ext/t2r-ext.c)
