@@ -38,4 +38,10 @@ namespace net::daemon {
     void MarkAlive();
     bool AliveWithin(uint32_t ms);
 
+    // Test-server flags from the trailing byte of the 0xE5 JIP reply (ext
+    // g_srvTestFlags): 0x08 free camera, 0x10 clock x2, 0x20 lives x2,
+    // 0x40 no AFK removal. Set by the 0xE3 clock-report reply; 0 until then.
+    void SetTestFlags(uint8_t flags);
+    uint8_t TestFlags();
+
 }

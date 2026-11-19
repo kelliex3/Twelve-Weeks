@@ -2,6 +2,8 @@
 
 #include "afk.hpp"
 
+#include <winsock2.h>        // daemon-rpc.hpp uses sockaddr-in types
+
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
 #include "engine/draw.hpp"
 #include "engine/flag.hpp"
@@ -10,6 +12,7 @@
 #include "engine/pad.hpp"
 #include "engine/script.hpp"
 #include "engine/window.hpp"
+#include "daemon-rpc.hpp"
 #include "net-gui2.hpp"
 #include "player-status.hpp"
 
@@ -32,6 +35,7 @@ namespace net::afk {
             int      off = -1;                      // -1 unknown, 0 on, 1 off
             uint64_t prev = 0, idle = 0, warnAt = 0, loggedS = 0, vis = 0;
             uint32_t lii = 0;                       // last GetLastInputInfo tick
+            uint32_t btn = 0, st = 0;               // last virtual-pad injection counters
             int      counting = 0, warn = 0, deadC = 0;
             uint64_t deadF = 0;
             uint8_t  wasLive = 0;
@@ -49,10 +53,10 @@ namespace net::afk {
                     o ? "off (t2r-no-afk.txt)"
                       : "on (warning at 60 s idle, the server removes at 90 s)");
             }
-            // TODO(jip): the test-server flag g_srvTestFlags & 0x40 (the test server removes
-            // nobody for inactivity) comes from the JIP reply, which is not ported. Treated
-            // as 0 -- a live server never sets it.
-            return o;
+            // ext: g_srvTestFlags & 0x40 -- the test server removes nobody for inactivity
+            // (T2R_AFK_KICK_S=0); the flag arrives in the trailing byte of the 0xE5 JIP
+            // reply and is published by net::daemon::TestFlags().
+            return o || (net::daemon::TestFlags() & 0x40) != 0;
         }
 
         int BpOwnDead()
@@ -68,7 +72,10 @@ namespace net::afk {
             // ext: MatchSubstate() == 6 and the match is not over (LobbyObj()[0x2ca4]).
             if (!net::player_status::MatchLive())
                 return 0;
-            // ext: g_downed || DuDeadNow() (downed / death screen / spectating).
+            // ext: g_downed || DuDeadNow() (downed / death screen / spectating). Downed is
+            // the shared stub in player-status; HP <= 0 approximates the death screen and
+            // the fresh kill-signal window (DuDeadNow's phase 1 / 1.5 s edge), which the
+            // mod's death UI does not expose separately.
             if (net::player_status::LocalDowned() || !net::player_status::LocalAlive())
                 return 0;
             // ext: a native character-is-dead? call, every 15 frames.
@@ -79,8 +86,10 @@ namespace net::afk {
             if (g_afk.deadC)
                 return 0;
             // ext: g_tabOpen || g_gu13Up || PlayerMenuActive() == 1 -- menus that are part
-            // of play. TODO(gearup13): the in-match GEAR UP page (g_gu13Up) is unported.
-            if (net::gui2::BackpackOpen() || net::gui2::PlayerMenuActive() == 1)
+            // of play. GearUpOpen() checks the page name only (the gearup13 feature is
+            // still unported), which is all the ext's g_gu13Up latch reads.
+            if (net::gui2::BackpackOpen() || net::gui2::GearUpOpen()
+                || net::gui2::PlayerMenuActive() == 1)
                 return 0;
             return 1;
         }
@@ -112,6 +121,10 @@ namespace net::afk {
             g_afk.warn = 0;
             g_afk.vis = 0;
             g_afk.loggedS = 0;
+            // Seed the injection counters so a press queued before the match does not
+            // read as player activity on the first counted frame.
+            g_afk.btn = engine::pad::Applied();
+            g_afk.st = engine::pad::StickApplied();
         }                           // a new match starts at 0
         g_afk.wasLive = static_cast<uint8_t>(live);
 
@@ -133,9 +146,17 @@ namespace net::afk {
         const uint64_t padAct = engine::pad::ActivityMs();
         if (padAct && now - padAct < kPadWindowMs)
             input = 1;              // any pad
-        // TODO(bot): the dev bots' injected presses / sticks (ext PadinjApplied() and
-        // g_padi.st_applied) are unported -- the bot / injection path is not ported, so a
-        // bot that plays would read as idle here.
+        // The virtual pad now reports its own applied-button / applied-stick counters.
+        // A change means the engine applied an injected press / stick this frame, which
+        // the ext counted as player activity (a bot that plays must not be kicked). The
+        // real-pad stamp above was taken before injection, so an injected press never
+        // counts as a *real* pad via that path.
+        const uint32_t injBtn = engine::pad::Applied();
+        const uint32_t injSt = engine::pad::StickApplied();
+        if (injBtn != g_afk.btn || injSt != g_afk.st)
+            input = 1;
+        g_afk.btn = injBtn;
+        g_afk.st = injSt;
 
         if (input) {
             if (g_afk.warn)

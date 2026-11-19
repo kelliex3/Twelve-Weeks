@@ -6,6 +6,7 @@
 #include "engine/flag.hpp"
 #include "engine/pcm.hpp"
 
+#include "music-tier.hpp"
 #include "net/game/player-status.hpp"
 
 #include "log.hpp"
@@ -69,10 +70,13 @@ namespace net::audio::alertsting {
     {
         const uint64_t now = GetTickCount64(), prev = g_alsThreatMs;
         g_alsThreatMs = now;
-        // TODO(music): the ext also requires g_msTier == 0 (combat music calm) and
-        // !g_msDead / !g_downed. The music layer is not ported, so g_alsCalmMs is never
-        // refreshed and this never arms. The bookkeeping is kept for when the tier lands.
+        // ext AlertstingCombat: the tier-0 requirement is the calm clock below -- music_tier::
+        // Tick refreshes it on every frame the tier is calm, so a fresh g_alsCalmMs means the
+        // combat music was tier 0 when the shot landed. The two explicit gates are the ext's
+        // own g_msDead / g_downed checks.
         if (!net::player_status::MatchLive())
+            return;
+        if (music_tier::Dead() || net::player_status::LocalDowned())
             return;
         if (!g_alsCalmMs || now - g_alsCalmMs > 1500)
             return;
@@ -84,11 +88,15 @@ namespace net::audio::alertsting {
 
     void Tick()
     {
-        // TODO(music): g_alsCalmMs would be refreshed here on every frame the combat tier
-        // is 0 (the ext's AlertstingTick).
-        if (g_alsDue && GetTickCount64() >= g_alsDue) {
+        // ext AlertstingTick: the music layer's calm frames (g_msTier == 0) keep this clock
+        // fresh. music_tier::Tick runs first in boot::FrameTick, so this is the same frame's
+        // tier, matching the ext (FeatureCombatMusic -> AlertstingTick).
+        const uint64_t now = GetTickCount64();
+        if (music_tier::Tier() == 0)
+            g_alsCalmMs = now;
+        if (g_alsDue && now >= g_alsDue) {
             g_alsDue = 0;
-            if (!net::player_status::LocalDowned())
+            if (!music_tier::Dead() && !net::player_status::LocalDowned())
                 Play(0.8f, g_alsDueWhy ? g_alsDueWhy : "shot at");
         }
         // (the ext also ticks the stun tone, the crossbow HUD and the stun cough here; those

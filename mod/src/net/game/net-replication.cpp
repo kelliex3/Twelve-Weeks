@@ -11,8 +11,11 @@
 #include "notify.hpp"
 #include "glass.hpp"
 #include "afk.hpp"
+#include "jip-report.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
+#include "alertsting.hpp"
+#include "music-tier.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -1651,6 +1654,13 @@ namespace net::replication {
 
             TO1_LOG("[NET] taking %.1f damage from %s\n", evt.damage, sender.name);
 
+            // ext recv_hit_hook: the alert sting reads the calm clock BEFORE the music heat
+            // input marks this frame hot (AlertstingCombat then MusicEvent("we took a hit")).
+            if (evt.damage > 0.0f && evt.damage < 100000.0f) {
+                net::audio::alertsting::Combat("shot / hit out of the quiet");
+                net::audio::music_tier::NoteEvent(3.0f, "we took a hit");
+            }
+
             auto& L = LocalState();
             L.lastDamagerSlot = static_cast<int>(senderSlot);
             L.lastDamageWeapon = evt.weaponSID;
@@ -1899,6 +1909,9 @@ namespace net::replication {
         gameplay::perks::Reset();
         gameplay::melee::Reset();
         net::vox::Reset();
+        net::afk::Reset();
+        net::jip::Reset();
+        net::audio::music_tier::Reset();
 
         kListenModeDurability = 1.0f;
 

@@ -88,6 +88,11 @@ namespace net::gui2 {
     // AFK count.
     bool         BackpackOpen();
 
+    // ext g_gu13Up: the in-match GEAR UP page is the top HUD page. Like BackpackOpen() this
+    // only names the page -- the gearup13 feature itself (list / edit views, widgets) is
+    // unported. A menu that is part of play, so it freezes the AFK count.
+    bool         GearUpOpen();
+
     void SetDeathBannerKiller(const char* killerName, const char* weaponName);
     void SetDeathBannerRespawn(int seconds);
     void SetDeathBannerVisible(bool visible);

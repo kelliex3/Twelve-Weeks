@@ -246,6 +246,12 @@ namespace Patterns {
 	TO1_PATTERN(NdDevMenu_DMENU_ItemSubmenu, L"48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 49 8b d9 49 8b f0 48 8b f9 e8 ?? ?? ?? ?? 48 8b 44 24 50 33 c9 48 89 47 60 48 8b 44 24 58");
 	TO1_PATTERN(NdDevMenu_DMENU_ItemBool, L"48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 49 8b d9 49 8b f8 48 8b f1 e8 ?? ?? ?? ?? 33 c9 48 89 9e 80 00 00 00 48 8b 5c 24 30 48 8d 05 ?? ?? ?? ?? 48 89 06 48 8d 05 ?? ?? ?? ?? 48 89 86 b0 00 00 00 48 89 8e a0 00 00 00 48 89 4e 60 c7 86 a8 00 00 00 03 00 00 00 0f b6 07 88 86 b8 00 00 00 48 8b c6 48 89 7e 60 48 89 4e 58 c7 86 a0 00 00 00 01 00 00 00 48 8b 74 24 38 48 83 c4 20 5f c3");
 	TO1_PATTERN(ScriptManagerPrints, L"4C 89 44 24 18 4C 89 4C 24 20 C3 CC CC CC CC CC 48 89 5C 24 08 57 48 83 EC 20 49 8B C8 49 8B D8");
+
+	// Virtual pad. The ext pinned these two prologues to tlou-ii.exe 1.6.10721 and patched
+	// every rel32 call site; we find the functions by prologue and then scan executable
+	// pages for calls/jmps that target them, so a call-site list is not needed.
+	TO1_PATTERN(Joypad_Update, L"40 53 41 55 48 81 ec 68 01 00 00");
+	TO1_PATTERN(Joypad_CommandReader, L"48 89 5c 24 18 55 56 57 41 54 41 55");
 	//	static inline const Pattern PlayerCameraFade = { L"c7 84 24 fc 00 00 00 01 00 00 00 4c 8b cb c6 86 be 00 00 00 01 c5 fa 11 b4 24 e0 00 00 00 c5 fa 11 b4 24 e4 00 00 00 c5 fa 11 bc 24 e8 00 00 00 c5 fa 11 b4 24 f0 00 00 00 c5 fa 11 b4 24 f4 00 00 00 c5 fa 11 bc 24 f8 00 00 00 c5 f8 77" };
 #ifdef TO1_DEBUG
 	TO1_PATTERN(DebugDrawSystemInit_Gate, L"48 89 85 b0 00 00 00 33 c9 e8 ?? ?? ?? ?? 84 c0 0f 84 aa 01 00 00 33 d2 41 b8 20 01 00 00", +0x10);

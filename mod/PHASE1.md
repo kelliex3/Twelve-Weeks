@@ -18,7 +18,7 @@ mod, the deliverable is *verification + extension*, not a rewrite.
 | 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*` | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source |
 | 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c` | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring |
 | 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV` | render-camera path + track evaluator |
-| 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **partial** — `engine/pad.*` (activity only: `Joypad::Update` hook, button-edge / stick stamp for AFK); injection path missing | whole injection path |
+| 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **ported** — `engine/pad.*` (virtual presses / sticks via mid-hooks at rel32-scanned call sites; command-bit learning; activity stamp; dev-bot consumers still unported) | call-site scan needs live-exe verification |
 | 7 | Generated data pipeline | 78 headers (`tools/ext/GENERATED.md`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy |
 | 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config |
 | 9 | Engine RVA call / hook | `*(exe + rva)(…)` + hand-built RWX trampolines (`bp_pick`, `padinject.c`) | **partial** — `engine/transform.*`, `engine/pcm.*`, `engine/backpack-prop.*` call pinned RVAs; `net-patches.cpp` / `loader/boot.cpp` / `engine/pad.cpp` hook via safetyhook | pattern resolution + a shared exe-call helper + version guard |
@@ -153,11 +153,23 @@ panned / attenuated against the listener every frame by `engine::pcm::VoicesUpda
 render-camera (icam) hook is deliberately not ported (documented in `pcm.cpp`). First consumer: the
 blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
 
+**Combat music tier state (ported).** `net/audio/music-tier.*` ports the *state* other features
+gate on: `MusicEvent` (heat + the event / contact / awareness clocks), the heat decay, the local
+producers we can observe (fire / melee / paired-move rising edges, health drops, the relayed hit),
+the No Return fight clock + minimum dwell (0.9 s / 6.5 s), the old 3-step heat ladder behind
+`t2r-music-nr-rules-old.txt`, and `g_msDead` from local HP. `alertsting` now refreshes its calm
+clock on tier 0 and gates on dead / downed, so the "shot at out of the quiet" path can arm; the
+damage event calls `Combat()` before `NoteEvent("we took a hit")`, matching the ext's hook order.
+The *music playback* (risers, loops, beds, themes / sets / v5 rotation, grid-quantised cut timing,
+stinger layer) is deliberately not ported: it needs the private PCM blobs and the generated
+`music_families.h` / `music_pools.h` tables. The enemy-aware floor (sight / close / spot calls /
+enemy shots / stuns), the lives-tiers 4 / 5 and the final-30 s floor stay honest TODOs.
+
 **Gap.** Loop points and the crossfade used by `downed_music`, and the data wiring (item 7): the PCM
 blobs are private generators, so `net/audio/*` compiles with the `T2R_DATA_*` gates off and
-`Start()` / `Play()` are no-ops until the headers exist. The sting / blade *triggers* (the xcam hook,
-the music tier, the melee-label hooks) are also unported, so the wired cues cannot fire on their own
-yet.
+`Start()` / `Play()` are no-ops until the headers exist. The remaining sting / blade *triggers*
+(the xcam hook and the melee-label hooks) are also unported, so the wired cues cannot all fire on
+their own yet.
 
 **Deliverable.** `src/engine/pcm.hpp/.cpp` — done. Source the buffers from generated PCM headers
 (item 7). `mod/scripts/make-xvag.py` already exists and is the model for the generator wiring.
@@ -187,7 +199,7 @@ update) + a `CameraTrack` evaluator that consumes generated tracks. Keep the DC 
 
 ---
 
-## 6. Pad injection — partial (activity detection ported)
+## 6. Pad injection — ported (call sites resolved by rel32 scan)
 
 **Ext mechanism** (`padinject.c`). The engine's gameplay input is the `Pad`→`Joypad` pipeline, not
 XInput. The ext re-points the 5 `Joypad::Update` call sites (+2 reader sites) to thunks that OR an
@@ -195,25 +207,57 @@ injected button mask into `Pad+0x528` and set the injected stick floats, then ca
 `Joypad::Update` — giving a genuine press edge with timestamps. Gated by
 `t2r-no-pad-inject.txt`. Needed by `bot`, `melee_dodge`, QTE, and the test harnesses.
 
-**Mod today.** `engine/pad.*` ports only the **activity** half the ext's hook carries: a single
-`safetyhook` inline hook on `Joypad::Update` (RVA `0x1593350`, prologue-checked) stamps
-`ActivityMs()` when any Pad's button mask (`Pad+0x528`) changes or a stick passes 0.3, with a
-per-Pad last-mask table so the engine reading several Pads on alternate frames never looks like a
-press. `Ready()` replaces the ext's `PadinjReady()`. The consumer is the AFK watchdog
-(`net/match/afk.cpp`). The injection path itself — OR-ing a virtual mask / stick into the Pad, the
-command-reader learning hook, and the reader sites — is **not ported**; the ext's bot-injection
-counters (`PadinjApplied()` / `g_padi.st_applied`) are omitted (bot / injection unported).
-`DC::JOYPAD_COMMAND_ACTIVE` is still the only other read.
+**Mod today.** `engine/pad.*` ports the **whole** virtual pad. `Joypad::Update` and the command
+reader are resolved by prologue pattern (`Patterns::Joypad_Update` / `Joypad_CommandReader`), with
+the ext's pinned RVAs (`0x1593350` / `0x158EB70`) preferred when their prologue still matches.
+Because the ext's call-site *byte* patterns and `re/pad-inject-1026.md` are not in the repo, the
+call sites are found dynamically: every executable image page is scanned for `E8` / `E9` rel32
+references targeting each function, and a **safetyhook mid-hook** is installed at each site (plus
+a return-probe hook after reader calls to read the return value in RAX). This replaces the ext's
+hardcoded site RVAs and near-image RWX thunks with the mod's hooking mechanism. The hook keeps the
+ext's exact delivery semantics: a press is applied for at least 2 `Joypad::Update` calls, min
+20 ms, hard expiry +600 ms, and a bit already held is cleared on the first frame to force a fresh
+edge. It learns each command's input bit from the engine's command table (press kind 8, alternate
+0x20, held 2/4; lowest set bit of the first match), exposes `Press` / `BotPress` / `Stick` /
+`SetBlock` / `MeleeEdge` / dodge / raw-stick helpers, and tracks `Applied()` / `StickApplied()`
+counters for AFK. Activity stamping still samples the real Pad **before** injection. The one
+version-guarded datum is the debug "Enable Joypad w/o Focus" byte (`RVA 0x8E03F65`), which cannot
+be pattern-matched; on a mismatch the unfocused-window input helper is simply disabled.
+`t2r-no-pad-inject.txt` turns the whole module off; `t2r-dodge-pad-ps53-old.txt` selects the old
+dodge-input rule.
 
-**Gap.** The whole injection path.
+**AFK watchdog (ported).** `net/match/afk.*` mirrors every gate in ext `afk.c`:
+live match / match over, downed / dead (`player-status` stubs), the 15-frame
+`character-is-dead?` poll, and the three in-play menus — backpack, GEAR UP page
+(`gui2::GearUpOpen()` checks the `to1/gearup13` top page only, so gearup13 itself stays
+unported) and the player menu. `Tick()` / `Draw()` are wired in the frame and HUD paths and
+`Reset()` runs on session reset. The 0xE3 trailer writer (`ReqTail`) reaches the daemon
+through the JIP report below, and the test-server no-AFK flag (`g_srvTestFlags & 0x40`)
+arrives through `net::daemon::TestFlags()`. The virtual pad's injection counters
+(`engine::pad::Applied` / `StickApplied`) now count a playing dev bot as active.
 
-**Deliverable.** Extend `src/engine/pad.hpp/.cpp`: inject button bits / stick axes for a bounded
-window, installed with **safetyhook** (mid-hooks at the same call sites) instead of the ext's
-hand-built thunks, resolved by **pattern scan** rather than the ext's hardcoded RVAs. One place,
-one registry entry.
+**JIP 0xE3 clock report (ported: wire / clock / server settings only).**
+`net/online/jip-report.{hpp,cpp}` reimplements the ext's `FeatureJoinInProgress` request
+side: 2 s host / 3 s client cadence, clock-valid / match-over flags, viewer-relative team
+and lives, the AFK trailer, one bounded TCP request per cadence via `net::daemon::Rpc`,
+the generation check that drops stale replies, "enabled = 0" stop, the 3-miss / 20 s
+backoff, and the 0xE5 reply's test-server / wave-server settings. It runs immediately
+after `net::afk::Tick()` and resets with the session; `t2r-no-jip.txt` turns it off.
+Honest gates: the 0xE5 roster merge into the lobby object, the in-match team-swap block
+(`0xA7`), the late-join query (flags `0x04`), ghost peer reaping and requeue (`0x20`) are
+still owned by the ext. Consequently the mod does not send flags `0x10` / `0x20`.
 
-**Gate.** A dev-injected press starts a real melee swing (the ext's acceptance test:
-"engine reads 27").
+**Gap.** No binary / RE notes are available locally to verify the call-site scan or the pinned
+RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confirm. The dev-bot
+and melee-pace / QTE consumers that *use* the virtual pad (`bot`, `melee_dodge`, the test
+harnesses) are not ported — the pad API they would call is present and ready. JIP's roster /
+team-swap / late-join path is still in the ext.
+
+**Deliverable (done).** `src/engine/pad.hpp/.cpp` exposes the full virtual pad; call sites are
+resolved by rel32 scan and hooked with safetyhook mid-hooks, not the ext's hardcoded RVAs / thunks.
+
+**Gate (open).** A dev-injected press starts a real melee swing (the ext's acceptance test:
+"engine reads 27") — needs the bot / melee-pace consumer, which remains unported.
 
 ---
 
@@ -368,6 +412,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset) |
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
+| `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
 | `mod/FEATURES.md` | data-table column: generator availability |

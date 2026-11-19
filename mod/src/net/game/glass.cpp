@@ -449,9 +449,13 @@ namespace net::glass {
             uint32_t piece;
             memcpy(&piece, data + 9, 4);
             if (!(piece < 4096u || piece == 0xffffffffu)) {
-                // TODO(trust): the ext gates this with PtDeny(PTK_glass_piece) -- log-only
-                // there too, so the message is accepted here as well.
-                TO1_LOG("glass: slot %u piece %u out of range (trust gate not ported - accepted)\n",
+                // Ext: `&& PtDeny(PTK_glass_piece, from)`. PTK_glass_piece is
+                // `X(glass_piece, LOG)` in peertrust.h, and PtDecide returns 0 for LOG (and for
+                // peertrust off / the master switch off); PtDeny only returns 1 for PT_DROP. So
+                // the ext logs "would drop (glass_piece)" and STILL queues the piece. Peertrust
+                // config is not ported, so logging and accepting here matches the ext's default.
+                // Only t2r-peertrust.txt "glass_piece=drop" would make the ext actually drop it.
+                TO1_LOG("glass: slot %u piece %u out of range - would drop (glass_piece), log-only; accepted\n",
                     senderSlot, piece);
             }
             uint64_t id;
@@ -463,7 +467,9 @@ namespace net::glass {
                 uint32_t piece;
                 memcpy(&piece, data + 10 + 12 * k, 4);
                 if (!(piece < 4096u || piece == 0xffffffffu)) {
-                    TO1_LOG("glass: slot %u piece %u out of range (trust gate not ported - accepted)\n",
+                    // Same ext gate as above: PTK_glass_piece is log-only by default, so
+                    // log "would drop" here too and still apply the piece.
+                    TO1_LOG("glass: slot %u piece %u out of range - would drop (glass_piece), log-only; accepted\n",
                         senderSlot, piece);
                 }
                 uint64_t id;

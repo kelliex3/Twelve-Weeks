@@ -36,8 +36,8 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 
 | Module | Feature | Domain | Pri | Deps | Toggles | Mod overlap | Status |
 |---|---|---|---|---|---|---|---|
-| `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | engine/pad.cpp (activity only) | not started |
-| `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook | 2 e.g. `t2r-no-afk.txt` | net/match/afk.cpp, engine/pad.cpp | in progress |
+| `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | engine/pad.cpp (full virtual pad, rel32 call-site scan + safetyhook mid-hooks; dev-bot/melee-pace consumers unported) | ported |
+| `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook, net | 2 e.g. `t2r-no-afk.txt` | net/match/afk.cpp, engine/pad.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp | ported |
 | `notice.c` | server notices: 0xBA poll, update / restart countdown / free text (tools/notices.py) | Match lifecycle | P1 | widget | 3 e.g. `t2r-no-notice.txt` | net/ui/notice.cpp, net/ui/notice.hpp | ported |
 | `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | — | not started |
 | `netdirect.c` | direct melee path: melee-critical ext messages also straight to the peer through the Steam helper (re/netdirect-1026.md; t2r-no-direct-melee.txt) | Netcode / sync | P1 | net, hook | 1 e.g. `t2r-no-direct-melee.txt` | net/game/net-replication.cpp | not started |
@@ -171,6 +171,20 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `sub_diag.c` | — | Diagnostics / dev | P5 | hook | 1 e.g. `t2r-sub-diag.txt` | — | not started |
 | `throwtest.c` | automated throwable test harness (t2r-throwtest.txt on the thrower, tools/win/throwtest_report.py) | Diagnostics / dev | P5 | net, hook | 2 e.g. `t2r-throwtest-target.txt` | — | not started |
 | `visdiag.c` | Body visibility change log (bodies flickered / vanished during special executions) | Diagnostics / dev | P5 | camera, pad | 7 e.g. `t2r-debug.txt` | — | not started |
+
+**Port notes.** The join-in-progress logic inside `t2r-ext.c` is now partly native:
+`net/online/jip-report.{hpp,cpp}` owns the 0xE3 clock report (cadence, clock flags, team /
+lives, AFK trailer, bounded RPC, generation check, backoff) and consumes the 0xE5 reply's
+server settings, including the no-AFK test-server flag. Roster merge, in-match team swap,
+late-join query, ghost peer reaping and requeue stay in the ext and are called out as TODO
+gates in that module.
+
+`engine/pad.{hpp,cpp}` now ports the whole virtual pad from `padinject.c`: virtual button presses
+and sticks, command-bit learning, bounded delivery, the raw melee / dodge / stick readers and the
+AFK activity stamp. The ext's hardcoded call-site RVAs and near-image thunks are replaced by a
+rel32 call-site scan + safetyhook mid-hooks; the pinned function prologues are preferred when they
+match and the unfocused-window byte stays version-guarded. The dev-bot, melee-pace and QTE
+*consumers* of the API are still unported, and the call-site scan needs a live exe to verify.
 
 ## Generated data headers
 

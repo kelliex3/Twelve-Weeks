@@ -3,6 +3,7 @@
 
 #include "engine/patterns.hpp"
 #include "engine/memory.hpp"
+#include "engine/pad.hpp"
 #include "engine/gameinfo.hpp"
 #include "engine/archive.hpp"
 #include "engine/script.hpp"
@@ -22,8 +23,10 @@
 #include "engine/pcm.hpp"
 #include "net/audio/shivsting.hpp"
 #include "net/audio/alertsting.hpp"
+#include "net/audio/music-tier.hpp"
 #include "net/audio/bladesfx.hpp"
 #include "net/match/afk.hpp"
+#include "net/online/jip-report.hpp"
 #include "net/match/backpack.hpp"
 #include "net/match/bloodbuild.hpp"
 #include "hwid.hpp"
@@ -151,6 +154,7 @@ namespace boot {
 
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
+		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
 #ifdef TO1_DEBUG
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
@@ -160,10 +164,12 @@ namespace boot {
 		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
 		net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
 		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
+		net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
 		net::audio::shivsting::Tick();  // shiv victim shock sting (ported from tools/ext/shiv_sting.c)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
+		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
 		engine::vfx::RetryTick();     // queued compute-stream particle retries (ported from tools/ext/t2r-ext.c)

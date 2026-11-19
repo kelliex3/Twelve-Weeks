@@ -12,11 +12,14 @@
 // cough -- are separate features and are NOT ported here (each needs stun / downed / crossbow
 // state the mod does not have yet).
 //
-// NOT YET WIRED / GATED (see the .cpp):
-//  - The combat path needs the music layer's combat tier (ext g_msTier == 0 = calm) and its
-//    "no enemy-caused music input" clock; neither is ported. Combat() is the entry a future
-//    music port calls (the ext calls it from the damage hook and the immersion near-miss).
-//  - Downed / dead are not ported (the ext's g_downed / g_msDead gates).
+// Wired to the music tier state (net/audio/music-tier.*):
+//  - The calm clock (ext g_als_calm_ms) is refreshed by Tick() on every frame the combat
+//    tier is 0, and Combat() requires it fresh -- the "shot at out of the quiet" gate.
+//    The tier's enemy-aware inputs are honest TODOs, so until they land the tier is driven
+//    by our own actions and hits only. Combat() is called from the damage event (the ext's
+//    recv_hit_hook); the immersion near-miss producer is not ported.
+//  - Dead / downed use music_tier::Dead() (ext g_msDead) and LocalDowned() (ext g_downed,
+//    itself an honest stub until the downed feature lands).
 //  - Data: alert_sting.h is a private generator. Without T2R_DATA_ALERT_STING, Play() is a
 //    no-op.
 //
@@ -27,8 +30,8 @@ namespace net::audio::alertsting {
     // Play the sting at `level` (ext AlertstingPlay). Deduped (ALS_GAP_MS), in-match only.
     void Play(float level, const char* why);
 
-    // We were suddenly shot at while it was quiet (ext AlertstingCombat). GATED on the music
-    // tier: inert until the music layer is ported.
+    // We were suddenly shot at while it was quiet (ext AlertstingCombat). Requires a fresh
+    // calm clock (combat music tier 0), alive and not downed; called from the damage event.
     void Combat(const char* why);
 
     // Per frame from boot::FrameTick (ext AlertstingTick, minus the stun / crossbow / cough

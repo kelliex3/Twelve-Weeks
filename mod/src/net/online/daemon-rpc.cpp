@@ -14,6 +14,7 @@ namespace net::daemon {
     namespace {
 
         std::atomic<uint32_t> g_srvAliveT{ 0 };   // GetTickCount() of the last reply (0 = none yet)
+        std::atomic<uint8_t>  g_testFlags{ 0 };   // ext g_srvTestFlags, from the 0xE5 reply
 
         // xorshift32, jitter only (threads racing on it is harmless).
         uint32_t Rng()
@@ -157,6 +158,16 @@ namespace net::daemon {
     {
         const uint32_t t = g_srvAliveT.load(std::memory_order_relaxed);
         return t && static_cast<uint32_t>(GetTickCount()) - t < ms;
+    }
+
+    void SetTestFlags(uint8_t flags)
+    {
+        g_testFlags.store(flags, std::memory_order_relaxed);
+    }
+
+    uint8_t TestFlags()
+    {
+        return g_testFlags.load(std::memory_order_relaxed);
     }
 
 }

@@ -927,6 +927,14 @@ namespace net::gui2 {
         return MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/backpack-menu"));
     }
 
+    bool GearUpOpen()
+    {
+        // ext gearup13.c: g_gu13Up is set when TopPage() == Gu13PageId(), where
+        // PageId("gearup13") hashes "canvas.hudRoot.hudMenuStack.to1/gearup13" -- TO1_HUD.
+        // Only the page name is needed here; the gearup13 feature stays unported.
+        return MENU2::GET_TOP_PAGE_IN_STACK(MenuStack::hudMenuStack) == TO1_HUD("gearup13");
+    }
+
     static void SetDeathBannerWeaponIcon(const char* weaponName);
 
     void Spawn()
