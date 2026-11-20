@@ -39,7 +39,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `padinject.c` | engine-level virtual pad: presses / sticks injected into the Pad before Joypad::Update (re/pad-inject-1026.md; t2r-no-pad-inject.txt = off) | Engine / platform | P1 | pad, hook | 2 e.g. `t2r-dodge-pad-ps53-old.txt` | engine/pad.cpp (full virtual pad, rel32 call-site scan + safetyhook mid-hooks; dev-bot/melee-pace consumers unported) | ported |
 | `afk.c` | Anti-AFK - idle warning at 60 s, the daemon removes at 90 s (t2r-no-afk.txt = off) | Match lifecycle | P1 | pad, hook, net | 2 e.g. `t2r-no-afk.txt` | net/match/afk.cpp, engine/pad.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp | ported |
 | `notice.c` | server notices: 0xBA poll, update / restart countdown / free text (tools/notices.py) | Match lifecycle | P1 | widget | 3 e.g. `t2r-no-notice.txt` | net/ui/notice.cpp, net/ui/notice.hpp | ported |
-| `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | net/online/requeue.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp | ported (gated) |
+| `requeue.c` | The queue stays after a match - search again by ourselves after the post-match screens, WAITING FOR PLAYERS... (t2r-no-requeue.txt = off) | Match lifecycle | P1 | — | 1 e.g. `t2r-no-requeue.txt` | net/online/requeue.cpp, net/online/jip-report.cpp, net/ui/net-gui2.cpp, net/ui/postmatch-screens.cpp | ported (gated) |
 | `netdirect.c` | direct melee path: melee-critical ext messages also straight to the peer through the Steam helper (re/netdirect-1026.md; t2r-no-direct-melee.txt) | Netcode / sync | P1 | net, hook | 1 e.g. `t2r-no-direct-melee.txt` | net/game/net-direct.cpp, net/online/net-session.cpp, net/online/net-transport.cpp | ported (gated) |
 | `netsmooth.c` | remote players: jitter buffer, interpolation, net stats (re/netcode.md) | Netcode / sync | P1 | hook | 13 e.g. `t2r-host-bw.txt` | net/anim/*, net/game/net-replication.cpp | not started |
 | `death_ui.c` | death screen, victim POV: fast fade to black, SP death sting + tip, KILLED BY, countdown, spectate | UI / HUD / menus | P1 | audio, widget, camera, pad, data | 8 e.g. `t2r-death-delay.txt` | net/ui/net-gui2.cpp | not started |
@@ -195,9 +195,15 @@ MP-menu settle + page push and the status-label swap. Party leadership / follow 
 `net/match/kick-state.*`, so a kick stamped after the match ended disarms requeue. The exact
 match-end byte (`LobbyObj()+0x2ca4`) and `MatchSubstate()==6` are now read directly by
 `engine/lobby.*` and latched once per frame in `net/match/match-liveness.*`, so requeue arms on
-the same engine signal the ext uses. Honest gates: the post-match screen latches (`clan13x` /
-`clan-postmatch` / clan event / GEAR UP nav) are unported; a stable top page over the settle
-window stands in for the screens and the ext still owns those latches while it is the bridge.
+the same engine signal the ext uses. The post-match screen latches that hold requeue's settle
+are now native via `net/ui/postmatch-screens.*`: `clan13x` (scoreboard), `clan-postmatch`
+(supply counter), `clan-event`, GEAR UP nav (any loadout / picker page) and the `g_mmBack`
+refused-search latch (produced by net-gui2's party gate). They are sampled from the menu stack
+once per frame; requeue's `PostMatchScreensDone()` is their single consumer. Honest gates: the
+ext sets its `g_pm.pending` / `g_ev.pending` when the page is *due*, before it is pushed, which
+the mod cannot observe (the 1.5 s settle absorbs that window); the CLAN page data, clan-event
+decision and GEAR UP's own `g_loState` transitions stay in the ext, and the `g_mmBack` page-pop
+seam is gated because net-gui2 already pops the page it refuses.
 
 `net/match/kick-state.*` ports the ext's `g_kickMs` / `MsgIsKick` / `MsgIsMove` (the timestamp
 set in `MsgHook` when the daemon's op 0x11 kick text arrives). The mod has no winmm message

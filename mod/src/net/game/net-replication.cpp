@@ -19,6 +19,7 @@
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
+#include "net/ui/postmatch-screens.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -1945,6 +1946,7 @@ namespace net::replication {
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();
         net::match::liveness::Reset();
+        net::ui::postmatch::Reset();
         net::requeue::Reset();
         net::direct::Reset();
         net::audio::music_tier::Reset();

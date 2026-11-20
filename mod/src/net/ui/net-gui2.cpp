@@ -24,6 +24,7 @@
 #include "gameplay/loadout/loadout.hpp"
 #include "gameplay/loadout/purchase.hpp"
 #include "net/social/friends13.hpp"
+#include "net/ui/postmatch-screens.hpp"
 
 #define TO1_HUD(name) SID("canvas.hudRoot.hudMenuStack.to1/" name)
 
@@ -1684,6 +1685,10 @@ namespace net::gui2 {
                     // A party member's FIND MATCH is a ready toggle, not a search (the
                     // ext's fr_search_gate + modepick -> fr_member_ready_press): toggle
                     // ready, pop the page and never send the search request.
+                    // ext MmreqHook also sets g_mmBack on this refusal so requeue's
+                    // settle holds for a few frames; the mod's own page pop below is
+                    // why the latch's pop seam stays gated.
+                    net::ui::postmatch::NoteMmRefused();
                     net::friends13::MemberReadyPress();
                     DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, SID("to1/find-match-menu"));
                 }

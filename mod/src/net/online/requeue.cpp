@@ -16,6 +16,7 @@
 #include "net/match/kick-state.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
+#include "net/ui/postmatch-screens.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -200,11 +201,10 @@ namespace net::requeue {
 
         bool PostMatchScreensDone()
         {
-            // TODO(requeue): clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack are
-            // unported latches. top == main-menu for the whole settle window is the observable
-            // equivalent: the ext pushes those pages within ~1 s of reaching the menu, and a
-            // page change restarts menuSince below. The ext still owns the exact latches.
-            return true;
+            // ext requeue.c: `!g_pm.pending && !Cl13PostActive() && !g_ev.pending
+            // && g_loState == LO_NONE && !g_mmBack`. All five latches are now native
+            // (net/ui/postmatch-screens.*), sampled from the menu stack once per frame.
+            return net::ui::postmatch::ScreensDone();
         }
 
     }
