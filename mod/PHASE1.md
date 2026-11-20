@@ -240,17 +240,33 @@ through the JIP report below, and the test-server no-AFK flag (`g_srvTestFlags &
 arrives through `net::daemon::TestFlags()`. The virtual pad's injection counters
 (`engine::pad::Applied` / `StickApplied`) now count a playing dev bot as active.
 
-**JIP 0xE3 clock report (ported: wire / clock / server settings only).**
+**JIP 0xE3 clock report + 0xE5 reply cores (ported, engine writes gated).**
 `net/online/jip-report.{hpp,cpp}` reimplements the ext's `FeatureJoinInProgress` request
 side: 2 s host / 3 s client cadence, clock-valid / match-over flags, viewer-relative team
 and lives, the AFK trailer, one bounded TCP request per cadence via `net::daemon::Rpc`,
 the generation check that drops stale replies, "enabled = 0" stop, the 3-miss / 20 s
 backoff, and the 0xE5 reply's test-server / wave-server settings. It runs immediately
 after `net::afk::Tick()` and resets with the session; `t2r-no-jip.txt` turns it off.
-Honest gates: the 0xE5 roster merge into the lobby object, the in-match team-swap block
-(`0xA7`), the late-join query (`0x04`) and ghost peer reaping are still owned by the ext, so
-the mod does not send `0x10`. Requeue (`0x20`) is now ported (`net/online/requeue.*`), so the
-report sends that flag while `t2r-no-requeue.txt` is absent.
+The reply side now ports three ext cores against a **native roster shadow** seeded from the
+read-only `engine/lobby.*` view:
+- **0xE5 roster merge** — prune slots the server no longer lists, replace known slots, append
+  new ones, preserve our own entry and never let the daemon's `PLAYER n` fallback overwrite a
+  real name; a team change for a matching name logs the "JOINED YOUR TEAM"/"MOVED TO THE ENEMY
+  TEAM" banner. The listed slot mask + arrival stamp feed the reaper.
+- **0xA7 in-match swap** — parse the trailing `[0xA7][k][k x (slot, team)]` block and apply only
+  our own slot to the three places winmm keeps it (ctx+0x1c, roster +0x31, record +0x48), with
+  the "YOU WERE MOVED TO THE OTHER TEAM" banner; ignored once the match is over.
+- **Ghost peer reaping** — every in-match tick, a listed-but-silent, non-host peer with no fresh
+  accepted-anim publish for `GHOST_SILENT_MS` (15 s) is a drop candidate; a listed mask older
+  than 10 s is ignored, `t2r-ghost-peer-old.txt` opts out, and reaped slots are not re-flagged
+  until they reappear.
+
+All three are observation / decision only. Engine lobby writes, the winmm peer drop (through
+`net::session::DropPeerForReaper`) and the 0x10 "send the swap block" flag are behind the
+`kWriteLobby` / `kApplyGhostPeers` / `kRequestTeamSwap` constants (all false), so the ext stays
+the behaviour owner and no toggle is flipped. The late-join query (`0x04`, kit carry) stays in
+the ext. Requeue (`0x20`) is ported (`net/online/requeue.*`), so the report sends that flag
+while `t2r-no-requeue.txt` is absent.
 
 **Requeue and the direct melee path (ported with honest gates).** `net/online/requeue.*` owns
 the 0xBC / 0xBD ticket poll, the post-match arm and settle, the `to1/find-match-menu` push and
@@ -279,10 +295,15 @@ dedicated sidecar (the ext has none) -- the consumers keep `t2r-no-notice.txt` /
 `t2r-no-requeue.txt`.
 
 **Shared match-end latch (ported).** `net/match/match-liveness.*` is the native home of the
-ext's `g_wasLive`: one once-per-frame read of the mod's match phase (in match / expired /
-scoreboard) latched as `Live()` / `WasLive()` / `MatchEndHold()`. It runs first in
-`boot::FrameTick`, before requeue (which arms on `MatchEndHold()`) and friends13 (which hides
-its panel / toasts during the end sequence), so a single value is shared by all consumers.
+ext's `g_wasLive`: one once-per-frame read latched as `Live()` / `WasLive()` / `MatchOver()` /
+`MatchEndHold()`. `engine/lobby.*` now supplies the exact ext signals — substate 6 at
+`kNetCtx+0x2b80` and the `LobbyObj()+0x2ca4` end banner — readable through `engine::ptr`; the
+mod's own match phase (in match / expired / scoreboard) is only the fallback when the engine
+data is not up yet. The reads are observation-only (no lobby writes), so the ext still owns
+the state. `player_status::MatchLive()` now reads this latch (instead of re-deriving the gate)
+and AFK inherits the exact end banner. The tick runs first in `boot::FrameTick`, before
+requeue (which arms on `MatchEndHold()`) and friends13 (which hides its panel / toasts during
+the end sequence), so a single value is shared by all consumers.
 
 **In-game FRIENDS / PARTY panel (ported with honest gates).** `net/social/friends-state.*` is the
 pure JSON/state core (ext `friends13.h`): bounded 0xD9 reply parser, rows, badge, presence and
@@ -300,7 +321,9 @@ defs are absent.
 RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confirm. The dev-bot
 and melee-pace / QTE consumers that *use* the virtual pad (`bot`, `melee_dodge`, the test
 harnesses) are not ported — the pad API they would call is present and ready. JIP's roster /
-team-swap / late-join path is still in the ext.
+team-swap / ghost-reap **cores** are native now but their engine writes / peer drops are gated
+off; the late-join query (`0x04`) is still in the ext. The pinned lobby / peer-record RVA calls
+need a live exe to verify.
 
 **Deliverable (done).** `src/engine/pad.hpp/.cpp` exposes the full virtual pad; call sites are
 resolved by rel32 scan and hooked with safetyhook mid-hooks, not the ext's hardcoded RVAs / thunks.
@@ -396,6 +419,13 @@ feature exists in the mod — so the own-side rig stays unprobed and `backpack-p
 inert. The **ps57** put-away-refusal recovery (`CurrentWeapon` + the refusal-frame registry) is
 ported too; its producer (`g_bp57RefuseF`, the unported holster fix) is honestly gated, so the
 recovery is faithful but inert until that lands.
+
+**Ported with the own-side poll.** The SP backpack stop is native: while our menu is open in a
+live match, up, and the bag is active (or still inside the 1.2 s stow / intro window, or
+`t2r-bp-hold-old.txt` is present), `player-disable-move-stick` / `-jump` / `-roll` run every
+frame; closing the menu hands the stick straight back. `t2r-bp-menu-move.txt` restores the old
+MP behaviour. The ext's speed log is replaced by the menu state (the mod has no momentum reader)
+and the downed gate reads the dormant downed core like every other consumer.
 
 **Gap.** No pattern resolution (the RVAs are pinned); no shared helper for "call an exe RVA" (every
 caller does its own `GetModuleHandleW` + cast). A game update silently disables the prologue-checked
@@ -501,6 +531,16 @@ bridge per producer, then disable the matching ext path via its toggle. The PCM 
 `player_status::LocalDowned` / `PuppetDowned` now read this core instead of hard-false stubs,
 so every existing consumer inherits a correct gate as soon as the bridge is enabled.
 
+**Dying distinction (ported, producer gated).** The ext's other down-state latches are carried
+in the same core: `g_downDying` (a lethal hit / bleed-out while down, set before the wire goes
+to state 0) and `g_uc4DyingUntil` (the UC4 death-clip frame window). `SetLocalDying()` /
+`SetDyingUntilFrame()` feed them, a fresh down clears them and a revive ends them, and
+`LocalState()` / `PuppetDownState()` answer the exact `bloodbuild.c` distinction: 0 up, 1 down
+(crawling), 2 dying. `bloodbuild.cpp` now reads those accessors instead of hard-coding `1` for
+a downed body. No death-clip / lethal-hit producer is cut over yet, so the local latch stays
+clear and the answer is 1 while down — the wire already carries 2 for a peer whenever the
+downed bridge feeds `NEVT_DOWNED`.
+
 ---
 
 ## Sequencing
@@ -541,6 +581,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/cmake/gen-*.py` + `mod/CMakeLists.txt` | data-header codegen template + wiring |
 | `mod/src/loader/config.hpp` (+ runtime config if needed) | toggle policy surface |
 | `mod/src/engine/ptr.hpp` | `Readable` / `Writable` guarded pointer reads (ext `IsBadReadPtr` / raw deref) |
+| `mod/src/engine/lobby.hpp` + `.cpp` | **new** — read-only engine net lobby (ext `MatchSubstate` / `LobbyObj` / roster + peer-record + `TeamOf`): substate 6, `+0x2ca4` end banner, clock, roster helpers; no writes |
 | `mod/src/engine/frame.hpp` + `.cpp` | QPC ms clock (`NowMs`, ext `BpMs`) alongside the 60 Hz frame counter |
 | `mod/src/engine/object.hpp` + `.cpp` | **new** — entity / joint locators, draw-control mesh hide/show, set-locator (ext `XbxLoc` / `GvisDc` / `BpDc` / `PsyncBfFromLoc`) |
 | `mod/src/engine/anim-prims.hpp` + `.cpp` | **new** — `AnimateFrom` / `AnimLen` (ext `animate_` recipe + `get-animation-duration`) |
@@ -555,10 +596,12 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
 | `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
-| `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`), consumed by requeue + friends13 |
+| `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`): engine substate 6 / end banner via `engine/lobby.*` with a mod-phase fallback; `Live()` / `WasLive()` / `MatchOver()` / `MatchEndHold()` consumed by requeue, friends13, `player_status` + AFK |
 | `mod/src/net/match/kick-state.hpp` + `.cpp` | **new** — shared kick timestamp / text tests (ext `g_kickMs` / `MsgIsKick` / `MsgIsMove`), fed by the notice kind-'p' line, consumed by requeue + notice |
 | `mod/src/net/match/melee-bridge.hpp` + `.cpp` | **new** — gated integration seams: inert sinks + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
-| `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
+| `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, the dying latches (`g_downDying` / `g_uc4DyingUntil`) + 0/1/2 `LocalState()` / `PuppetDownState()`, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
+| `mod/src/net/online/jip-report.hpp` + `.cpp` | extend — 0xE5 roster-shadow merge + 0xA7 own-team swap parse + ghost-peer reaper cores (observation-only; engine writes / peer drops / 0x10 gated false) |
+| `mod/src/net/game/player-status.hpp` + `.cpp` | extend — `MatchLive()` reads the shared engine liveness latch; `LocalDownState()` / `PuppetDownState()` expose the 0/1/2 dying distinction to `bloodbuild.cpp` |
 | `mod/src/net/match/downed-bridge.hpp` + `.cpp` | **new** — gated integration seam for the downed core: inert sink + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
 | `mod/src/net/match/hit-rel.hpp` + `.cpp` | **new** — reliable one-shot hit core (ext hitrel section): seq / retransmits / ACK / dedupe ring, behind `HitRelSink` |
 | `mod/src/gameplay/melee-dodge.hpp` + `.cpp` | **new** — pure dodge timing / state core (ext `melee_dodge.c`), behind `DodgeSink` |

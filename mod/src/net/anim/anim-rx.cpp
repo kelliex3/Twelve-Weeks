@@ -876,6 +876,15 @@ void NetAnimClearSlot(int slot)
     s_replay[slot].ResetSeq();
 }
 
+uint32_t NetAnimRxStampMs(int slot)
+{
+    if (slot < 0 || slot >= kMaxNetPlayers)
+        return 0;
+    // Aligned 32-bit volatile read: the writer uses _InterlockedExchange, but a torn
+    // stamp is harmless here (we only compare it for "changed" once per reap check).
+    return static_cast<uint32_t>(s_replay[slot].rxStampMs);
+}
+
 // RECEIVER: publish a received list for the puppet replay hook to consume.
 void NetSetRemoteAnimCmds(int senderSlot, const uint8_t* data, uint16_t bits, uint32_t skelId, uint8_t epoch,
     uint32_t sendMs)

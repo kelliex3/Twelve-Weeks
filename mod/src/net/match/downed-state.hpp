@@ -94,6 +94,16 @@ namespace net::match::downed {
 
     // ---- local down state ------------------------------------------------------------------
     bool     IsDown() noexcept;
+    // The ext's separate local dying latches: g_downDying (a downed player killed by a hit
+    // or bleed-out, set BEFORE DownedSet(0)) and g_uc4DyingUntil (the UC4 death-clip window,
+    // a frame deadline). They are distinct from the up/down wire state so a consumer can
+    // tell "crawling" (1) from "dying on the ground" (2). No producer is cut over yet; the
+    // setters exist so the death-clip producer can feed the core when that feature lands.
+    bool     LocalDying() noexcept;
+    void     SetLocalDying(bool on);
+    void     SetDyingUntilFrame(uint64_t frame);  // 0 clears; 60 Hz frame deadline
+    // bloodbuild / feel / downed_music's 0 / 1 / 2 answer: 0 up, 1 down, 2 dying.
+    uint8_t  LocalState() noexcept;
     uint8_t  DownerSlot() noexcept;
     uint8_t  Epoch() noexcept;
     uint64_t DownMs() noexcept;

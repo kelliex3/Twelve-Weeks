@@ -7,15 +7,14 @@
 // one read: requeue arms when the match ended while we were in it, friends13 hides its
 // page and toasts during the end sequence, and the party follow logic stops pushing.
 //
-// The mod has no raw substate / lobby byte, only its own match phase
-// (net::gui2::InMatch, MatchExpired, ScoreboardShowing). Those collapse to the same
-// one state read: Live() now, WasLive() last frame, and MatchEndHold() true while the
-// end sequence is up for a session that was live at some point. Latched per frame so
-// every consumer sees the same answer; Tick() runs once, first, in boot::FrameTick.
-//
-// TODO(match-liveness): the exact ext substate 6 / LobbyObj end banner is not ported.
-// The observable gates here are the mod's own ones, which is why the ext keeps its own
-// value while it is the bridge.
+// The exact engine reads are ported in engine/lobby.* (substate at kNetCtx+0x2b80,
+// end banner at LobbyObj()+0x2ca4). Tick() prefers them and falls back to the mod's own
+// match phase (net::gui2::InMatch, MatchExpired, ScoreboardShowing) when the engine data
+// is not readable. Those collapse to the same one state read: Live() now, WasLive() last
+// frame, and MatchEndHold() true while the end sequence is up for a session that was live
+// at some point. Latched per frame so every consumer sees the same answer; Tick() runs
+// once, first, in boot::FrameTick. The reads are observation-only: no engine state is
+// written, so the ext stays the behaviour owner until a feature is cut over.
 
 namespace net::match::liveness {
 
@@ -24,6 +23,7 @@ namespace net::match::liveness {
 
     bool Live();          // this frame: in a running match
     bool WasLive();       // last frame: in a running match
+    bool MatchOver();     // this frame: lobby end banner (or the mod's end-screen fallback)
     bool MatchEndHold();  // this frame: end sequence up for a session we were in
 
     void Reset();         // session reset: drop the latch

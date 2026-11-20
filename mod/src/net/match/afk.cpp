@@ -69,7 +69,8 @@ namespace net::afk {
 
         int AfkCountable()
         {
-            // ext: MatchSubstate() == 6 and the match is not over (LobbyObj()[0x2ca4]).
+            // ext: MatchSubstate() == 6 and not LobbyObj()[0x2ca4] -- both now read by
+            // engine/lobby.* through the shared liveness latch in player_status::MatchLive().
             if (!net::player_status::MatchLive())
                 return 0;
             // ext: g_downed || DuDeadNow() (downed / death screen / spectating). Downed is

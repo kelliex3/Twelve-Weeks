@@ -17,8 +17,9 @@
 // server-side ticket is issued when the 0xE3 JIP clock report carries flag 0x20; net::jip
 // now sends that flag while this module is enabled.
 //
-// Honest gates (TODO): the ext's exact match-end byte (LobbyObj+0x2ca4 / MatchSubstate()==6)
-// is approximated by the shared net::match::liveness latch (mod match / menu state). Kick
+// The ext's exact match-end byte (LobbyObj+0x2ca4 / MatchSubstate()==6) is now read directly by
+// engine/lobby.* and latched once per frame in net::match::liveness (mod match / menu state is
+// only a fallback when the engine byte is not readable). Kick
 // detection (g_kickMs) is now native via net/match/kick-state.* (the notice kind-'p' line is the
 // mod's producer for the ext's op 0x11 session note); the kicknote box and the team-move rejoin
 // remain in the ext. Party leadership / follow (FrInParty, me_leader)

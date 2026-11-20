@@ -29,6 +29,13 @@ namespace net::session {
     float    Now();
     void     PrintStatus();
 
+    // Read-only peer liveness for the ghost-peer reaper (net/online/jip-report.*).
+    // -1 silence means the slot has no active peer. DropPeerForReaper is the narrow
+    // write seam; the reaper keeps it gated false while the ext owns engine peer state.
+    bool     PeerActive(int slot);
+    float    PeerSilence(int slot);
+    void     DropPeerForReaper(int slot, const char* reason);
+
     const char* LocalName();
     void        SetLocalName(const char* name);
     const char* LocalLook();

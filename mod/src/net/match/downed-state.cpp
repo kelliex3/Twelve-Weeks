@@ -31,6 +31,8 @@ namespace {
     Hold g_holds[kMaxPeers][kMaxPeers]{};
 
     bool     g_down = false;
+    bool     g_localDying = false;      // ext g_downDying (lethal hit / bleed-out while down)
+    uint64_t g_dyingUntilFrame = 0;     // ext g_uc4DyingUntil (UC4 death-clip window)
     uint8_t  g_state = kStateUp;
     uint8_t  g_downer = 0;            // slot that downed us (0xFE on a revive)
     uint8_t  g_knockDir = 0;          // our fall direction (0 = default)
@@ -143,6 +145,27 @@ namespace {
         return g_down;
     }
 
+    bool LocalDying() noexcept
+    {
+        return g_localDying || (g_dyingUntilFrame && Frame() < g_dyingUntilFrame);
+    }
+
+    void SetLocalDying(bool on)
+    {
+        g_localDying = on;
+    }
+
+    void SetDyingUntilFrame(uint64_t frame)
+    {
+        g_dyingUntilFrame = frame;
+    }
+
+    uint8_t LocalState() noexcept
+    {
+        // ext bloodbuild.c: g_downed ? (g_downDying || g_uc4DyingUntil ? 2 : 1) : 0
+        return !g_down ? kStateUp : (LocalDying() ? kStateDying : kStateDown);
+    }
+
     uint8_t DownerSlot() noexcept
     {
         return g_downer;
@@ -187,6 +210,8 @@ namespace {
         const uint64_t now = Now();
         g_down = true;
         g_state = kStateDown;
+        g_localDying = false;             // a fresh down is "crawling", never "dying"
+        g_dyingUntilFrame = 0;
         g_downer = downer;
         g_knockDir = knockDir;
         g_supine = supine;
@@ -221,6 +246,10 @@ namespace {
         const bool revived = why == End::kRevived;
         if (revived)
             ++g_reviveCount;
+        if (revived) {                    // a revive ends the dying window too; a death keeps it
+            g_localDying = false;
+            g_dyingUntilFrame = 0;
+        }
         g_down = false;
         g_state = kStateUp;
         g_downer = revived ? kRevivedDowner : source;
@@ -572,6 +601,8 @@ namespace {
     void Reset()
     {
         g_down = false;
+        g_localDying = false;
+        g_dyingUntilFrame = 0;
         g_state = kStateUp;
         g_downer = 0;
         g_epoch = 0;
@@ -597,6 +628,8 @@ namespace {
 
     void ResetPerLife()
     {
+        g_localDying = false;
+        g_dyingUntilFrame = 0;
         g_downCount = 0;
         g_reviveCount = 0;
     }

@@ -1676,9 +1676,38 @@ namespace net::match::backpack {
                     ::engine::backpack_prop::Hid() ? "off (prop out)" : "on the back");
                 menuWas = menu;
             }
-            // TODO(bp-move-lock): the ext disables player-disable-move-stick / -jump / -roll
-            // every frame while the menu is open (SP: the backpack stops the player). Needs the
-            // per-frame natives; not ported. The engine's own MP behaviour stands.
+            // SP: opening the backpack on the move stops the player. While our menu is open in
+            // a live match, up, and the engine bag is active (or still in the 1.2 s stow /
+            // intro window, or t2r-bp-hold-old.txt is present), run the same per-frame natives
+            // the execution / intro locks use; the stick reads as released and locomotion plays
+            // its own stop under the craft intro. Closing the menu gives the stick back at once
+            // (the natives are one-frame). t2r-bp-menu-move.txt restores the old MP behaviour.
+            // LocalDowned() reads the ported core (dormant by default), so this "up" gate
+            // becomes faithful when the downed bridge is enabled.
+            {
+                static int logged;
+                const bool oldMp = ::engine::flag::Present("t2r-bp-menu-move.txt", 180);
+                if (!menu)
+                    logged = 0;
+                else if (!oldMp
+                    && net::player_status::MatchLive()
+                    && !net::player_status::LocalDowned()
+                    && me
+                    && ((c && c[0x190]) || now - tMenuOpen < 1200.0
+                        || ::engine::exe_side::Exists("t2r-bp-hold-old.txt"))) {
+                    DC::Call<"player-disable-move-stick">();
+                    DC::Call<"player-disable-jump">();
+                    DC::Call<"player-disable-roll">();
+                    if (!logged) {
+                        logged = 1;
+                        // The ext also logs BpOwnSpeed(); the mod has no momentum reader, so log
+                        // the menu state instead.
+                        TO1_LOG("bp: own menu open %.0f ms (bag active %d) - move stick / jump / "
+                                "roll off while it stays open (SP: the backpack stops the "
+                                "player)\n", now - tMenuOpen, c ? c[0x190] : -1);
+                    }
+                }
+            }
             ::engine::backpack_prop::RunPendingLeave(menu != 0);
             {   // ps57 recovery (ext): the put-away refused a frame before "menu OPEN ... active 0",
                 // never an ENTER, the menu could not be closed. The menu is up, the engine's bag did

@@ -274,6 +274,26 @@ namespace net::session {
         BroadcastRoster();
     }
 
+    bool PeerActive(int slot)
+    {
+        return slot > 0 && slot < kMaxNetPlayers && g_peers[slot].active;
+    }
+
+    float PeerSilence(int slot)
+    {
+        if (!PeerActive(slot))
+            return -1.0f;
+        float age = Now() - g_peers[slot].lastRecv;
+        return age > 0.0f ? age : 0.0f;
+    }
+
+    void DropPeerForReaper(int slot, const char* reason)
+    {
+        // Same drop path as a timeout / goodbye: clears the peer, the replay bank and
+        // the engine's puppet, and rebroadcasts the roster.
+        DropPeer(slot, reason ? reason : "ghost roster");
+    }
+
     // ---------------------------------------------------------------------------
     // packet handlers
     // ---------------------------------------------------------------------------

@@ -1080,9 +1080,10 @@ namespace net::match::bloodbuild {
             static float hp = -1.0f;
             if (engine::frame::Count() % 3 == 0)
                 hp = engine::local_player::Health();
-            int st = 0;
-            if (::net::player_status::LocalDowned())
-                st = 1;             // TODO(downed): the dying (2) distinction is not ported
+            // ext: g_downed ? (g_downDying || g_uc4DyingUntil ? 2 : 1) : 0. The two dying
+            // latches live in the ported downed core; without a death-clip producer they stay
+            // clear, so this reads 1 while down until that feature is cut over.
+            const int st = ::net::player_status::LocalDownState();
             if (ml)
                 BbBodyTick(kUs, st, 0, hp, ml, SID("player"),
                     static_cast<uint32_t>(engine::backpack_prop::LifeId()));
@@ -1105,9 +1106,9 @@ namespace net::match::bloodbuild {
                 || std::fabs(np[0]) > 1e5f || std::fabs(np[2]) > 1e5f)
                 continue;
             const int dead = p.dead ? 1 : 0;
-            int st = 0;
-            if (::net::player_status::PuppetDowned(sl))
-                st = 1;             // TODO(downed): the dying (2) distinction is not ported
+            // ext: g_peerDowned[sl] == 1 ? 1 : == 2 ? 2 : 0 -- the wire already carries the
+            // distinction, so this is faithful whenever the downed bridge feeds peer events.
+            const int st = ::net::player_status::PuppetDownState(sl);
             const float hp = (!dead && engine::frame::Count() % 3 == static_cast<uint64_t>(sl % 3))
                 ? ENTITY::GET_HEALTH(h)
                 : (g_bb[sl].hpOk ? g_bb[sl].hp : -1.0f);

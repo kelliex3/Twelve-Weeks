@@ -7,6 +7,7 @@
 #include "net-gui2.hpp"
 
 #include "net/match/downed-state.hpp"
+#include "net/match/match-liveness.hpp"
 
 #include "engine/local-player.hpp"
 #include "gameplay/melee.hpp"
@@ -17,7 +18,10 @@ namespace net::player_status {
 
     bool MatchLive()
     {
-        return net::gui2::InMatch() && !net::gui2::ScoreboardShowing();
+        // The shared latch reads the engine's substate 6 / LobbyObj()+0x2ca4 end banner when
+        // available (ext MatchSubstate() && !g_ffEnded) and falls back to the mod's own
+        // match gates otherwise. One read per frame, before every consumer in boot::FrameTick.
+        return net::match::liveness::Live() && !net::match::liveness::MatchOver();
     }
 
     bool LocalAlive()
@@ -28,9 +32,13 @@ namespace net::player_status {
     bool LocalDowned()
     {
         // Mirrors the ext's g_downed. The ported core is inert until downed_bridge is enabled,
-        // so this reads false by default. The separate g_downDying death-clip latch is a
-        // different (still gated) producer and is not part of this gate.
+        // so this reads false by default.
         return net::match::downed::IsDown();
+    }
+
+    uint8_t LocalDownState()
+    {
+        return net::match::downed::LocalState();
     }
 
     bool LocalInPairedMove()
@@ -79,6 +87,14 @@ namespace net::player_status {
             return false;
         return net::match::downed::PeerState(static_cast<uint8_t>(slot)) !=
                net::match::downed::kStateUp;
+    }
+
+    uint8_t PuppetDownState(int slot)
+    {
+        // The wire state is already 0 / 1 / 2, so no extra mapping is needed here.
+        if (slot < 0 || slot >= net::match::downed::kMaxPeers)
+            return net::match::downed::kStateUp;
+        return net::match::downed::PeerState(static_cast<uint8_t>(slot));
     }
 
 }

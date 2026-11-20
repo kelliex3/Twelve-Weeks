@@ -175,20 +175,29 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 **Port notes.** The join-in-progress logic inside `t2r-ext.c` is now partly native:
 `net/online/jip-report.{hpp,cpp}` owns the 0xE3 clock report (cadence, clock flags, team /
 lives, AFK trailer, bounded RPC, generation check, backoff) and consumes the 0xE5 reply's
-server settings, including the no-AFK test-server flag. Roster merge, in-match team swap,
-late-join query and ghost peer reaping stay in the ext and are called out as TODO gates in
-that module. The requeue flag (0x20) is now sent while `t2r-no-requeue.txt` is absent; the
-ticket check / auto-search / WAITING FOR PLAYERS... label live in `net/online/requeue.*`.
+server settings, including the no-AFK test-server flag. It also ports the 0xE5 roster merge
+(prune / replace / append, own-entry preservation, fallback-name protection) into a native
+shadow, the trailing `[0xA7][k][slot, team]` own-team swap parse, and the ghost-peer reaping
+rules (listed-mask age, accepted-anim silence, non-host exclusion, `t2r-ghost-peer-old.txt`
+opt-out). Those cores are observation / decision only: engine lobby writes, the winmm peer
+drop and the 0x10 "ask for swap block" flag are behind `kWriteLobby` / `kApplyGhostPeers` /
+`kRequestTeamSwap` (all false), so the ext still owns that engine state while it is the bridge.
+The exact substate 6 / `LobbyObj()+0x2ca4` reads live in `engine/lobby.*`. The late-join query
+(flags 0x04, kit carry) stays in the ext. The requeue flag (0x20) is now sent while
+`t2r-no-requeue.txt` is absent; the ticket check / auto-search / WAITING FOR PLAYERS... label
+live in `net/online/requeue.*`.
 
 `net/online/requeue.*` ports the daemon 0xBC ticket poll (bounded worker through
 `net::daemon::Rpc`), the match-end arm (now via the shared `net::match::liveness` latch), the
 MP-menu settle + page push and the status-label swap. Party leadership / follow (`FrInParty` /
 `me_leader`) and the party-follow search gate (`g_pqAuto`) are now native via `net::friends13`
 (`IsMember()` / `NoteAutoPush()`). Kick detection (`g_kickMs`) is now native via
-`net/match/kick-state.*`, so a kick stamped after the match ended disarms requeue. Honest gates:
-the exact end byte / MatchSubstate and the post-match screen latches (`clan13x` /
+`net/match/kick-state.*`, so a kick stamped after the match ended disarms requeue. The exact
+match-end byte (`LobbyObj()+0x2ca4`) and `MatchSubstate()==6` are now read directly by
+`engine/lobby.*` and latched once per frame in `net/match/match-liveness.*`, so requeue arms on
+the same engine signal the ext uses. Honest gates: the post-match screen latches (`clan13x` /
 `clan-postmatch` / clan event / GEAR UP nav) are unported; a stable top page over the settle
-window stands in for the screens and the ext still owns the latches while it is the bridge.
+window stands in for the screens and the ext still owns those latches while it is the bridge.
 
 `net/match/kick-state.*` ports the ext's `g_kickMs` / `MsgIsKick` / `MsgIsMove` (the timestamp
 set in `MsgHook` when the daemon's op 0x11 kick text arrives). The mod has no winmm message
@@ -211,8 +220,10 @@ decorations, the notice-c cross-feature toasts and dedupe, and the party ready /
 `net-gui2.cpp`. The pure JSON/state core is a standalone module, so it can be tested without a game.
 `net/match/match-liveness.*` is the shared once-per-frame match-end latch (ext `g_wasLive`): it
 supplies `MatchEndHold()` to requeue and `Live()` / `MatchEndHold()` to friends13, so all consumers
-see one read of the mod's match phase. Honest gates: the rank table (0xBF / `rankbadge.c`), the raw
-lobby object / `kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings,
+see one read of the engine substate 6 / `LobbyObj()+0x2ca4` end banner (via `engine/lobby.*`) with
+the mod's own match phase as the fallback. `MatchOver()` exposes the end banner to
+`player_status::MatchLive()` and AFK. Honest gates: the rank table (0xBF / `rankbadge.c`), the raw
+lobby object writes / `kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings,
 mouse-over click nav and the card's per-widget keyframes are not ported; widget writes are inert
 when the defs are absent and the ext still owns those producers while it is the bridge. The two
 opt-outs are `t2r-no-ingame-friends.txt` and `t2r-no-friend-toast.txt`.
@@ -248,7 +259,11 @@ handling, gore / hitbox, skills, awards, the UC4 reach producer and the send tra
 behind `DownedSink`; the audio modules `downed_music.c` / `downed_vox.c` remain separate,
 unported features (their rows above are unchanged). `player_status::LocalDowned` /
 `PuppetDowned` now read this core instead of hard-false stubs; they stay false until the bridge
-is enabled.
+is enabled. The ext's separate local dying latches (`g_downDying` and the `g_uc4DyingUntil` death-
+clip window) are carried in the same core as `SetLocalDying()` / `SetDyingUntilFrame()`, so
+`LocalState()` / `PuppetDownState()` answer the exact 0 (up) / 1 (down, crawling) / 2 (dying)
+distinction that `bloodbuild.cpp` reads. No death-clip producer is cut over yet, so the local
+latch stays clear and the answer is 1 while down.
 
 ## Generated data headers
 

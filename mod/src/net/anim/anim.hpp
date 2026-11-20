@@ -144,4 +144,8 @@ void     NetAnimTxReset();
 // Clear one sender's replay bank + learned rx dictionary + rx sequence baseline (peer
 // dropped / that slot restarted).
 void     NetAnimClearSlot(int slot);
+// Freshness stamp of the last ACCEPTED remote anim list for a slot (g_nowMs time base,
+// GetTickCount64() & 0x7fffffff). 0 = none. Used by the ghost-peer reaper as the mod's
+// stand-in for the ext's per-slot puppet pose-write counter.
+uint32_t NetAnimRxStampMs(int slot);
 void NetPuppetAnimInstall();
