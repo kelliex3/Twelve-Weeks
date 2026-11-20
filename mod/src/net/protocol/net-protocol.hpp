@@ -193,6 +193,23 @@ enum NetEventType : uint8_t {
     //   [u8 0x55][u8 clip][u16 first][u8 n][u8 0][n x {u8 has, i16 x,y,z,w}] root track chunk
     // Pinned to the ext's own byte 0x5B so the two transports interoperate during the cutover.
     NEVT_BACKPACK = 0x5B,
+
+    // ---- reserved ext opcodes (melee + downed) ------------------------------------------
+    // These are the ext's own peer-message bytes, pinned here at their EXACT values so the
+    // two transports interoperate during the cutover (never renumber the low 0..18 events
+    // above). A feature module owns the payload layout; the entries are reservations while
+    // that module's wire bridge is still gated (see FEATURES.md / PHASE1.md).
+    NEVT_DOWNED      = 0x43,   // ext MSG_DOWNED: [u8 state][u8 downer][u8 knockDir+1][u8 mix][u8 bleed+0.5][u8 epoch] (net/match/downed-state.hpp)
+    NEVT_REVIVE      = 0x44,   // ext MSG_REVIVE: [u8 who] -- a teammate completed the revive
+    NEVT_ARMOR_HIT   = 0x4A,   // ext MSG_ARMOR_HIT: [u8 victim][u8 piece][u8 broke][f32 absorbed][f32 left]
+    NEVT_PSYNC       = 0x4B,   // ext MSG_PSYNC: paired-move lifecycle / ping / pong / ack
+    NEVT_HIT_REL     = 0x6C,   // ext MSG_HIT_REL: reliable one-shot hits (net/match/hit-rel.hpp)
+    NEVT_DODGE_SWING = 0x97,   // ext MSG_DODGE_SWING: a free melee swing was armed
+    NEVT_DODGE_RES   = 0x98,   // ext MSG_DODGE_RES: a blow was dodged, play the miss
+    NEVT_DODGE_PRESS = 0x99,   // ext MSG_DODGE_PRESS: dodge pressed (immune / dir / clip sid)
+    NEVT_HITREACT2   = 0x9A,   // ext MSG_HITREACT2: [u8 flags][u64 clip][u16 cut ms]
+    NEVT_MEX         = 0x9C,   // ext MSG_MEX: melee exchange window
+    NEVT_MV3         = 0x9E,   // ext MSG_MV3: melee-v3 bubble / inputs / hash
 };
 
 struct ExecutionEvent {

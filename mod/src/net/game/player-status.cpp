@@ -6,6 +6,8 @@
 #include "match.hpp"
 #include "net-gui2.hpp"
 
+#include "net/match/downed-state.hpp"
+
 #include "engine/local-player.hpp"
 #include "gameplay/melee.hpp"
 
@@ -25,9 +27,10 @@ namespace net::player_status {
 
     bool LocalDowned()
     {
-        // TODO(downed): the downed feature is not ported. When it lands, return the local
-        // downed latch here (the ext's g_downed / g_downDying).
-        return false;
+        // Mirrors the ext's g_downed. The ported core is inert until downed_bridge is enabled,
+        // so this reads false by default. The separate g_downDying death-clip latch is a
+        // different (still gated) producer and is not part of this gate.
+        return net::match::downed::IsDown();
     }
 
     bool LocalInPairedMove()
@@ -69,10 +72,13 @@ namespace net::player_status {
 
     bool PuppetDowned(int slot)
     {
-        // TODO(downed): the downed feature is not ported. When it lands, return that slot's
-        // downed latch here (the ext's g_peerDowned[slot]).
-        (void)slot;
-        return false;
+        // Mirrors the ext's g_peerDowned[slot] != 0: the wire state is 0 up / 1 down / 2 dying.
+        // Peer state reaches the core only while downed_bridge is enabled and NEVT_DOWNED is
+        // dispatched, so this stays false by default.
+        if (slot < 0 || slot >= net::match::downed::kMaxPeers)
+            return false;
+        return net::match::downed::PeerState(static_cast<uint8_t>(slot)) !=
+               net::match::downed::kStateUp;
     }
 
 }

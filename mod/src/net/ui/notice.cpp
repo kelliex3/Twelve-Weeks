@@ -17,6 +17,7 @@
 #include "net-gui2.hpp"
 #include "notify.hpp"
 #include "daemon-rpc.hpp"
+#include "net/match/kick-state.hpp"
 
 #include <atomic>
 #include <cstdio>
@@ -86,7 +87,9 @@ namespace net::notice {
 
         bool IsKick(const char* t)
         {
-            return g_hooks.isKick && g_hooks.isKick(t);
+            // The native kick state supplies this hook; the fallback keeps the
+            // producer working on the first frame, before hooks are installed.
+            return g_hooks.isKick ? g_hooks.isKick(t) : net::match::kick::IsKick(t);
         }
 
         // ---- text of one notice in the game's language; free text (kind t) and a
@@ -258,13 +261,24 @@ namespace net::notice {
                 if (!m[0])
                     continue;
 
-                if (k == 'p' && IsKick(m) && g_hooks.kickSet && g_hooks.kickSet(m)) {
-                    TO1_LOG("notice: kick line -> kick notice box\n");
-                    continue;
-                }
-                if (k == 'p' && IsKick(m) && g_hooks.kickShownAt) {
-                    const uint64_t at = g_hooks.kickShownAt();
-                    if (at && GetTickCount64() - at < 120000ull) {
+                if (k == 'p' && IsKick(m)) {
+                    // The ext stamps g_kickMs in MsgHook when the daemon sends the
+                    // kick text as an op 0x11 session note. The mod has no winmm
+                    // message hook: this kind-'p' line is the same text, so this is
+                    // our producer. AFK / ping / admin kicks and a team move all
+                    // arrive this way (the ported AFK watchdog only reports idle).
+                    // Read the old stamp first: with none, this is the line to show;
+                    // within 120 s of one it is the duplicate the ext drops here.
+                    // Stamp on receipt either way -- requeue needs it even while a
+                    // match is still up and this line is held for the end sequence.
+                    const uint64_t prev = g_hooks.kickShownAt ? g_hooks.kickShownAt() : 0;
+                    const bool already = prev && GetTickCount64() - prev < 120000ull;
+                    net::match::kick::Note(m);
+                    if (g_hooks.kickSet && g_hooks.kickSet(m)) {
+                        TO1_LOG("notice: kick line -> kick notice box\n");
+                        continue;
+                    }
+                    if (already) {
                         TO1_LOG("notice: kick line already shown through the session note - skipped\n");
                         continue;
                     }
@@ -373,7 +387,13 @@ namespace net::notice {
 
     void SetHooks(const Hooks& hooks)
     {
-        g_hooks = hooks;
+        // Merge, not replace: friends13 and the kick state install independently.
+        if (hooks.friendsToast)    g_hooks.friendsToast = hooks.friendsToast;
+        if (hooks.friendsNoteSeen) g_hooks.friendsNoteSeen = hooks.friendsNoteSeen;
+        if (hooks.friendsEnabled)  g_hooks.friendsEnabled = hooks.friendsEnabled;
+        if (hooks.isKick)          g_hooks.isKick = hooks.isKick;
+        if (hooks.kickSet)         g_hooks.kickSet = hooks.kickSet;
+        if (hooks.kickShownAt)     g_hooks.kickShownAt = hooks.kickShownAt;
     }
 
     void Tick()

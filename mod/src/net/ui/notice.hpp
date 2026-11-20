@@ -31,14 +31,17 @@ namespace net::notice {
         void (*friendsNoteSeen)(const char* text) = nullptr;
         // friends13: the in-game FRIENDS panel exists (the server words invites "press P").
         bool (*friendsEnabled)() = nullptr;
-        // kicknote: is this line an admin kick?
+        // kick state: is this line an admin kick / team move? (net::match::kick)
         bool (*isKick)(const char* text) = nullptr;
         // kicknote: route the kick to the MP-menu notice box; true = taken.
+        // Not ported: this hook stays null and the kick keeps its toast.
         bool (*kickSet)(const char* text) = nullptr;
-        // kicknote: GetTickCount64() of the last session kick note (0 = none).
+        // kick state: GetTickCount64() of the last kick text (0 = none).
         uint64_t (*kickShownAt)() = nullptr;
     };
 
+    // Merges: a null field keeps its previous value, so each feature installs only
+    // its own hooks and a later install cannot clear another feature's hooks.
     void SetHooks(const Hooks& hooks);
 
     // Once per frame (boot::FrameTick).

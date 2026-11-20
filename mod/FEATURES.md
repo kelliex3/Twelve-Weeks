@@ -114,7 +114,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `loadjson.c` | launcher loadouts by name: t2r-loadout.json <-> t2r-loadout-launcher.json | Misc | P3 | hook | 2 e.g. `t2r-loadout.txt` | — | not started |
 | `loc.c` | localisation layer (Polish ...): loc_tr / loc_tr_draw / loc_keep, language detection (loc_detect, every 2 s from the tick) | Misc | P3 | hook | 2 e.g. `t2r-lang.txt` | net/base/net-common.hpp | not started |
 | `rpcstate.c` | in-game Discord Rich Presence: map / mode / lives / interrogations / clan week -> t2r-rpc-state.txt for the launcher (t2r-no-rpc.txt) | Misc | P3 | — | 2 e.g. `t2r-no-rpc.txt` | loader/ (launcher IPC) | not started |
-| `paired.c` | psync: paired moves in sync on every client (re/paired-sync.md) | Executions / paired moves | P4 | net, widget, camera, pad, hook, data | 80 e.g. `t2r-att-free-far-old.txt` | net/anim/* | not started |
+| `paired.c` | psync: paired moves in sync on every client (re/paired-sync.md) | Executions / paired moves | P4 | net, widget, camera, pad, hook, data | 80 e.g. `t2r-att-free-far-old.txt` | net/anim/paired.cpp (read-only g_ps surface; wire / placement / puppet gates unported) | in progress |
 | `pairshift.c` | pws: the paired-move anti-wall shift - pg_gate() wraps the path gate above (t2r-no-pair-shift.txt = off) | Executions / paired moves | P4 | — | 1 e.g. `t2r-no-pair-shift.txt` | net/anim/* | not started |
 | `ctxdown.c` | contextual melee downs: wall / table-height environment takedowns (re/contextual-downs.md) | Melee / close combat | P4 | net, audio, camera, hook, data | 79 e.g. `t2r-blunt-cut-blood.txt` | gameplay/ctxdown.cpp, gameplay/ctxdown.hpp, gameplay/ctxdown-rows/mduel_fin.h | not started |
 | `dcounter.c` | dodge counter: a melee press after a successful dodge plays the connected SP counter (psync pair), 2 x fist damage, escape-dodge window, 4 s cooldown (re/scripted-melee-1026.md; t2r-no-dodge-counter.txt) | Melee / close combat | P4 | camera, hook | 24 e.g. `t2r-dc-axe-slash.txt` | — | not started |
@@ -122,7 +122,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `melee_autodraw.c` | v5-mdraw: a melee attack on us draws the melee weapon we carry (animated draw, instant fallback; t2r-no-melee-autodraw.txt) | Melee / close combat | P4 | — | 8 e.g. `t2r-mad-animated.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_beat.c` | melee BEAT QUEUE: duel arbitrated by its owner (client to client), stamped intents -> RESULT + PLAY_AT, played through the existing -hit / miss / parry paths (re/melee-beat-queue.md; t2r-melee-beat-off.txt = old path) | Melee / close combat | P4 | net | 5 e.g. `t2r-beat-no-view-shift.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_camcont.c` | v5 CAMERA CONTINUITY: the final render camera never cuts / whips in one frame - our source switches and the engine camera's jumps in a duel ease over ~0.5 s, collision pull-ins pass, "camcont:" jump metrics (re/melee-v5-cam.md; t2r-v5-no-cam.txt = measure only) | Melee / close combat | P4 | camera | 11 e.g. `t2r-cam-boost-old.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
-| `melee_dodge.c` | melee dodge: only while an enemy swing is about to land, i-frames, miss for the attacker, limits for both (t2r-no-melee-dodge.txt) | Melee / close combat | P4 | net, audio, widget, camera, pad, hook, data | 73 e.g. `t2r-counter-any-dodge.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
+| `melee_dodge.c` | melee dodge: only while an enemy swing is about to land, i-frames, miss for the attacker, limits for both (t2r-no-melee-dodge.txt) | Melee / close combat | P4 | net, audio, widget, camera, pad, hook, data | 73 e.g. `t2r-counter-any-dodge.txt` | gameplay/melee-dodge.cpp (pure timing / state core; pad / engine / wire producers gated), gameplay/melee.cpp | in progress |
 | `melee_drop.c` | v5-dis4: every death of a melee carrier drops ITS weapon with its durability; disarms of a stowed weapon (MSG_MOWN 0xA6; t2r-no-mown-drop.txt, t2r-dis-held-only.txt) | Melee / close combat | P4 | net | 5 e.g. `t2r-dis-held-only.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_duel.c` | melee DUEL (opt-in t2r-melee-duel.txt): SP-style 1v1 engagement, connecting hits as synced -hit pairs of every melee set (mduel_moves.h, re/melee-duel-sp-spec.md) | Melee / close combat | P4 | net, audio, camera, pad, hook | 127 e.g. `t2r-2h-swing-phase-old.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_duel_contact.c` | melee DUEL CONTACT: every blow visibly connects - the replica swing reaches its contact frame when the START arrives, the attacker puppet carried onto the contact spot over the windup, the hit-confirm wait as one slowed pair (no frozen frame), contact-frame metrics (re/melee-duel-contact.md; t2r-duel-no-contact.txt) | Melee / close combat | P4 | net, camera, hook | 14 e.g. `t2r-duel-contact-no-own-xfade.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
@@ -131,10 +131,10 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `melee_duel_sptl.c` | melee DUEL SP TIMELINE: every half of an exchange at SP's time on both screens (one -hit from frame 0, full weight on the switch, impact cues on the visible impact, swing cues on the replica clock, finisher main clip cut in) + one "sptl:" line per exchange vs SP (re/melee-sp-timeline.md; t2r-duel-no-sptl.txt) | Melee / close combat | P4 | hook | 8 e.g. `t2r-duel-no-sptl.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_duel_stance.c` | melee DUEL STANCE: SP's melee-mode idle (fists up, crouched, facing the partner) on both bodies between blows while standing (t2r-duel-no-stance.txt) | Melee / close combat | P4 | — | 2 e.g. `t2r-duel-no-stance.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_duel_tl.c` | melee DUEL TIMELINE: one presentation owner per duel body - queued crossfaded clips, full playback + catch-up, predicted swings, bounded puppet drift, rate-limited duel camera, SNAP / CUT / TRIM metrics (re/melee-duel-timeline.md; t2r-duel-no-timeline.txt) | Melee / close combat | P4 | net, camera, hook | 16 e.g. `t2r-dead-replica-cut-old.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
-| `melee_exchange.c` | melee EXCHANGE: ENGAGE -> ATTACK (defender decides on a shared clock) -> COMBO / DODGED -> dcounter, MSG_MEX 0x9C (re/melee-exchange-1027.md; t2r-no-melee-exchange.txt) | Melee / close combat | P4 | net, camera, pad, hook | 10 e.g. `t2r-melee-v1.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
+| `melee_exchange.c` | melee EXCHANGE: ENGAGE -> ATTACK (defender decides on a shared clock) -> COMBO / DODGED -> dcounter, MSG_MEX 0x9C (re/melee-exchange-1027.md; t2r-no-melee-exchange.txt) | Melee / close combat | P4 | net, camera, pad, hook | 10 e.g. `t2r-melee-v1.txt` | gameplay/melee-exchange.cpp (pure state machine / wire core; pad / engine / dcounter / qte gated), gameplay/melee.cpp | in progress |
 | `melee_feel.c` | SP melee camera kick for attacker / victim / whiff (render camera only; t2r-no-melee-shake.txt) | Melee / close combat | P4 | net, camera, pad, hook | 8 e.g. `t2r-melee-rumble-probe.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_hitfx.c` | victim of a melee blow: BLUNT concussion (presets + tinnitus + duck) / BLADE slash + red overlay (t2r-no-melee-hitfx.txt) | Melee / close combat | P4 | audio, camera | 6 e.g. `t2r-no-blade-pcm.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
-| `melee_hitreact.c` | SP melee hit reactions: full-body ellie-1h-hr-* clip on a landed blow, cut after 0.3-0.45 s, blend back to the stick; the attacker's next swing waits for it (t2r-no-sp-hitreact.txt) | Melee / close combat | P4 | net, audio, camera, data | 33 e.g. `t2r-duel-armed-plain-ps29.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
+| `melee_hitreact.c` | SP melee hit reactions: full-body ellie-1h-hr-* clip on a landed blow, cut after 0.3-0.45 s, blend back to the stick; the attacker's next swing waits for it (t2r-no-sp-hitreact.txt) | Melee / close combat | P4 | net, audio, camera, data | 33 e.g. `t2r-duel-armed-plain-ps29.txt` | gameplay/melee-hit-react.cpp (pure timing / state / wire core; clip table / animation / fx gated), gameplay/melee.cpp | in progress |
 | `melee_npcwind.c` | NPC WINDUP TELL: a blunt-weapon opener plays the SP NPC -enter clip first, on both screens (t2r-no-npc-windup.txt) | Melee / close combat | P4 | net, camera, pad | 15 e.g. `t2r-no-npc-windup-fist.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_pace.c` | slower melee cadence: next swing start waits fists 0.7 s / weapons 0.85 s (whiff 1.0 s, dodged +0.3 s), a press inside it is replayed (t2r-melee-pace.txt, t2r-no-melee-pace.txt) | Melee / close combat | P4 | net, pad, hook | 6 e.g. `t2r-melee-buf-old.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
 | `melee_pullout.c` | PRONE PULL-OUT: a standing player presses melee behind a prone enemy -> SP's NPC pull-out drag + a 250 ms E counter (t2r-pullout-off.txt = off; pullout_rows.h) | Melee / close combat | P4 | net, camera, hook, data | 45 e.g. `t2r-prone-cam-cont-ps46-old.txt` | gameplay/melee.cpp, gameplay/melee.hpp, gameplay/melee2013.cpp | not started |
@@ -150,8 +150,8 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `mv3_anim.c` | D: the sim's clip + phase + root motion on our body and the puppets, engine melee suppressed | Melee / close combat | P4 | pad, hook | 1 e.g. `t2r-mv3-animtest.txt` | net/anim/anim-rx.cpp, net/anim/anim.hpp, net/anim/anim-hooks.cpp | not started |
 | `mv3_fx.c` | E: sim events -> sfx / voice / blood / camera kick, rollback-safe | Melee / close combat | P4 | net, audio, camera | 4 e.g. `t2r-engine-sfx-stop.txt` | — | not started |
 | `mv3_glue.c` | F: t2r-melee-v3.txt switch, input, bubble enter / exit, confirmed damage through the receive path, old-layer gates | Melee / close combat | P4 | net, camera, pad, hook | 2 e.g. `t2r-melee-v3.txt` | — | not started |
-| `mv3_net.c` | C: bubble session, MSG_MV3, shared clock, input delay, rollback driver, hash / resync | Melee / close combat | P4 | net | 0 | — | not started |
-| `mv3_sim.c` | B: the deterministic melee sim (pure C, 60 Hz, snapshot = memcpy) | Melee / close combat | P4 | camera, pad | 0 | — | not started |
+| `mv3_net.c` | C: bubble session, MSG_MV3, shared clock, input delay, rollback driver, hash / resync | Melee / close combat | P4 | net | 0 | gameplay/mv3/net-core.hpp (engine-free rollback / wire core; Mv3nIo bridge gated) | in progress |
+| `mv3_sim.c` | B: the deterministic melee sim (pure C, 60 Hz, snapshot = memcpy) | Melee / close combat | P4 | camera, pad | 0 | gameplay/mv3/sim.cpp + types.hpp (generated table + deterministic core, ported verbatim); glue / anim / fx gated | in progress |
 | `mv3_stubs.c` | inert stand-ins for the modules above that are missing | Melee / close combat | P4 | — | 0 | — | not started |
 | `shivkit.c` | 2013 shiv executions: the sound / blood / voice events of Ellie's SP knife kills at the shiv contact times | Melee / close combat | P4 | audio, data | 2 e.g. `t2r-no-shiv-kit.txt` | — | not started |
 | `wpnbreak.c` | melee weapon break like SP: sfx-<weapon>-hit-break at the break, Ellie's drop-broken-weapon gesture 0.41 s later, the item leaves the hand; puppets via MSG_WPNBREAK (t2r-no-break-sfx.txt) | Melee / close combat | P4 | net | 3 e.g. `t2r-auto-equip-old.txt` | — | not started |
@@ -184,10 +184,22 @@ ticket check / auto-search / WAITING FOR PLAYERS... label live in `net/online/re
 `net::daemon::Rpc`), the match-end arm (now via the shared `net::match::liveness` latch), the
 MP-menu settle + page push and the status-label swap. Party leadership / follow (`FrInParty` /
 `me_leader`) and the party-follow search gate (`g_pqAuto`) are now native via `net::friends13`
-(`IsMember()` / `NoteAutoPush()`). Honest gates: the exact end byte / MatchSubstate, `g_kickMs`
-and the post-match screen latches (`clan13x` / `clan-postmatch` / clan event / GEAR UP nav) are
-unported; a stable top page over the settle window stands in for the screens and the ext still
-owns the latches while it is the bridge.
+(`IsMember()` / `NoteAutoPush()`). Kick detection (`g_kickMs`) is now native via
+`net/match/kick-state.*`, so a kick stamped after the match ended disarms requeue. Honest gates:
+the exact end byte / MatchSubstate and the post-match screen latches (`clan13x` /
+`clan-postmatch` / clan event / GEAR UP nav) are unported; a stable top page over the settle
+window stands in for the screens and the ext still owns the latches while it is the bridge.
+
+`net/match/kick-state.*` ports the ext's `g_kickMs` / `MsgIsKick` / `MsgIsMove` (the timestamp
+set in `MsgHook` when the daemon's op 0x11 kick text arrives). The mod has no winmm message
+hook, so the same text on the notice poll's kind-'p' line is the producer: it stamps the shared
+timestamp, feeds `notice.c`'s 120 s duplicate suppression and requeue's `kicked from the match`
+disarm. Admin kicks, ping limits and the AFK removal (the AFK watchdog itself is already ported
+in `net/match/afk.*` and only reports idle on the 0xE3 clock report) all arrive as this text; a
+team move stamps it too but its rejoin (`g_moveMs` / `move_rejoin_tick`) stays in the ext. The
+kicknote MP-menu box (`kicknote.c` / `KnSet`) is also unported: `notice::Hooks::kickSet` stays
+null and the kick keeps its server toast. There is no separate `t2r-*.txt` gate in the ext; the
+consumers use `t2r-no-notice.txt` / `t2r-no-requeue.txt`.
 
 `net/social/friends13.*` + `net/social/friends-state.*` port the whole in-game FRIENDS / PARTY
 feature: the async daemon 0xD8/0xD9 state+action RPC (bounded worker, poll cadence 3 s panel /
@@ -221,6 +233,22 @@ AFK activity stamp. The ext's hardcoded call-site RVAs and near-image thunks are
 rel32 call-site scan + safetyhook mid-hooks; the pinned function prologues are preferred when they
 match and the unfocused-window byte stays version-guarded. The dev-bot, melee-pace and QTE
 *consumers* of the API are still unported, and the call-site scan needs a live exe to verify.
+
+The core 2013 downed state in `t2r-ext.c` (`feature_downed` / `DownedSet` / `RevivedRecv` /
+`RvSet` / `RvProg` and the `MSG_DOWNED` / `MSG_REVIVE` handlers, not a standalone module) is now
+ported as `net/match/downed-state.{hpp,cpp}`: the down / dying / up state and send epoch, the
+50 hp downed pool and 1 s protection window, the real-time bleed-out clock (mode base, per-down
+/ per-revive shortening, hit-shortening, pause while a reviver is attached), multi-reviver
+progress with the 1 / 0.6 / 0.4 rates and first-attached rank, per-peer state with epoch reorder
+protection and stale-resend suppression, and the exact 6-byte / 1-byte wire layouts. The gated
+`net/match/downed-bridge.*` seam owns its inert sink and fans out tick / net-event / reset;
+`downed_bridge::kEnabled == false`, so the ext stays the behaviour owner and no toggle is
+flipped. Honest gates: the fall / get-up animations, supine detection, camera, HUD bar, puppet
+handling, gore / hitbox, skills, awards, the UC4 reach producer and the send trampoline are all
+behind `DownedSink`; the audio modules `downed_music.c` / `downed_vox.c` remain separate,
+unported features (their rows above are unchanged). `player_status::LocalDowned` /
+`PuppetDowned` now read this core instead of hard-false stubs; they stay false until the bridge
+is enabled.
 
 ## Generated data headers
 

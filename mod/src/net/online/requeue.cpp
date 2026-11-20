@@ -13,6 +13,7 @@
 #include "net-account.hpp"
 #include "net-gui2.hpp"
 #include "net-matchmaking.hpp"
+#include "net/match/kick-state.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 
@@ -188,11 +189,13 @@ namespace net::requeue {
         // ---- honest gates for producers still owned by the ext ---------------------
         bool KickedSinceArm()
         {
-            // TODO(requeue): ext g_kickMs (admin / AFK kick) is not ported. The mod tears down
-            // its relay session on every match end, so Role() == None cannot tell a kick from a
-            // normal finish. A kick that keeps the matchmaker session alive is indistinguishable
-            // from a normal end here; the ext still owns g_kickMs while it is the bridge.
-            return false;
+            // ext `g_kickMs > g_rq.armed`: the kick text (admin / AFK / ping removal,
+            // or a team move) arrived after we armed on the match end. The stamp is
+            // now native -- net::match::kick is fed by the notice kind-'p' line, the
+            // mod's stand-in for the ext's op 0x11 session note. The mod still tears
+            // down its relay session on every end, so Role() alone cannot tell a kick
+            // from a normal finish; this text is the signal.
+            return net::match::kick::Since(g_rq.armed);
         }
 
         bool PostMatchScreensDone()
@@ -246,7 +249,7 @@ namespace net::requeue {
         }
 
         if (g_rq.armed && KickedSinceArm())
-            Disarm("session lost after the match end - no requeue");
+            Disarm("kicked from the match - no requeue");
         if (g_rq.armed && now - g_rq.armed > kArmMs)
             Disarm("no MP menu within 300 s of the match end - given up");
 

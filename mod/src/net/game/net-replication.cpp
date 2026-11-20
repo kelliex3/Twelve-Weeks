@@ -14,6 +14,9 @@
 #include "net-direct.hpp"
 #include "jip-report.hpp"
 #include "requeue.hpp"
+#include "net/match/kick-state.hpp"
+#include "net/match/melee-bridge.hpp"
+#include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "backpack.hpp"
@@ -1889,6 +1892,28 @@ namespace net::replication {
             break;
         }
 
+        // ---- reserved ext melee opcodes ---------------------------------------------------
+        // One gated bridge fans these out to the ported cores; dormant while its gate is off,
+        // so an ext client on the wire behaves exactly as before (no cutover).
+        case NEVT_HIT_REL:
+        case NEVT_ARMOR_HIT:
+        case NEVT_DODGE_SWING:
+        case NEVT_DODGE_RES:
+        case NEVT_DODGE_PRESS:
+        case NEVT_HITREACT2:
+        case NEVT_MEX:
+        case NEVT_MV3:
+        case NEVT_PSYNC:
+            net::match::melee_bridge::OnEvent(senderSlot, type, data, size);
+            break;
+
+        // Downed state uses the ext's exact MSG_DOWNED / MSG_REVIVE bytes; its own gated
+        // bridge no-ops while disabled, so ext clients see the wire exactly as before.
+        case NEVT_DOWNED:
+        case NEVT_REVIVE:
+            net::match::downed_bridge::OnEvent(senderSlot, type, data, size);
+            break;
+
         default:
             break;
         }
@@ -1916,6 +1941,9 @@ namespace net::replication {
         net::afk::Reset();
         net::jip::Reset();
         net::friends13::Reset();
+        net::match::kick::Reset();
+        net::match::melee_bridge::Reset();
+        net::match::downed_bridge::Reset();
         net::match::liveness::Reset();
         net::requeue::Reset();
         net::direct::Reset();

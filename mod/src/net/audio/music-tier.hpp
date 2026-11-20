@@ -18,12 +18,19 @@
 //     NoteEvent directly, in the ext's order relative to alertsting::Combat);
 //   * the local death cut (g_msDead from our own HP, ext alive peer + HP <= 0.5).
 //
-// Honest gates (TODO): the enemy-aware floor (enemy in sight / close / marked, spot calls,
-// enemy shots, close quarters, stuns, revives), the "we hit an enemy" input (the ext's hit-tick
-// hook is not ported), the lives / last-stand tiers (4 / 5) and the final-30 s floor. Until
-// those producers land, the tier is driven by our own actions and hits taken alone. The
-// default No Return rules are used; t2r-music-nr-rules-old.txt selects the ext's earlier
-// 3-step heat ladder (that path is portable and is included).
+// Ported floors (ext FeatureCombatMusic): the enemy-aware floor_heat and its 6 s hold (enemy
+// marked / in sight within 30 m / 15 m, far standoff, live enemy within 12 m, close quarters,
+// down / execution pending, low health in a fight), the match final-30 / final-10 floors, and
+// the lives tiers 4 (team out of lives) / 5 (last man standing) with the "lives came back"
+// exit. The world inputs come from the mod's own peer positions, team, mark and death flags,
+// team lives and match clock -- no new hook is needed for those.
+//
+// Honest gates (TODO): the ext's camera-frustum + line-of-sight "seen" test (MusicSlotSeen /
+// TagScreen) and its 1-8 m forward cone (MusicSlotCos) have no mod equivalent, so a distant
+// enemy that is not marked does not raise the floor until contact; the "we hit an enemy"
+// input (ext hit-tick hook), spot calls, enemy-shot heard and stun / revive inputs are not
+// ported. The default No Return rules are used; t2r-music-nr-rules-old.txt selects the ext's
+// earlier 3-step heat ladder (that path is portable and is included).
 //
 // Opt-outs next to the exe (ext): t2r-no-music.txt (all music), t2r-music-nr-rules-old.txt.
 // Logs "[MUSIC-TIER] ...".
@@ -40,8 +47,7 @@ namespace net::audio::music_tier {
     // BEFORE alertsting::Tick so the alert sting reads the same frame's tier.
     void Tick();
 
-    // ext g_msTier: 0 calm, 1..3 combat. 4 / 5 (last stand / last man standing) are gated
-    // on the unported lives input and are never produced here.
+    // ext g_msTier: 0 calm, 1..3 combat, 4 team out of lives, 5 last man standing.
     int Tier();
 
     // ext g_msDead: our death cut is up (local HP at / below zero in a live match).

@@ -10,6 +10,9 @@
 
 #include "player-status.hpp"
 
+#include "net/match/match.hpp"
+#include "net/match/net-player.hpp"
+
 #include "log.hpp"
 
 #include <windows.h>
@@ -50,6 +53,18 @@ namespace net::audio::music_tier {
         char     g_cause[64]  = "?";
         char     g_awareWhy[48] = "?";
 
+        // ext FeatureCombatMusic's floor layer (floor_heat / floor_held / floor_held_at).
+        // A floor is a heat contribution derived from the world this frame, not from an event;
+        // it is held for 6 s so a sight / contact does not blink between frames.
+        float    g_floorHeat   = 0.0f;
+        uint64_t g_floorHeldAt = 0;
+        char     g_floorCause[48] = "";
+        uint64_t g_floorAwareMs = 0;    // ext nr_hot_at from aware_now / exec_near (a world sign)
+        bool     g_closePrev[kMaxNetPlayers] = {};   // ext close_prev[slot]
+        bool     g_lastStand  = false;  // ext last_stand (our team out of lives)
+        bool     g_lms        = false;  // ext lms (last man standing)
+        float    g_remainSec  = -1.0f;  // ext MusicMatchRem(); -1 = clock unknown / not running
+
         // ext MusicEvent's awareness list. These set nr_hot_at / the "enemy is aware" clock.
         // Our own shots / melee swings are deliberately NOT in it (ext: "merely being near /
         // a mark / a downed enemy / our own shots is not [awareness]").
@@ -82,6 +97,100 @@ namespace net::audio::music_tier {
             g_logMs = now;
             TO1_LOG("[MUSIC-TIER] input +%.1f %s (heat %.1f, tier %d)\n",
                 add, cause, g_heat, g_tier);
+        }
+
+        // The world half of ext FeatureCombatMusic's per-frame peer scan. The mod can observe
+        // peer net positions, team, death / mark flags, lives and the clock without any new
+        // hook, so the enemy-aware floor below is a real port of the ext's floor_heat rule.
+        //
+        // HONEST GATE: the ext's `seen` also uses a camera-frustum + line-of-sight ray (its
+        // MusicSlotSeen / TagScreen / g_tagHidden) and a forward cone (MusicSlotCos, 1-8 m).
+        // The mod has no equivalent camera hook, so `seen` here is the mark flag (the ext
+        // counts a marked enemy as seen at any range) plus the within-5 m close quarters test.
+        // The d<=8 m forward-cone case is intentionally not produced; an enemy that approaches
+        // from outside 5 m without a mark does not raise the floor until contact. A future
+        // camera/LOS port feeds that into NoteEvent("enemy at close quarters") / the floor.
+        struct WorldScan {
+            int   seenNear    = 0;   // alive enemies seen within 30 m
+            int   seenClose   = 0;   // ... within 15 m
+            int   seenFar     = 0;   // seen / marked beyond 30 m
+            int   aliveNear   = 0;   // alive enemies within 30 m
+            int   near8       = 0;   // alive enemies in close quarters
+            int   downNear    = 0;   // downed enemies within 30 m, finisher pending
+            int   execNear    = 0;   // enemies in a paired move within 30 m
+            int   matesAlive  = 0;   // teammates not dead (a downed mate can still be revived)
+            bool  awareNow    = false; // an enemy sees us / is on us (NR hot sign)
+            float nearestAlive = 1e9f;
+        };
+
+        void ScanWorld(WorldScan& out)
+        {
+            const ::net::match::Match& m = ::net::match::Get();
+            const NetPlayer* local = NetPlayers::Local();
+            if (!local || !local->hasState)
+                return;
+            const PlayerNetState& ls = local->State();
+
+            for (int slot = 0; slot < kMaxNetPlayers; ++slot)
+                g_closePrev[slot] = false;
+            for (int slot = 0; slot < kMaxNetPlayers; ++slot) {
+                const NetPlayer& p = m.players[slot];
+                if (!p.active || p.IsLocal())
+                    continue;
+                const bool mate = NetPlayers::SlotIsFriendly(slot);
+                const bool dead = p.dead || ::net::player_status::PuppetDeadHere(slot);
+                const bool down = ::net::player_status::PuppetDowned(slot);
+                if (mate) {
+                    if (!dead)
+                        ++out.matesAlive;
+                    continue;
+                }
+                const PlayerNetState& s = p.State();
+                const float dx = s.posX - ls.posX;
+                const float dy = s.posY - ls.posY;
+                const float dz = s.posZ - ls.posZ;
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (down) {
+                    if (d < 30.0f)
+                        ++out.downNear;
+                    continue;
+                }
+                if (::net::player_status::LocalInPairedMove() && d < 30.0f) {
+                    // A paired move on this puppet (ext PsyncBusySlot) has no mod hook; the
+                    // local paired flag is the only observable proximity signal here.
+                    ++out.execNear;
+                    continue;
+                }
+                if (dead)
+                    continue;
+
+                if (d <= 30.0f)
+                    ++out.aliveNear;
+                if (d < out.nearestAlive)
+                    out.nearestAlive = d;
+
+                const bool marked = p.aimMarkActive;
+                const bool close = d <= 5.0f;    // ext: within 5 m, any direction
+                if (close) {
+                    ++out.near8;
+                    out.awareNow = true;         // ext: an enemy on us is an alerted enemy
+                    if (!g_closePrev[slot])
+                        NoteEvent(3.0f, "enemy at close quarters");
+                }
+                g_closePrev[slot] = close;
+
+                const bool seen = marked || close;
+                if (seen) {
+                    if (d <= 30.0f) {
+                        ++out.seenNear;
+                        if (d < 15.0f)
+                            ++out.seenClose;
+                    } else {
+                        ++out.seenFar;
+                    }
+                }
+            }
         }
 
     }
@@ -128,6 +237,12 @@ namespace net::audio::music_tier {
             g_inMatch = false;
             g_wasFiring = g_wasMelee = g_wasPaired = false;
             g_lastHp = -1.0f;
+            g_floorHeat = 0.0f;
+            g_floorHeldAt = g_floorAwareMs = 0;
+            g_floorCause[0] = '\0';
+            g_lastStand = g_lms = false;
+            g_remainSec = -1.0f;
+            std::memset(g_closePrev, 0, sizeof g_closePrev);
             return;
         }
         if (!g_inMatch) {
@@ -172,33 +287,113 @@ namespace net::audio::music_tier {
             if (hp > 0.0f)
                 g_lastHp = hp;
         }
-        // TODO(music): the enemy-aware floor (enemy in sight / close / marked, spot calls,
-        // enemy shots, close quarters, stuns, revives) and the lives / final-30 s floors are
-        // unported. The ext's floor_heat holds at 6 s; none of it can be derived here yet.
+        // ---- enemy-aware / lives / clock floors (ext FeatureCombatMusic) ---------------
+        // The ext's floor_heat is a per-frame world contribution, held for 6 s, then folded
+        // into the effective heat. All of its inputs that the mod can observe are read here.
+        WorldScan w;
+        ScanWorld(w);
+
+        const ::net::match::Match& match = ::net::match::Get();
+        g_remainSec = match.MatchRunning() ? match.matchTimer.Remaining() : -1.0f;
+        const bool final30 = g_remainSec > 0.0f && g_remainSec <= 30.0f;
+        const bool final10 = final30 && g_remainSec <= 10.0f;
+        const bool fightAbout = w.aliveNear > 0 || g_heat >= 1.0f;
+        const float hpNow = ::engine::local_player::Health();
+        const bool lowHealth = hpNow > 0.0f && hpNow <= 45.0f
+            && (now - g_contactMs <= 10000 || w.near8 > 0)
+            && (g_heat >= 1.0f || w.seenNear > 0);
+
+        float floor = 0.0f;
+        const char* floorCause = "";
+        if (w.seenNear > 0) {
+            floor = 3.0f + 2.0f * static_cast<float>(w.seenNear - 1);
+            if (w.seenClose > 0 && floor < 6.0f)
+                floor = 6.0f;
+            floorCause = w.seenClose > 0 ? "enemy in sight within 15 m"
+                                         : "enemy in sight within 30 m";
+        } else if (w.seenFar > 0) {
+            floor = 2.0f;
+            floorCause = "enemy in sight, far (standoff)";
+        }
+        if (w.seenNear == 0 && w.seenFar == 0 && w.nearestAlive < 12.0f
+            && (g_tier >= 1 || g_heat >= 1.0f)) {
+            floor = 2.0f;
+            floorCause = "live enemy within 12 m (fight on)";
+        }
+        if (floor < 2.0f && (w.downNear > 0 || w.execNear > 0)) {
+            floor = 2.0f;
+            floorCause = w.execNear > 0 ? "execution in progress"
+                                        : "enemy down, finisher pending";
+        }
+        if (lowHealth) {
+            floor += 6.0f;
+            floorCause = "low health in a fight";
+        }
+        if (final30 && fightAbout) {
+            floor += 2.0f;
+            floorCause = "match final 30 s";
+        }
+        if (final10 && fightAbout && floor < 6.0f) {
+            floor = 6.0f;
+            floorCause = "match final 10 s";
+        }
+        // ext floor_held / floor_held_at: a lower floor is held for 6 s (a sight that blinks
+        // between frames does not drop the music).
+        if (floor >= g_floorHeat) {
+            g_floorHeat = floor;
+            g_floorHeldAt = now;
+        } else if (now - g_floorHeldAt < 6000) {
+            floor = g_floorHeat;
+            floorCause = "recent sight / contact (held 6 s)";
+        } else {
+            g_floorHeat = floor;
+        }
+        std::snprintf(g_floorCause, sizeof g_floorCause, "%s", floorCause);
+        const float eff = g_heat > floor ? g_heat : floor;
+        const char* cause = g_heat >= floor ? g_cause : floorCause;
+
+        // NR hot clock: the ext's aware_now (an enemy sees us / is on us) and exec_near both
+        // stamp nr_hot_at, as does any awareness MusicEvent (g_musAwareMs).
+        if (w.awareNow || w.execNear > 0) {
+            g_floorAwareMs = now;
+            std::snprintf(g_awareWhy, sizeof g_awareWhy, "%s",
+                w.awareNow ? "enemy sees us / on us" : "execution in progress");
+        }
+        const uint64_t nrHotAt = g_floorAwareMs > g_awareMs ? g_floorAwareMs : g_awareMs;
+
+        // ext last_stand / lms from the match's own team lives (kFnTeamLives on the lobby
+        // object). The mod's relay keeps the authoritative lives in Match::teamLives.
+        const int lives = match.BlueLives();
+        g_lastStand = match.InLiveMatch() && lives <= 0 && lives > -1000;
+        g_lms = g_lastStand && w.matesAlive == 0 && !::net::player_status::LocalDowned();
 
         // ---- tier derivation (ext FeatureCombatMusic) ----------------------------------
-        // TODO(music): last stand / last man standing (ext tiers 4 / 5) need the lives input.
         int byHeat;
         if (NrRules()) {
-            // ext: one combat level -- every cue of a fight is the top playlist, never a
-            // 3-step ladder. Hot = any enemy-aware sign in the last 0.9 s.
-            byHeat = (g_awareMs && now - g_awareMs <= kHotEndMs) ? 3 : 0;
+            // ext: one combat level, driven only by nr_hot_at (the floor does not raise a
+            // tier in NR -- a seen-but-unaware enemy is not a fight).
+            byHeat = (nrHotAt && now - nrHotAt <= kHotEndMs) ? 3 : 0;
         } else {
-            // ext: the earlier 3-step heat ladder with the 6 s held floor (the floor's
-            // sight / contact producers are gated above, so heat alone drives it here).
-            byHeat = g_heat >= 12.0f ? 3 : g_heat >= 6.0f ? 2 : g_heat >= 2.0f ? 1 : 0;
+            // ext: the earlier 3-step ladder on the effective heat (event heat / held floor).
+            byHeat = eff >= 12.0f ? 3 : eff >= 6.0f ? 2 : eff >= 2.0f ? 1 : 0;
         }
 
         int want = g_tier;
-        if (byHeat > g_tier && !::net::player_status::LocalDowned() && !g_dead) {
-            want = byHeat;                       // ext: up at once, the frame it crosses
-        } else if (g_tier >= 1 && g_tier <= 3 && now >= g_holdUntil) {
+        if (g_lastStand) {
+            want = g_lms ? 5 : 4;                 // ext: boss loop / hunted countdown
+            cause = g_lms ? "last man standing" : "team out of lives";
+        } else if (g_tier >= 4) {
+            want = byHeat;                        // ext: lives came back, leave the boss loop
+            cause = "lives came back";
+        } else if (byHeat > g_tier && !::net::player_status::LocalDowned() && !g_dead) {
+            want = byHeat;                        // ext: up at once, the frame it crosses
+        } else if (g_tier >= 1 && g_tier <= 3 && now >= g_holdUntil && !final30) {
             if (NrRules()) {
                 // ext: the fight is over 0.9 s after the last alerted enemy, with a minimum
                 // 6.5 s combat dwell (t2r-music-dwell-old.txt removes the dwell).
                 const bool dwellOk = engine::flag::Present("t2r-music-dwell-old.txt")
                     || now - g_tierAt >= kDwellMs;
-                if (byHeat == 0 && dwellOk) {
+                if (nrHotAt && now - nrHotAt > kHotEndMs && dwellOk) {
                     if (!g_calmSince)
                         g_calmSince = now;
                     // ext then plays the decay + search bed before returning to silence;
@@ -209,7 +404,7 @@ namespace net::audio::music_tier {
             } else {
                 // ext (old rules): calm 4 s (contact lost), ease one tier after 5 s quiet.
                 const bool quiet = !g_evtMs || now - g_evtMs > 3000;
-                if (g_heat < 1.0f) {
+                if (eff < 1.0f) {
                     if (!g_calmSince)
                         g_calmSince = now;
                     if (now - g_calmSince > kCalmDownMs && now - g_tierAt > 5000)
@@ -218,13 +413,13 @@ namespace net::audio::music_tier {
                     g_calmSince = 0;
                     if (quiet && now - g_tierAt > 5000) {
                         const float th = g_tier == 1 ? 2.0f : g_tier == 2 ? 6.0f : 12.0f;
-                        if (g_heat < th * 0.75f)
+                        if (eff < th * 0.75f)
                             want = g_tier - 1;
                     }
                 }
             }
         }
-        if (g_heat >= 1.0f && !NrRules())
+        if (eff >= 1.0f && !NrRules())
             g_calmSince = 0;
 
         if (want != g_tier) {
@@ -235,10 +430,10 @@ namespace net::audio::music_tier {
             g_tier = want;
             g_tierAt = now;
             g_calmSince = 0;
-            TO1_LOG("[MUSIC-TIER] tier %d -> %d (%s; heat %.1f, last aware %llu ms ago, %s)\n",
-                old, want, g_cause,
-                g_heat, g_awareMs ? static_cast<unsigned long long>(now - g_awareMs) : 0ULL,
-                g_awareWhy);
+            TO1_LOG("[MUSIC-TIER] tier %d -> %d (%s; floor %.1f %s, heat %.1f, last aware %llu ms ago, %s, lives %d, rem %.0f s)\n",
+                old, want, cause, floor, g_floorCause,
+                g_heat, nrHotAt ? static_cast<unsigned long long>(now - nrHotAt) : 0ULL,
+                g_awareWhy, lives, g_remainSec);
         }
     }
 
@@ -255,6 +450,12 @@ namespace net::audio::music_tier {
         g_inMatch = false;
         g_wasFiring = g_wasMelee = g_wasPaired = false;
         g_lastHp = -1.0f;
+        g_floorHeat = 0.0f;
+        g_floorHeldAt = g_floorAwareMs = 0;
+        g_floorCause[0] = '\0';
+        g_lastStand = g_lms = false;
+        g_remainSec = -1.0f;
+        std::memset(g_closePrev, 0, sizeof g_closePrev);
         std::strcpy(g_cause, "?");
         std::strcpy(g_awareWhy, "?");
     }

@@ -18,8 +18,10 @@
 // now sends that flag while this module is enabled.
 //
 // Honest gates (TODO): the ext's exact match-end byte (LobbyObj+0x2ca4 / MatchSubstate()==6)
-// is approximated by the shared net::match::liveness latch (mod match / menu state), and kick
-// detection (g_kickMs) is still not ported. Party leadership / follow (FrInParty, me_leader)
+// is approximated by the shared net::match::liveness latch (mod match / menu state). Kick
+// detection (g_kickMs) is now native via net/match/kick-state.* (the notice kind-'p' line is the
+// mod's producer for the ext's op 0x11 session note); the kicknote box and the team-move rejoin
+// remain in the ext. Party leadership / follow (FrInParty, me_leader)
 // and the party-follow search gate (g_pqAuto) are now native via net::friends13. The exact
 // post-match screen latches (clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
 // remain in the ext while it is the bridge; the top page being stable stands in for them.

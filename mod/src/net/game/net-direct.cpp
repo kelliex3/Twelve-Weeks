@@ -59,17 +59,42 @@ namespace net::direct {
             int      ri = 0;
         } g_nd;
 
-        // The mod's equivalents of the ext's melee-critical message ids. Everything else stays
-        // on the relay. TODO(netdirect): extend this set when the ext's hit-rel / dodge /
-        // hitreact / MEX / MV3 / PSYNC producers are ported; those wire ids have no mod NEVT_*.
+        // The melee-critical message ids that ALSO go straight to the peer through the helper
+        // (the relay copy still goes out; the receiver keeps the first of the two, see Dup).
+        // This is the ext's NdTypeOk set, with the exact opcodes pinned in net-protocol.hpp:
+        //   0x6C hit-rel, 0x97/0x98/0x99 dodge swing/res/press, 0x9A hitreact2, 0x9C MEX,
+        //   0x4B PSYNC (except its PING/PONG) and 0x9E MV3 (except its PING/PONG).
+        // The two mod-native events (PLAYER_MELEE_ATTACK / TAKE_DAMAGE) are the mod's own melee
+        // contacts and keep the same low-latency path.
+        //
+        // PSYNC / MV3 PING / PONG measure the RELAY clock, so sending them over the direct path
+        // would corrupt that measurement -- the ext filters them and so do we. This is purely a
+        // transport decision: it is independent of net::match::melee_bridge::kEnabled (which
+        // gates whether the ported CORES consume these messages). Keeping it unconditional
+        // preserves the ext's wire behaviour during the coexistence window.
+        constexpr uint8_t kPsyncPing = 4;   // ext PS_OP_PING (tools/ext/paired.h)
+        constexpr uint8_t kPsyncPong = 5;   // ext PS_OP_PONG
+        constexpr uint8_t kMv3Ping   = 11;  // ext MV3N_OP_PING (tools/ext/mv3_net_core.h)
+        constexpr uint8_t kMv3Pong   = 12;  // ext MV3N_OP_PONG
+
         bool Eligible(uint8_t type, const uint8_t* buf, uint8_t len)
         {
             if (!buf || len < 1 || len > kMaxPayload)
                 return false;
             switch (type) {
-            case NEVT_PLAYER_MELEE_ATTACK:
-            case NEVT_TAKE_DAMAGE:
+            case NEVT_PLAYER_MELEE_ATTACK:   // mod-native melee contact
+            case NEVT_TAKE_DAMAGE:           // mod-native damage contact
+            case NEVT_HIT_REL:               // 0x6C
+            case NEVT_DODGE_SWING:           // 0x97
+            case NEVT_DODGE_RES:             // 0x98
+            case NEVT_DODGE_PRESS:           // 0x99
+            case NEVT_HITREACT2:             // 0x9A
+            case NEVT_MEX:                   // 0x9C
                 return true;
+            case NEVT_PSYNC:                 // 0x4B -- the ping/pong measure the relay clock
+                return buf[0] != kPsyncPing && buf[0] != kPsyncPong;
+            case NEVT_MV3:                   // 0x9E -- same: MV3N PING/PONG stay on the relay
+                return buf[0] != kMv3Ping && buf[0] != kMv3Pong;
             default:
                 return false;
             }

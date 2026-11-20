@@ -153,17 +153,21 @@ panned / attenuated against the listener every frame by `engine::pcm::VoicesUpda
 render-camera (icam) hook is deliberately not ported (documented in `pcm.cpp`). First consumer: the
 blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
 
-**Combat music tier state (ported).** `net/audio/music-tier.*` ports the *state* other features
-gate on: `MusicEvent` (heat + the event / contact / awareness clocks), the heat decay, the local
-producers we can observe (fire / melee / paired-move rising edges, health drops, the relayed hit),
-the No Return fight clock + minimum dwell (0.9 s / 6.5 s), the old 3-step heat ladder behind
-`t2r-music-nr-rules-old.txt`, and `g_msDead` from local HP. `alertsting` now refreshes its calm
-clock on tier 0 and gates on dead / downed, so the "shot at out of the quiet" path can arm; the
-damage event calls `Combat()` before `NoteEvent("we took a hit")`, matching the ext's hook order.
-The *music playback* (risers, loops, beds, themes / sets / v5 rotation, grid-quantised cut timing,
-stinger layer) is deliberately not ported: it needs the private PCM blobs and the generated
-`music_families.h` / `music_pools.h` tables. The enemy-aware floor (sight / close / spot calls /
-enemy shots / stuns), the lives-tiers 4 / 5 and the final-30 s floor stay honest TODOs.
+**Combat music tier state + floors (ported).** `net/audio/music-tier.*` ports the *state* other
+features gate on: `MusicEvent` (heat + the event / contact / awareness clocks), the heat decay, the
+local producers we can observe (fire / melee / paired-move rising edges, health drops, the relayed
+hit), the No Return fight clock + minimum dwell (0.9 s / 6.5 s), the old 3-step heat ladder behind
+`t2r-music-nr-rules-old.txt`, and `g_msDead` from local HP. The **tier floors** are now native too:
+enemy-aware heat with a 6 s hold, marked / seen near / far / close, close quarters, down /
+execution-pending, low health in a fight, the final-30 s and final-10 s floors, lives tiers 4 / 5
+and the "lives came back" exit. They read only mod-observable peer positions / team / mark / death
+flags, team lives and the match clock. `alertsting` refreshes its calm clock on tier 0 and gates on
+dead / downed, so the "shot at out of the quiet" path can arm; the damage event calls `Combat()`
+before `NoteEvent("we took a hit")`, matching the ext's hook order. The *music playback* (risers,
+loops, beds, themes / sets / v5 rotation, grid-quantised cut timing, stinger layer) is deliberately
+not ported: it needs the private PCM blobs and the generated `music_families.h` / `music_pools.h`
+tables. Honest gates: the camera-frustum / LOS test and the 5–8 m forward-cone sight check stay
+gated (no render-camera path), so those two floor inputs are conservative until that mechanism lands.
 
 **Gap.** Loop points and the crossfade used by `downed_music`, and the data wiring (item 7): the PCM
 blobs are private generators, so `net/audio/*` compiles with the `T2R_DATA_*` gates off and
@@ -227,8 +231,8 @@ be pattern-matched; on a mismatch the unfocused-window input helper is simply di
 dodge-input rule.
 
 **AFK watchdog (ported).** `net/match/afk.*` mirrors every gate in ext `afk.c`:
-live match / match over, downed / dead (`player-status` stubs), the 15-frame
-`character-is-dead?` poll, and the three in-play menus — backpack, GEAR UP page
+live match / match over, downed / dead (`player-status` reads the dormant downed core), the
+15-frame `character-is-dead?` poll, and the three in-play menus — backpack, GEAR UP page
 (`gui2::GearUpOpen()` checks the `to1/gearup13` top page only, so gearup13 itself stays
 unported) and the player menu. `Tick()` / `Draw()` are wired in the frame and HUD paths and
 `Reset()` runs on session reset. The 0xE3 trailer writer (`ReqTail`) reaches the daemon
@@ -253,9 +257,26 @@ the 0xBC / 0xBD ticket poll, the post-match arm and settle, the `to1/find-match-
 the WAITING FOR PLAYERS... label. `net/game/net-direct.*` owns the helper loopback socket and
 the direct message / ping / pong wire, with the 800 ms dedupe ring hooked into the existing
 event channel at `SendEventRaw` and `HandleState`. Both use the same `t2r-*.txt` sidecars as
-the ext. The unported producers are called out in each header: requeue's kick / post-match
-latches and netdirect's ext melee opcodes / shared relay RTT baseline stay in the ext while it
-is the bridge.
+the ext. The unported producers are called out in each header: requeue's post-match screen
+latches stay in the ext while it is the bridge. Net-direct's `Eligible` now mirrors the ext's
+`NdTypeOk` exactly: the reserved melee opcodes (`0x6C`, `0x97..0x9A`, `0x9C`, plus PSYNC `0x4B`
+and MV3 `0x9E` minus their PING / PONG) take the direct path too, so a ported client and an ext
+client stay interoperable. This is a transport decision, independent of the (dormant) melee
+bridge gate. Requeue's kick signal is now native (see below).
+
+**Native kick timestamp / g_kickMs (ported).** `net/match/kick-state.*` owns the ext's
+`g_kickMs`, `MsgIsKick` and `MsgIsMove`: the English / Polish kick prefixes and the team-move
+prefix, and the tick stamp. The ext stamps it in `MsgHook` on the daemon's op 0x11 note; the
+mod has no winmm message hook, so `notice::Apply` stamps it from the same kick text on the
+kind-'p' notice line (daemon `kick_token` sends both). The stamp feeds the 120 s duplicate
+check in `notice.c` (via `notice::Hooks::kickShownAt`, installed next to the friends13 hooks)
+and `requeue::KickedSinceArm()` (the ext's `g_kickMs > g_rq.armed`). A removed AFK player needs
+no separate path: `net/match/afk.*` already reports idle on the 0xE3 report and the daemon
+returns the removal as this same kick text. Honest gates: the ext's winmm op 0x11 producer, the
+kicknote MP-menu box (`KnSet`), and the team-move rejoin (`g_moveMs` / `move_rejoin_tick`) stay
+in the ext; without the winmm hook the notice line is the only producer the mod can see. No
+dedicated sidecar (the ext has none) -- the consumers keep `t2r-no-notice.txt` /
+`t2r-no-requeue.txt`.
 
 **Shared match-end latch (ported).** `net/match/match-liveness.*` is the native home of the
 ext's `g_wasLive`: one once-per-frame read of the mod's match phase (in match / expired /
@@ -389,6 +410,99 @@ ext's `bp_pick` trampoline can be dropped.
 
 ---
 
+## 10. Melee reliability / state-machine cores (ported, gated)
+
+Beyond the enabling mechanisms above, this batch ports the **logic cores** of the melee
+reliability / state-machine features. Each is a pure module behind a `Sink` / callback bridge, so
+it is inert until a caller supplies the engine / transport producers. That is deliberate: the ext
+stays the bridge and no cutover toggle is flipped. The exact ext wire IDs are reserved in
+`net-protocol.hpp` so a ported client can coexist on the wire (`NEVT_HIT_REL 0x6C`,
+`NEVT_DODGE_* 0x97..0x99`, `NEVT_HITREACT2 0x9A`, `NEVT_MEX 0x9C`, `NEVT_MV3 0x9E`,
+`NEVT_PSYNC 0x4B`, `NEVT_ARMOR_HIT 0x4A`).
+
+- **Reliable one-shot hits** — `net/match/hit-rel.*` (ext `t2r-ext.c` hitrel section). Per-destination
+  sequence, capability latch, `{0,60,150,300,450,600}` ms retransmits, ACKs, a 64-entry aged dedupe
+  ring, slot cleanup and stats. Wire `[u8 op][u16 seq][u8 victim][payload]`, ops 0 hello / 1 hit /
+  2 armour / 3 molotov / 4 ACK. Gate: transport send/recv and the type-3 / armour-hit producers stay
+  in the ext until the relay bridge is ported.
+- **Melee dodge** — `gameplay/melee-dodge.*`. Streak windows `480/260/180/130` ms, `380` ms reaction,
+  `1000` ms hard cap, `260` ms i-frames, two charges with `2500/1500` ms cooldowns, swing tracking
+  and press / dodged verdicts. Gate: pad injection is available (`engine/pad.*`) but the swing /
+  contact / animation / prompt producers and the relay wire are not wired to it yet.
+- **Hit reactions** — `gameplay/melee-hit-react.*`. `MHR_CUT_MS {360,440,520}` strength rule, the
+  `MSG_HITREACT2` decode / flags / validation `[150,600]`, victim graze / replace / cut, attacker
+  lock cap `480` ms + `900` ms confirm, and the 50 ms predicted puppet reaction. Gate: the SP clip
+  table (`melee_hitreact_rm.h`, private), body pin / animation, pain VO, punch / blade FX and the
+  busy / duel / downed gates stay behind `HitReactSink.PickClip` / effects.
+- **Melee exchange** — `gameplay/melee-exchange.*`. Tune `{440,520,60}`, Lat / Vis / Tc math,
+  `MSG_MEX` START / ACK / RES / END decode + build, role / beat state machine, shared-clock windows,
+  verdicts, contact hold, combo / cooldown bookkeeping. Gate: press injection, the engine swing,
+  contact replay, dcounter, seq / qte and the camera stay behind `MexSink`.
+- **Melee v3** — `gameplay/mv3/`. The shared contract (`types.hpp`), the generated move table +
+  deterministic integer sim (`sim.cpp`), and the engine-free bubble / rollback / wire core
+  (`net-core.hpp`, header-only via `Mv3nIo`). Ported verbatim with the ext's pinned names because
+  they are the shared spec / generated-data contract; only the namespace changed. Gate: pads,
+  animation / root motion, FX, camera and the engine `Mv3nIo` bridge are not supplied, so the sim
+  and netcore compile but never run in the mod yet. Asset / move-table parity cannot be verified
+  without the game binary.
+
+**Integration seams (landed, dormant).** `net/match/melee-bridge.*` is the single place that
+installs one *inert* sink per core and fans out the frame tick (`boot::FrameTick`), the reserved
+`NEVT_*` receive cases (`net-replication::HandleNetEvent`) and the session reset
+(`net-replication::ResetRuntime`). The sinks supply the real clock / local slot / match-liveness
+so the cores' bookkeeping stays consistent, but every engine / transport effect is a no-op and the
+clip-table / RTT / peer-state gates return conservative defaults. The master gate
+`melee_bridge::kEnabled` is **false**, so all four bridge functions no-op in a shipping build and
+the ext remains the behaviour owner — no ext cutover, no `t2r-*.txt` toggle flipped. Send-side
+interception (`HrSendHit` / `SendArmor` / `NoteOriginal`) and the MV3 `Mv3nIo` / PSYNC placement
+bridges are separate gates not installed here. The remaining path to cutover is: port each real
+producer, enable that feature in the bridge, then disable the matching ext module via its toggle.
+
+---
+
+## 11. Downed state core (ported, gated)
+
+`net/match/downed-state.{hpp,cpp}` ports the core 2013 downed behaviour from `t2r-ext.c`
+(`feature_downed`, the `DownedSet` / `RevivedRecv` / `RvSet` / `RvProg` helpers and the
+`MSG_DOWNED` / `MSG_REVIVE` peer handlers). It owns only what can be reasoned about without
+the engine:
+
+- **State and wire** — down / dying / up, the send epoch (`++` on every transition), the downer
+  slot (0xFE = revived, not a death), and the exact ext wire layouts: `MSG_DOWNED` 6 bytes
+  `[state][downer][knockDir+1][supine/dieDir+1][bleed+0.5][epoch]` and `MSG_REVIVE` 1 byte
+  `[who]`, reserved as `NEVT_DOWNED 0x43` / `NEVT_REVIVE 0x44`.
+- **Pool and hit rules** — 50 hp downed pool (Fortitude II bonus via `DownHpMul`), 1 s down
+  protection that ignores ordinary damage but never the 1e6 execution marker, and hits while
+  downed shortening the remaining bleed-out by `damage / pool x base seconds` (floored at
+  0.1 s and never landing sooner than 1 s after the hit).
+- **Bleed-out clock** — real milliseconds (not frames), mode base 15 s / 7 s, the 2013
+  per-revive cut (`1 - min(revives x .25, .5)`) or the legacy per-down table, multiplier from
+  Fortitude / Heavy Hands, pause accumulation while a teammate revives, 1 s resends, and the
+  3 x 300 ms repeats of the single-shot "up" message. `BleedFraction()` is the same clock the
+  ext's HUD bar and downed music read.
+- **Revive aggregation** — every attached `[target][reviver]` hold contributes
+  `elapsed x rate / time`; rates 1 / 0.6 / 0.4 (configurable for `t2r-revive-corate.txt`),
+  0.4 for the fourth and later, first-attached rank books the completion, lost "stop" expires
+  after `2 x (secs + 4) s`, and a local reviver times out at `secs + 3 s`.
+- **Peer tracking** — epoch-based reorder guard (10 s window), resend suppression, stale
+  "downed" after our own `MSG_REVIVE`, and per-slot bleed / fall direction / supine / death
+  direction for the (gated) visual consumers.
+
+**Integration seam (landed, dormant).** `net/match/downed-bridge.*` installs one inert sink and
+fans out the frame tick (`boot::FrameTick`), the two reserved `NEVT_*` receive cases
+(`net-replication::HandleNetEvent`) and the session reset (`net-replication::ResetRuntime`). Its
+clock / frame counter / local slot / match liveness are real; wire send, health read, skill
+multipliers and every engine / award / camera / animation effect are no-ops or conservative
+defaults. The master gate `downed_bridge::kEnabled` is **false**, so the ext remains the
+behaviour owner and no ext cutover is flipped. The remaining path to cutover: port the hit
+reception / UC4 reach producers, puppet handling, HUD bar and the send trampoline, enable the
+bridge per producer, then disable the matching ext path via its toggle. The PCM audio modules
+`downed_music.c` / `downed_vox.c` are separate inventory rows and stay unported.
+`player_status::LocalDowned` / `PuppetDowned` now read this core instead of hard-false stubs,
+so every existing consumer inherits a correct gate as soon as the bridge is enabled.
+
+---
+
 ## Sequencing
 
 Ordered by dependency, cheapest-unblock-first:
@@ -440,8 +554,17 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset) |
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
-| `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
+| `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
 | `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`), consumed by requeue + friends13 |
+| `mod/src/net/match/kick-state.hpp` + `.cpp` | **new** — shared kick timestamp / text tests (ext `g_kickMs` / `MsgIsKick` / `MsgIsMove`), fed by the notice kind-'p' line, consumed by requeue + notice |
+| `mod/src/net/match/melee-bridge.hpp` + `.cpp` | **new** — gated integration seams: inert sinks + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
+| `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
+| `mod/src/net/match/downed-bridge.hpp` + `.cpp` | **new** — gated integration seam for the downed core: inert sink + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
+| `mod/src/net/match/hit-rel.hpp` + `.cpp` | **new** — reliable one-shot hit core (ext hitrel section): seq / retransmits / ACK / dedupe ring, behind `HitRelSink` |
+| `mod/src/gameplay/melee-dodge.hpp` + `.cpp` | **new** — pure dodge timing / state core (ext `melee_dodge.c`), behind `DodgeSink` |
+| `mod/src/gameplay/melee-hit-react.hpp` + `.cpp` | **new** — pure hit-reaction / attacker-lock / prediction core (ext `melee_hitreact.c`), behind `HitReactSink`; clip table gated |
+| `mod/src/gameplay/melee-exchange.hpp` + `.cpp` | **new** — pure exchange state machine / wire core (ext `melee_exchange.c`), behind `MexSink` |
+| `mod/src/gameplay/mv3/{types.hpp,sim.cpp,net-core.hpp,net-core.cpp}` | **new** — melee-v3 contract + generated table + deterministic sim + engine-free rollback / wire core (ext `mv3.h` / `mv3_moves.h` / `mv3_sim.c` / `mv3_net_core.h`); names pinned to the shared contract |
 | `mod/src/net/social/friends-state.hpp` + `.cpp` | **new** — pure 0xD9 JSON state / rows / actions core (ext `friends13.h`) |
 | `mod/src/net/social/friends13.hpp` + `.cpp` | **new** — in-game FRIENDS / PARTY panel, toasts, buttons, party gate + search gate (ext `friends13.c`) |
 | `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |

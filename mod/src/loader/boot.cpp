@@ -26,6 +26,9 @@
 #include "net/audio/music-tier.hpp"
 #include "net/audio/bladesfx.hpp"
 #include "net/match/afk.hpp"
+#include "net/match/kick-state.hpp"
+#include "net/match/melee-bridge.hpp"
+#include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "net/game/net-direct.hpp"
@@ -158,11 +161,16 @@ namespace boot {
 
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
+		net::match::melee_bridge::Install();  // gated inert sinks for the melee cores; no-op while kEnabled == false
+		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores (dormant until enabled)
+		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
+		net::match::downed_bridge::Tick();    // bleed-out / revive / peer state (dormant until enabled)
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
 		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
 		{
 			static bool hooksInstalled = false;
 			if (!hooksInstalled) {
+				net::match::kick::InstallNoticeHooks();  // native g_kickMs: notice kick dedupe
 				net::friends13::InstallNoticeHooks();  // route kind 'p' notice lines to friends13
 				hooksInstalled = true;
 			}
