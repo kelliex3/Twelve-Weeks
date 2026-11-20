@@ -23,6 +23,7 @@
 #include "gameplay/loadout/weapons.hpp"
 #include "gameplay/loadout/loadout.hpp"
 #include "gameplay/loadout/purchase.hpp"
+#include "net/social/friends13.hpp"
 
 #define TO1_HUD(name) SID("canvas.hudRoot.hudMenuStack.to1/" name)
 
@@ -1678,10 +1679,21 @@ namespace net::gui2 {
         {
             if (!g_searching)
             {
-                net::session::SetLocalName(Username());
-                net::matchmaking::FindMatch(Username(), 0, 0,
-                    PrimaryWeaponSid(), SecondaryWeaponSid());
-                g_searching = true;
+                if (net::friends13::SearchGate())
+                {
+                    // A party member's FIND MATCH is a ready toggle, not a search (the
+                    // ext's fr_search_gate + modepick -> fr_member_ready_press): toggle
+                    // ready, pop the page and never send the search request.
+                    net::friends13::MemberReadyPress();
+                    DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, SID("to1/find-match-menu"));
+                }
+                else
+                {
+                    net::session::SetLocalName(Username());
+                    net::matchmaking::FindMatch(Username(), 0, 0,
+                        PrimaryWeaponSid(), SecondaryWeaponSid());
+                    g_searching = true;
+                }
             }
 
             const bool visible = (top == TO1_HUD("find-match-menu"));

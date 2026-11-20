@@ -89,7 +89,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `explosives2013.c` | 2013 molotov + nail bomb model (ex13_*), the old burn below stays reachable through t2r-old-molotov.txt | 2013 gameplay modes | P3 | net, hook | 4 e.g. `t2r-blasttest.txt` | — | not started |
 | `flame2013.c` | 2013 Flamethrower (TLOU2's own, purchasable row 10): damage ticks, MSG_FLAME 0x90, puppet fx fallback | 2013 gameplay modes | P3 | net, camera, hook | 4 e.g. `t2r-flame.txt` | — | not started |
 | `flashlight.c` | own flashlight (L / hold the mark button), light sync MSG_FLASH 0xAB, puppet lights (t2r-no-flashlight.txt) | 2013 gameplay modes | P3 | net, camera, pad, hook | 12 e.g. `t2r-flashlight-key-t.txt` | — | not started |
-| `friends13.c` | the in-game FRIENDS / PARTY panel + the P button under the lobby box (daemon op 0xD8, to1/friends13, tools/features/friends13_widgets.py) | 2013 gameplay modes | P3 | widget, pad, hook | 2 e.g. `t2r-no-friend-toast.txt` | net/ui/* | not started |
+| `friends13.c` | the in-game FRIENDS / PARTY panel + the P button under the lobby box (daemon op 0xD8, to1/friends13, tools/features/friends13_widgets.py) | 2013 gameplay modes | P3 | widget, pad, hook | 2 e.g. `t2r-no-friend-toast.txt` | net/social/friends13.cpp, net/social/friends-state.cpp, net/match/match-liveness.cpp, net/ui/notice.cpp, net/ui/net-gui2.cpp | ported (gated) |
 | `gearup13.c` | the 2013 GEAR UP page: list + edit views on the real loadout data (to1/gearup13, tools/features/gearup13_widgets.py) | 2013 gameplay modes | P3 | widget, pad, hook | 5 e.g. `t2r-gu-noanim.txt` | gameplay/loadout/* | not started |
 | `gift.c` | Crafter II / III gifts: HUD slot, held box, E to give a teammate (MSG_SK_GIFT 0x53 / GIFTSTOCK 0x56 / GIFTACK 0x57; t2r-no-crafter-gift.txt) | 2013 gameplay modes | P3 | net, pad, hook | 2 e.g. `t2r-no-crafter-gift.txt` | — | not started |
 | `gunlimit.c` | per-team gun limits (1 Tactical Shotgun per team), arbitrated by the daemon (tools/gunlimit.py) | 2013 gameplay modes | P3 | hook | 1 e.g. `t2r-no-gunlimit.txt` | — | not started |
@@ -181,11 +181,29 @@ that module. The requeue flag (0x20) is now sent while `t2r-no-requeue.txt` is a
 ticket check / auto-search / WAITING FOR PLAYERS... label live in `net/online/requeue.*`.
 
 `net/online/requeue.*` ports the daemon 0xBC ticket poll (bounded worker through
-`net::daemon::Rpc`), the match-end arm, the MP-menu settle + page push and the status-label
-swap. Honest gates: the exact end byte / MatchSubstate, `g_kickMs`, party leadership
-(`friends13.c`), the post-match screen latches (`clan13x` / `clan-postmatch` / clan event /
-GEAR UP nav) and `g_pqAuto` are unported; a stable top page over the settle window stands in
-for the screens and the ext still owns the latches while it is the bridge.
+`net::daemon::Rpc`), the match-end arm (now via the shared `net::match::liveness` latch), the
+MP-menu settle + page push and the status-label swap. Party leadership / follow (`FrInParty` /
+`me_leader`) and the party-follow search gate (`g_pqAuto`) are now native via `net::friends13`
+(`IsMember()` / `NoteAutoPush()`). Honest gates: the exact end byte / MatchSubstate, `g_kickMs`
+and the post-match screen latches (`clan13x` / `clan-postmatch` / clan event / GEAR UP nav) are
+unported; a stable top page over the settle window stands in for the screens and the ext still
+owns the latches while it is the bridge.
+
+`net/social/friends13.*` + `net/social/friends-state.*` port the whole in-game FRIENDS / PARTY
+feature: the async daemon 0xD8/0xD9 state+action RPC (bounded worker, poll cadence 3 s panel /
+2.5 s party / 15 s menu, an action first and its reply becoming fresh state), the panel page with
+its rows / typing / badge / leader+ready party list, the friend-request + party-invite cards (plain
+toasts when `t2r-no-friend-toast.txt` or the widgets are absent), the P / pad button and lobby
+decorations, the notice-c cross-feature toasts and dedupe, and the party ready / follow-the-leader
++ search gate (`InParty` / `IsMember` / `SearchGate` / `NoteAutoPush`) now used by requeue and
+`net-gui2.cpp`. The pure JSON/state core is a standalone module, so it can be tested without a game.
+`net/match/match-liveness.*` is the shared once-per-frame match-end latch (ext `g_wasLive`): it
+supplies `MatchEndHold()` to requeue and `Live()` / `MatchEndHold()` to friends13, so all consumers
+see one read of the mod's match phase. Honest gates: the rank table (0xBF / `rankbadge.c`), the raw
+lobby object / `kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings,
+mouse-over click nav and the card's per-widget keyframes are not ported; widget writes are inert
+when the defs are absent and the ext still owns those producers while it is the bridge. The two
+opt-outs are `t2r-no-ingame-friends.txt` and `t2r-no-friend-toast.txt`.
 
 `net/game/net-direct.*` ports the Steam-helper loopback socket, [06]/[07] hello/ack, the
 [05] ping/pong/message wire, the 800 ms cross-path dedupe ring, direct RTT EWMA gating and

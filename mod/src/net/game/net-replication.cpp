@@ -14,6 +14,8 @@
 #include "net-direct.hpp"
 #include "jip-report.hpp"
 #include "requeue.hpp"
+#include "net/match/match-liveness.hpp"
+#include "net/social/friends13.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -1913,6 +1915,8 @@ namespace net::replication {
         net::vox::Reset();
         net::afk::Reset();
         net::jip::Reset();
+        net::friends13::Reset();
+        net::match::liveness::Reset();
         net::requeue::Reset();
         net::direct::Reset();
         net::audio::music_tier::Reset();

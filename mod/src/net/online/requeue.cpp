@@ -13,6 +13,8 @@
 #include "net-account.hpp"
 #include "net-gui2.hpp"
 #include "net-matchmaking.hpp"
+#include "net/match/match-liveness.hpp"
+#include "net/social/friends13.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -184,22 +186,6 @@ namespace net::requeue {
         }
 
         // ---- honest gates for producers still owned by the ext ---------------------
-        bool g_wasLive = false;
-
-        // ext: `sub == 6` (MatchSubstate() == 6 && LobbyObj()[0x2ca4], the end banner /
-        // scoreboard hold) is one state read per tick, used by both the arm and the settle
-        // guard. The mod exposes only its own match phase and end sequence; neither the raw
-        // substate nor the lobby byte is ported. Latch "was live" so the hold also covers the
-        // first frame the relay session has already been torn down. Call ONCE per tick.
-        bool MatchEndHold()
-        {
-            const bool live = net::gui2::InMatch();
-            const bool over = net::gui2::MatchExpired() || net::gui2::ScoreboardShowing();
-            const bool hold = (live || g_wasLive) && over;
-            g_wasLive = live;
-            return hold;
-        }
-
         bool KickedSinceArm()
         {
             // TODO(requeue): ext g_kickMs (admin / AFK kick) is not ported. The mod tears down
@@ -218,13 +204,6 @@ namespace net::requeue {
             return true;
         }
 
-        bool PartyMember()
-        {
-            // TODO(requeue): FrInParty() / g_f13.me_leader (friends13.c) are not ported. Until
-            // they are, the mod behaves as the leader; the ext still owns party follow.
-            return false;
-        }
-
     }
 
     void Tick()
@@ -237,7 +216,7 @@ namespace net::requeue {
 
         const uint64_t now = GetTickCount64();
         const bool off = Off();
-        const bool matchEndHold = MatchEndHold();   // ext reads `sub == 6` once per tick
+        const bool matchEndHold = net::match::liveness::MatchEndHold();  // shared ext `sub == 6` read
 
         // 1. arm when the match ended while we were in it
         if (!off && matchEndHold) {
@@ -313,7 +292,7 @@ namespace net::requeue {
             g_rq.asked = 0;
             return;
         }
-        if (PartyMember()) {
+        if (net::friends13::IsMember()) {
             Disarm("party member - the leader's search takes us along (ready state kept)");
             return;
         }
@@ -347,9 +326,10 @@ namespace net::requeue {
         g_rq.armed = 0;
         g_rq.pushed = now;
         g_rq.pollAt = now + 500;
-        // TODO(requeue): g_pqAuto (the party-follow search gate in friends13.c) is unported.
-        // The on-stack check also keeps the ext's own push during the bridge from stacking a
-        // second copy of the page.
+        // This is our own search push: let the friends13 search gate know so a party
+        // member's follow-the-leader request is not blocked. The on-stack check also
+        // keeps the ext's own push during the bridge from stacking a second page.
+        net::friends13::NoteAutoPush();
         if (!MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, pFm))
             MENU2::PUSH_PAGE(MenuStack::hudMenuStack, "to1/find-match-menu");
         TO1_LOG("requeue: post-match screens done, %.1f s after the match end - search page pushed (same mode; the lobby waits for the others of the last match)\n",
@@ -369,7 +349,6 @@ namespace net::requeue {
         g_rq.ansRq = -1;
         g_rq.ansW = 0;
         g_rq.waiting = 0;
-        g_wasLive = false;
         g_have.store(0);
         // g_busy is owned by the worker; it clears itself when the request finishes.
     }

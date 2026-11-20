@@ -253,9 +253,27 @@ the 0xBC / 0xBD ticket poll, the post-match arm and settle, the `to1/find-match-
 the WAITING FOR PLAYERS... label. `net/game/net-direct.*` owns the helper loopback socket and
 the direct message / ping / pong wire, with the 800 ms dedupe ring hooked into the existing
 event channel at `SendEventRaw` and `HandleState`. Both use the same `t2r-*.txt` sidecars as
-the ext. The unported producers are called out in each header: requeue's kick / party /
-post-match latches and netdirect's ext melee opcodes / shared relay RTT baseline stay in the
-ext while it is the bridge.
+the ext. The unported producers are called out in each header: requeue's kick / post-match
+latches and netdirect's ext melee opcodes / shared relay RTT baseline stay in the ext while it
+is the bridge.
+
+**Shared match-end latch (ported).** `net/match/match-liveness.*` is the native home of the
+ext's `g_wasLive`: one once-per-frame read of the mod's match phase (in match / expired /
+scoreboard) latched as `Live()` / `WasLive()` / `MatchEndHold()`. It runs first in
+`boot::FrameTick`, before requeue (which arms on `MatchEndHold()`) and friends13 (which hides
+its panel / toasts during the end sequence), so a single value is shared by all consumers.
+
+**In-game FRIENDS / PARTY panel (ported with honest gates).** `net/social/friends-state.*` is the
+pure JSON/state core (ext `friends13.h`): bounded 0xD9 reply parser, rows, badge, presence and
+actions. `net/social/friends13.*` is the feature: 0xD8/0xD9 async RPC + poll/action state machine,
+panel page / rows / text entry, friend-request + party-invite cards (plain toasts when the widget
+defs or `t2r-no-friend-toast.txt` opt out), P / pad button, lobby decorations, notice-c toast
+hooks, and the party ready / follow rule + search gate. The gate is wired into `net-gui2.cpp`
+just before `FindMatch` (a member's press toggles ready instead of searching) and into requeue
+(`IsMember()` / `NoteAutoPush()`). Honest gates: rank badges (0xBF), the raw lobby object /
+`kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings, mouse-over
+click nav and the card's per-widget keyframes stay in the ext; widget writes are inert when the
+defs are absent.
 
 **Gap.** No binary / RE notes are available locally to verify the call-site scan or the pinned
 RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confirm. The dev-bot
@@ -423,6 +441,10 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
 | `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
+| `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`), consumed by requeue + friends13 |
+| `mod/src/net/social/friends-state.hpp` + `.cpp` | **new** — pure 0xD9 JSON state / rows / actions core (ext `friends13.h`) |
+| `mod/src/net/social/friends13.hpp` + `.cpp` | **new** — in-game FRIENDS / PARTY panel, toasts, buttons, party gate + search gate (ext `friends13.c`) |
+| `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
 | `mod/FEATURES.md` | data-table column: generator availability |

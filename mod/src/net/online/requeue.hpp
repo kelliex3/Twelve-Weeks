@@ -17,12 +17,13 @@
 // server-side ticket is issued when the 0xE3 JIP clock report carries flag 0x20; net::jip
 // now sends that flag while this module is enabled.
 //
-// Honest gates (TODO): the ext's exact match-end byte (LobbyObj+0x2ca4 / MatchSubstate()==6),
-// kick detection (g_kickMs), party leader (FrInParty / g_f13.me_leader), the post-match screen
-// latches (clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack) and the party-follow
-// search gate (g_pqAuto) are not ported. The mod uses its own match / menu / matchmaking state
-// for the first two families and relies on the top page being stable for the settle window;
-// the remaining producers stay in the ext while it is the bridge. See the .cpp.
+// Honest gates (TODO): the ext's exact match-end byte (LobbyObj+0x2ca4 / MatchSubstate()==6)
+// is approximated by the shared net::match::liveness latch (mod match / menu state), and kick
+// detection (g_kickMs) is still not ported. Party leadership / follow (FrInParty, me_leader)
+// and the party-follow search gate (g_pqAuto) are now native via net::friends13. The exact
+// post-match screen latches (clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
+// remain in the ext while it is the bridge; the top page being stable stands in for them.
+// See the .cpp.
 
 namespace net::requeue {
 

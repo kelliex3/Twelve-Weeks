@@ -22,4 +22,13 @@ namespace engine::window {
     // stored tick alone). The value is ms since boot, so 0 is only meaningful at boot.
     bool LastInputTick(uint32_t* out);
 
+    // Raw key / mouse state for menu features that need keys the joypad command layer
+    // does not expose (the ext's GetAsyncKeyState use in modepick / gearup / friends13).
+    // The caller derives an edge from Down() with its own held bit.
+    bool KeyDown(int virtualKey);   // high bit of GetAsyncKeyState, false when unfocused
+
+    // The cursor in 3840x2160 canvas units (the centred 16:9 box of the client area),
+    // only while our window is focused. Port of the ext's UiCursorCanvas.
+    bool CursorCanvas(float* x, float* y);
+
 }

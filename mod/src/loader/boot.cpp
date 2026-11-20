@@ -26,6 +26,8 @@
 #include "net/audio/music-tier.hpp"
 #include "net/audio/bladesfx.hpp"
 #include "net/match/afk.hpp"
+#include "net/match/match-liveness.hpp"
+#include "net/social/friends13.hpp"
 #include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
 #include "net/online/requeue.hpp"
@@ -157,6 +159,14 @@ namespace boot {
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
+		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
+		{
+			static bool hooksInstalled = false;
+			if (!hooksInstalled) {
+				net::friends13::InstallNoticeHooks();  // route kind 'p' notice lines to friends13
+				hooksInstalled = true;
+			}
+		}
 #ifdef TO1_DEBUG
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
@@ -173,6 +183,7 @@ namespace boot {
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
+		net::friends13::Tick();   // in-game FRIENDS / PARTY panel + party gate (after liveness, before requeue)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
