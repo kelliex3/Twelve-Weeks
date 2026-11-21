@@ -1,9 +1,10 @@
 # Phase 1 — Enabling infrastructure
 
-Phase 0 ([FEATURES.md](FEATURES.md)) listed the 135 feature modules and tagged each with the
-mechanisms it sits on. Phase 1 ports those **mechanisms** — once each, in `mod/` idiom — before any
-feature is ported. A feature port is then "use an existing mechanism + write the behaviour", not
-"re-invent native invocation / widget spawn / PCM playback every time".
+Phase 0 ([FEATURES.md](FEATURES.md)) listed the feature modules and tagged each with the
+mechanisms it sits on: 135 at this branch point, **154 after build 191** on `main` (19 new direct
+modules plus 3 nested `customize_*.c`). Phase 1 ports those **mechanisms** — once each, in `mod/`
+idiom — before any feature is ported. A feature port is then "use an existing mechanism + write
+the behaviour", not "re-invent native invocation / widget spawn / PCM playback every time".
 
 Rule of this phase (from the Great Merge reframe): the ext module is the **behavioural reference**,
 never code to move. We reimplement the mechanism natively; where a mechanism already exists in the
@@ -12,8 +13,9 @@ mod, the deliverable is *verification + extension*, not a rewrite.
 **Branch state (2026-11-21).** These notes describe the port committed on `desloppify/code-health`
 (`5c47def` adds the table-driven localisation support; the earlier `UNTESTED:` commits port the rest).
 The branch is deliberately **not merged** into `main`: `main` has advanced with the `Port build 191: …`
-commits, which add new ext modules (achievements, CUSTOMIZE, CHOOSE YOUR SIDE, bodyshield, private
-lobby, send-off, …), six private generated headers and expanded Polish tables. The ext and mod
+commits. Both docs now **inventory** that build-191 ext work (19 new direct modules, 3 nested
+`customize_*.c`, 12 new headers, six new private generated headers, 186 new `t2r-*.txt` strings,
+regenerated Polish tables; see §12 and FEATURES.md), but none of it is ported here. The ext and mod
 codebases differ massively in casing (`snake_case` vs `PascalCase` / `g_camelCase`), so a text merge
 is not tractable — build 191 stays a separate behavioural reference and its behaviours are ported
 one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the work on this branch.
@@ -24,14 +26,16 @@ one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the 
 |---|---|---|---|---|
 | 1 | Native invocation (DC lookup → call) | `DcCall` / `*(rec+0x10)` | **exists** — `DC::Call`, `DC::Call_V2` | cached-native helper; convention doc |
 | 2 | Net event channel | `SendEvent` (winmm `0x18005DC60`, opcodes `0x41..0xAF`) | **exists** — `NetEventType` + `net::session::SendEvent` | slot reservation + exact-byte compatibility |
-| 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*` | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source |
-| 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c` | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring |
+| 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*`; build 191 adds the `nrui.c` tab frame + `customize` / `achieve_ui` / `mfnr` / `lbnr` / `pmunlock` / `namerim` / `fac13ui` pages | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source; every build-191 page unported |
+| 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c`; build 191 adds `vintage` / `voxchar` / `sendoff` and the `ach_chime` / `choose_vox` / `choose_music` / `revive_nr` cues | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring; the new build-191 cues are unported |
 | 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV` | render-camera path + track evaluator |
 | 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **ported** — `engine/pad.*` (virtual presses / sticks via mid-hooks at rel32-scanned call sites; command-bit learning; activity stamp; dev-bot consumers still unported) | call-site scan needs live-exe verification |
-| 7 | Generated data pipeline | 78 headers (`tools/ext/GENERATED.md`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy |
-| 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config |
+| 7 | Generated data pipeline | 84 headers (`tools/ext/GENERATED.md`; +6 private in build 191, + `vintage_bolt_built.h` via `__has_include`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy / build-time header guard |
+| 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` in this branch's ext; build-191 adds 186 new strings | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config, then reclassify the new build-191 toggles |
 | 9 | Engine RVA call / hook | `*(exe + rva)(…)` + hand-built RWX trampolines (`bp_pick`, `padinject.c`) | **partial** — `engine/transform.*`, `engine/pcm.*`, `engine/backpack-prop.*` call pinned RVAs; `net-patches.cpp` / `loader/boot.cpp` / `engine/pad.cpp` hook via safetyhook | pattern resolution + a shared exe-call helper + version guard |
 | 10 | Localisation | `loc.c` / `loc_pl.h` (lookup + language detection every 2 s) | **ported** — `engine/locale.*` (language registry + table-driven lookup, exact / `%d`-`%s` templates / `{1}` captures / `{N|…}` plurals / rich-text split / diacritic fold), `engine/loc_table_pl.hpp` (ported Polish table), `net/social/friends-state.*` (`Tr` uses the active table) | engine text-lookup probe for `auto` detection is not wired in mod/ yet (auto resolves to English); only the Polish table ships, other languages resolve to English until their generated table is added |
+| 11 | Tabbed page frame / composed outfits (build 191) | `nrui.c` (`nr_style.py`), `customize_compose.c` (`MSG_CUSTOM_LOOK`, `cz_body_*`) | **not started** — no frame API, no look-wire slot, no composed `look2` consumer | needs §3 widgets, a reserved net slot and `mod/widgets/`; no cutover |
+| 12 | Built-header guard (build 191) | `build_ext.py check_built_headers()`, `__has_include("vintage_bolt_built.h")`, `T2R_EXT_NO_BUILT_H=1` | **partial** — `T2R_DATA_*` compile gates and stub strategy exist | wire a mod build-time presence check for generated headers |
 
 ---
 
@@ -109,6 +113,17 @@ from `tools/features/*_widgets.py` (denynote, killfeed, clan13, gearup13, …).
 `GET_PATH`, `GET_TOP_PAGE_IN_STACK`, `GET_PATH_IN_CURRENT_PAGE`, `IS_PAGE_ON_STACK`. The pak is built
 by the gui2 CLI from `widgets/*.widget.json` (`CMakeLists.txt:157-171`).
 
+**Build 191 adds (unported).** `nrui.c` is a shared No Return page frame (breadcrumb, Q/E tab strip
++ extension tabs, week block, boxed prompts, `nr_style.py`) that hosts the redesigned `mfnr.c`
+(map vote), `lbnr.c` (leaderboard), `clan13.c` (No Return frame), `customize.c` +
+`customize_challenges.c`, `achieve_ui.c` (6th CLAN tab from `achieve_widgets.py`), `pmunlock.c`
+(post-match unlocks) and `fac13ui.c` (2013 Factions header). `choose.c` is the redesigned CHOOSE
+YOUR SIDE (key art + truck camera, back fix), `sendoff.c` the menu send-off, `namerim.c` the name
+outline over the rank-badge rows, and `privlobby.c` the private-match lobby + settings. All need the
+tree/transform layer above plus widget defs translated from `nr_style.py` / `*_widgets.py`; none is
+ported and no ext page is cut over. The `rankbadge.c` role field and `nrim_tick` rename are new work
+on top of the existing `rank-badge.*` port.
+
 **Gap.**
 - No widget-tree navigation (`FIND`/`CHILD`/sibling) and no transform setters (pivot/scale/position)
   — needed by every "put this element at that anchor" HUD feature (`radar_box`, `killfeed`,
@@ -178,6 +193,14 @@ loops, beds, themes / sets / v5 rotation, grid-quantised cut timing, stinger lay
 not ported: it needs the private PCM blobs and the generated `music_families.h` / `music_pools.h`
 tables. Honest gates: the camera-frustum / LOS test and the 5–8 m forward-cone sight check stay
 gated (no render-camera path), so those two floor inputs are conservative until that mechanism lands.
+
+**Build 191 adds (unported).** `vintage.c` (Part I Vintage Rifle gunshot from `p1-vintage.pcm`,
+falling back to the hunting rifle event; re-timed bolt copies from `vintage_bolt_built.h`),
+`voxchar.c` (headless / KELLIE bodies borrow their faction's voice group), `sendoff.c` (birds /
+crows after the war horn), plus the new private `ach_chime.h`, `choose_vox.h`, `choose_music.h`,
+`revive_nr.h` and `sendoff_pcm.h` cue tables. They sit on the same `engine::pcm` mixer; none of the
+triggers or blobs is wired in the mod, and `loc.c` / `padinject.c` / `glass.c` / `afk.c` /
+`requeue.c` had no build-191 behaviour change.
 
 **Gap.** Loop points and the crossfade used by `downed_music`, and the data wiring (item 7): the PCM
 blobs are private generators, so `net/audio/*` compiles with the `T2R_DATA_*` gates off and
@@ -377,9 +400,15 @@ resolved by rel32 scan and hooked with safetyhook mid-hooks, not the ext's hardc
 
 ## 7. Generated-data pipeline — partial
 
-**Ext mechanism.** `tools/ext/GENERATED.md`: 78 game-derived headers (audio PCM, animation carriers,
-camera tracks, move tables, voice ids). Most generators are **private**; a handful are public
-(`vox_lines.py`, `gen_vox_words.py`, `scar_draw_gen.py`). The ext cannot build without them.
+**Ext mechanism.** `tools/ext/GENERATED.md`: 84 game-derived headers after build 191 (was 78;
+81 are referenced anywhere in the ext, 78 at this branch point) — audio PCM, animation carriers,
+camera tracks, move tables, voice ids. Most generators are **private**; a handful are public
+(`vox_lines.py`, `gen_vox_words.py`, `scar_draw_gen.py`, `achievements.py --ext-header`).
+Build 191 adds six private rows (`ach_chime.h`, `choose_intro.h`, `choose_music.h`, `choose_vox.h`,
+`revive_nr.h`, `sendoff_pcm.h`) plus `vintage_bolt_built.h` behind `__has_include`, and
+`build_ext.py` now validates built headers with `check_built_headers()` (escape
+`T2R_EXT_NO_BUILT_H=1`) and passes `T2R_SLOTS` as `-DT2R_MAX_PEERS`. The ext cannot build without
+its generated headers; the mod must not gain that hard dependency.
 
 **Mod today.** A working codegen convention already exists: `mod/cmake/gen-psarc-manifest.py`,
 `gen-winmm-forwarders.py` wired via `add_custom_command` (`CMakeLists.txt:148-194`), plus
@@ -403,11 +432,17 @@ consumed by the Phase-1 PCM port.
 
 ## 8. Config, toggles, logging — cross-cutting
 
-- **Toggles.** 1,636 distinct `t2r-*.txt` strings across 124 modules. Policy for Phase 1: classify
-  each as (a) *release behaviour* → reproduced unconditionally, (b) *dev/debug* → dropped, (c)
-  *tuning* → a mod config value. Do **not** port the file-probe mechanism. Mod already has
-  compile-time `src/loader/config.hpp`; add a small runtime config surface only if a tuning knob needs
-  to survive to release.
+- **Toggles.** 1,636 distinct `t2r-*.txt` strings across 124 modules at this branch point; build
+  191 adds ~186 new strings (`t2r-no-achievements.txt`, `t2r-no-bodyshield.txt`,
+  `t2r-no-customize.txt`, `t2r-no-customize-look.txt`, `t2r-no-customize-stage.txt`,
+  `t2r-no-private.txt`, `t2r-no-namerim.txt`, `t2r-no-netdiag.txt`, `t2r-no-level-cull.txt`,
+  `t2r-no-sendoff.txt`, `t2r-no-dodge-tail.txt`, `t2r-no-pin-byst-windup.txt`,
+  `t2r-pin-victim-keeps-weapon.txt`, `t2r-revive-2013.txt`, `t2r-dragon.txt`, `t2r-vintage-p1.txt`,
+  …). Policy for Phase 1: classify each as (a) *release behaviour* → reproduced unconditionally,
+  (b) *dev/debug* → dropped, (c) *tuning* → a mod config value. Do **not** port the file-probe
+  mechanism or flip any ext gate for the build-191 ports. Mod already has compile-time
+  `src/loader/config.hpp`; add a small runtime config surface only if a tuning knob needs to survive
+  to release.
 - **Logging.** Unify on `TO1_LOG` (`src/log.hpp`, compiled out in `TO1_RELEASE`). Each ported feature
   drops its ext `xlog` / `t2r-ext-boot.txt` trail and uses `TO1_LOG` with the same prefix (so the A/B
   grep still works).
@@ -589,6 +624,47 @@ downed bridge feeds `NEVT_DOWNED`.
 
 ---
 
+## 12. Build 191 — new ext work and rework of ported features
+
+`main` gained 19 direct ext modules (+3 nested in `customize.c`) after this branch point. FEATURES.md
+has one row per file; the mechanism-level split is:
+
+- **UI / pages (§3):** `nrui` (shared tab frame), `mfnr`, `lbnr`, `customize` +
+  `customize_challenges` / `customize_compose` / `customize_stage`, `achieve_ui`, `pmunlock`,
+  `fac13ui`, `choose`, `namerim`, `sendoff` — all wait on the widget tree/transform layer and
+  `mod/widgets/` defs. `customize_compose` additionally needs a reserved `MSG_CUSTOM_LOOK` slot and
+  a `cz_body_*` consumer; `namerim` and the new rank `role` / `nrim_tick` belong to the already-ported
+  `rank-badge.*` seam.
+- **Audio (§4):** `vintage` (with `vintage_bolt_built.h`), `voxchar`, plus the new private cue tables
+  `ach_chime` / `choose_vox` / `choose_music` / `revive_nr` / `sendoff_pcm`.
+- **Gameplay / net:** `achieve` (daemon 0xA9 report / 0xAA table, `ach_live.h`), `privlobby`
+  (0xF8/0xF9, `pm_*` rules), `dragon2013` (`MSG_DRAGON 0xB7`), `bodyshield` (pure rules in
+  `bodyshield.h`, escape QTE / mash meter on the pad API), `levelcull` / `ldcwatch` / `netdiag`
+  (diagnostics).
+- **Deleted dead layer:** `t2r-engine.c/.h/-symbols.def` — no publisher existed, main uses
+  `VMA()` / `dc_call(fnv64(...))` / `hookreg.h`. Nothing to port or preserve.
+
+**Rework of features already ported here** (their FEATURES.md rows carry `build 191:` notes):
+`friends13` (No Return redesign + toast kinds), `rankbadge` (roles), `backpack` (only the
+`bp_look_prop` → `cz_bag_look_sid` hook in `t2r-ext.c`, not the module body — the hook **is** ported
+as the inert `engine::backpack_prop` composed-bag seam; its `customize_compose` producer is not),
+`ctxdown`
+(pin-victim weapon hiding, knife / female counters), `paired` (bodyshield / `revive_nr` /
+duel-tail hooks), `revive2013` (kneel help-up), `clan13` (No Return frame), `gearup13`
+(scroll / classes, Flamethrower off sale), `modepick` (private row), `sbteam` (stat columns),
+`clancard` (pause layout), `clanend` (choose music), `melee_duel` (LOS gate),
+`melee_duel_pin` (bystander windup), `melee_duel_sptl` (dodge tail), `melee_dodge` (ps56 counter
+window / `ach_dodge`), `melee_pullout` (fail-kill / downed / abort toggles). `loc_pl.h` was
+regenerated (`12-customize` / `13-achievements`, restored unsourced lines, Spanish melee skills):
+`engine/loc_table_pl.hpp` must be regenerated from main's table to stay in sync. `afk`, `requeue`,
+`notice`, `netdirect`, `loc`, `padinject` and `glass` have **no** substantive build-191 change —
+their raw-diff rows are comment/casing reversions only.
+
+Honest gate: none of the above is a cutover. No ext toggle was flipped, no ext wire ID was
+renumbered, and every new producer stays with the ext until its native counterpart lands.
+
+---
+
 ## Sequencing
 
 Ordered by dependency, cheapest-unblock-first:
@@ -631,7 +707,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/frame.hpp` + `.cpp` | QPC ms clock (`NowMs`, ext `BpMs`) alongside the 60 Hz frame counter |
 | `mod/src/engine/object.hpp` + `.cpp` | **new** — entity / joint locators, draw-control mesh hide/show, set-locator (ext `XbxLoc` / `GvisDc` / `BpDc` / `PsyncBfFromLoc`) |
 | `mod/src/engine/anim-prims.hpp` + `.cpp` | **new** — `AnimateFrom` / `AnimLen` (ext `animate_` recipe + `get-animation-duration`) |
-| `mod/src/engine/backpack-prop.hpp` + `.cpp` | **new** — own-side backpack hand-off (ext `feature_backpack_prop`) |
+| `mod/src/engine/backpack-prop.hpp` + `.cpp` | **new** — own-side backpack hand-off (ext `feature_backpack_prop`); build-191 `bp_look_prop` → `cz_bag_look_sid` composed-bag hook ported as an inert producer seam (`SetComposedBagLook` / `ComposedBagLook`, 16 slots; no composer registered) |
 | `mod/src/engine/armor-rig.hpp` + `.cpp` | **new** — skinned-armour tables + `look2` resolver + per-body apply (ext `ARMOR_RIG_*` / `ArmorRigApply`); the armour-visual driver is unported |
 | `mod/src/net/match/backpack.hpp` + `.cpp` | **new** — TAB backpack wire + prop state machine + engine prop spawn (ext `backpack.c` + `bp_pick`) |
 | `mod/src/engine/clipfx.hpp` + `.cpp` | **new** — engine `part-effect` anim-event fire path (ext `clipfx.c`) |
@@ -664,16 +740,18 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
-| `mod/FEATURES.md` | data-table column: generator availability |
+| `mod/FEATURES.md` | data-table column: generator availability; build-191 inventory — 154 direct modules (+3 nested `customize_*`), 12 new headers / 6 private generated rows, deleted `t2r-engine.*`, and `build 191:` flags on every ported row with new work |
+| `mod/src/engine/loc_table_pl.hpp` | regenerate from `main:tools/ext/loc_pl.h` (build 191: `12-customize`, `13-achievements`, restored lines, Spanish melee skills); keep the registry API unchanged |
 
 ## Risks
 
 - **No local build here.** Every gate above needs the user's Windows toolchain (clang-cl + LLVM +
   game install); this environment can write/refactor source and scripts but cannot run the A/B.
-- **`main` has diverged (Port build 191).** New ext modules and generated headers landed on `main`
-  after this branch point; they are intentionally *not* merged (ext/mod casing differs too widely
-  for a text merge). This inventory and the mechanism notes therefore lag build 191 until each new
-  behaviour is ported natively — do not treat the counts here as current for `main`.
+- **`main` has diverged (Port build 191).** The new ext modules / headers are now inventoried in
+  FEATURES.md and §12, but none is ported and the branch is intentionally *not* merged (ext/mod
+  casing differs too widely for a text merge). Several already-ported features gained new work on
+  `main` (§12), so "ported" statuses must be read with their `build 191:` notes; do not treat the
+  wire slots, generated tables or Polish strings here as build-191-current.
 - **Wire compatibility.** Ported and ext clients share a lobby during coexistence; net opcodes must
   keep their exact byte values, and no port may reuse an ext opcode.
 - **Private generators.** Features whose data generator is private cannot be fully ported until the

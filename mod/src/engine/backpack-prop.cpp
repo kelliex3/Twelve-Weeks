@@ -716,6 +716,58 @@ namespace engine::backpack_prop {
             armor_rig::OwnBodyOkArr());
     }
 
+    // ---- build 191: composed CUSTOMIZE bag look -> base look sid (ext cz_bag_look_sid) -------
+    // The ext's g_czb[b] records a composed body's look sid and the armour-pool row its bag
+    // came from. cz_bag_look_sid(look) finds the body wearing `look` and returns
+    // fnv64(ARMOR_RIG_BASES[row_bag]) so the TAB prop table still recognises the bag. There is no
+    // composer in mod/ (customize_compose.c is not ported), so this registry stays empty unless a
+    // producer registers a body through SetComposedBagLook(). It mirrors ext's lookup exactly;
+    // with no registration LookProp() is byte-for-byte the old behaviour.
+    struct ComposedBag {
+        uint64_t look = 0;   // composed look sid; 0 = slot free (ext g_czb[b].on == 0)
+        uint64_t base = 0;   // SID(armor_rig::Base(row_bag)) = ext fnv64(ARMOR_RIG_BASES[row])
+    };
+    ComposedBag g_composed[kComposedBodies];
+
+    bool SetComposedBagLook(int body, uint64_t composedLook, int bagRow)
+    {
+        if (body < 0 || body >= kComposedBodies || !composedLook)
+            return false;
+        const char* baseName = armor_rig::Base(bagRow);   // null for an invalid pool row
+        if (!baseName)
+            return false;
+        const uint64_t base = SID(baseName);
+        Lock();
+        g_composed[body].look = composedLook;
+        g_composed[body].base = base;
+        Unlock();
+        return true;
+    }
+
+    void ClearComposedBagLook(int body)
+    {
+        if (body < 0 || body >= kComposedBodies)
+            return;
+        Lock();
+        g_composed[body] = ComposedBag{};
+        Unlock();
+    }
+
+    uint64_t ComposedBagLook(uint64_t look)
+    {
+        if (!look)
+            return 0;
+        Lock();
+        uint64_t base = 0;
+        for (int i = 0; i < kComposedBodies; i++)
+            if (g_composed[i].look == look && g_composed[i].base) {
+                base = g_composed[i].base;
+                break;
+            }
+        Unlock();
+        return base;
+    }
+
     // ---- the TAB prop per-look table (ext BP_PROP_LOOKS / BpTables / BpLookProp) -----------
 
     int PropLookCount() { return kPropN; }
@@ -736,6 +788,13 @@ namespace engine::backpack_prop {
     int LookProp(uint64_t look)
     {
         Tables();
+        // build 191 (t2r-ext.c bp_look_prop): resolve a composed CUSTOMIZE bag to the base look
+        // of its armour-pool row before the table scan. No registration -> z == 0 -> unchanged.
+        {
+            const uint64_t z = ComposedBagLook(look);
+            if (z)
+                look = z;
+        }
         for (int i = 0; look && i < kPropN; i++)
             if ((look == g_lookSid[i][0] || look == g_lookSid[i][1]
                  || (g_lookSid[i][2] && look == g_lookSid[i][2])

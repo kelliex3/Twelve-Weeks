@@ -122,7 +122,25 @@ namespace engine::backpack_prop {
     // ext BpLookProp: the table row that serves this look sid (-1 none / off). A row is served when
     // it is one of the "always" rows (the shared scar / militia-11 props) or the faction-look
     // feature is on (t2r-faction-looks.txt).
+    // build 191: t2r-ext.c now asks cz_bag_look_sid FIRST, so a composed CUSTOMIZE bag is
+    // classified by the base look of the pool row its bag came from. LookProp does the same;
+    // with no composer registered (the mod has no customize_compose.c port) it behaves exactly
+    // as before.
     int      LookProp(uint64_t look);
+
+    // ---- build 191: composed CUSTOMIZE bag look -> base look sid --------------------------
+    // The ext's cz_bag_look_sid(look) is cz_row_of_look(look, 2) ->
+    // fnv64(ARMOR_RIG_BASES[row_bag]) (customize_compose.c). A body wearing a composed look
+    // registers its sid + bag pool row here; the resolver maps it back to the base look so the
+    // prop table above still recognises it. ext CZB_N = T2R_MAX_PEERS + 1 (9 at the default 8
+    // slots); the mod's default peer cap is 8 (4 in TO1_SLOTS4 builds), so 16 bodies leaves margin.
+    // Nothing is registered by default: this is a producer seam, not a second CUSTOMIZE
+    // implementation. Registrations survive Reset(); use the explicit Clear() when a composer
+    // drops a body.
+    inline constexpr int kComposedBodies = 16;
+    bool     SetComposedBagLook(int body, uint64_t composedLook, int bagRow);
+    void     ClearComposedBagLook(int body);
+    uint64_t ComposedBagLook(uint64_t look);     // 0 = not a composed bag look
     // ext BpPlayerLook: the look sid of a player process (vtable +0x390, as the engine's prop pick
     // reads it). 0 = none.
     uint64_t PlayerLook(uint8_t* player);
