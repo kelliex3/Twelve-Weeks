@@ -20,9 +20,10 @@
 //
 // 3D voices (ext g_mixv's dyn/ent/wp/rnear/rfar and sfx_voices_update): a voice whose gain
 // and pan are recomputed every frame from the source body's live position, ramped in the
-// mixer (no zipper noise). The listener is the game camera -- see the divergence note on
-// ListenerPosDir() in pcm.cpp (the ext's primary was a render-camera hook the mod does not
-// port).
+// mixer (no zipper noise). The listener is the game camera: ListenerPosDir() in pcm.cpp prefers
+// the final render camera captured by engine/render-camera.* (the ext's icam filter hook), then
+// the reticle locator, then the own body. The extra reticle tier and the read-only observer are
+// documented there; t2r-no-render-camera.txt makes it reticle-first again.
 //
 // The gain model (SfxUserVolume / MusicUserVolume) reads the game's own options sliders
 // (volume-sfx / volume-music, squared like the game's taper) times the general volume (mixer

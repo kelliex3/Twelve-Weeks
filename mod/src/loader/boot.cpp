@@ -11,6 +11,7 @@
 #include "engine/debugdraw.hpp"
 #include "engine/framecap.hpp"
 #include "engine/frame.hpp"
+#include "engine/render-camera.hpp"
 #include "engine/vfx.hpp"
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
@@ -26,6 +27,7 @@
 #include "net/audio/alertsting.hpp"
 #include "net/audio/music-tier.hpp"
 #include "net/audio/music-sight.hpp"
+#include "net/audio/near-miss.hpp"
 #include "net/audio/exec-music.hpp"
 #include "net/audio/xcam-bridge.hpp"
 #include "net/audio/bladesfx.hpp"
@@ -198,6 +200,7 @@ namespace boot {
 		net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
 		gameplay::stun_lock::Tick(::GetTickCount64(), net::player_status::MatchLive()); // stun end / grace
 		net::audio::shivsting::Tick();  // shiv victim shock sting + drums (ported from tools/ext/shiv_sting.c)
+		net::audio::near_miss::Tick();  // immersion shot-ray whizz -> alert sting (before the sting's delayed play)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
 		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
@@ -247,6 +250,12 @@ namespace boot {
 			TO1_LOG("[boot] FATAL: game-info init failed.\n");
 			return false;
 		}
+
+		// Read-only final render camera observer (ext icam capture). Hooks f+15, past the
+		// ext's 15-byte prologue detour, so install order vs t2r-ext.dll does not matter;
+		// idempotent inside Install().
+		if (!engine::render_camera::Install())
+			TO1_LOG("[boot] WARNING: render-camera observer not installed; audio/sight keep their fallback camera.\n");
 
 		if (!engine::archive::Init(gameModule, selfModule)) {
 			TO1_LOG("[boot] FATAL: embedded psarc init failed.\n");

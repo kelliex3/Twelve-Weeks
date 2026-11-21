@@ -14,6 +14,7 @@
 #include "gameplay/barrel-check.hpp"
 #include "gameplay/melee.hpp"
 #include "music-tier.hpp"
+#include "near-miss.hpp"
 
 #include <bit>
 #include <cmath>
@@ -90,6 +91,10 @@ namespace net::hooks {
         }
 
         net::session::SendEvent(NEVT_FIRE_SHOT, evt);
+        // ext immersion.c ImmSraySendTick: replicate the line this shot flew so other clients
+        // can detect a whizz-by. Gated inside near_miss::OnLocalShot (66 ms rate limit +
+        // t2r-no-shotray.txt); it does not touch the ext's 0xAF wire.
+        net::audio::near_miss::OnLocalShot();
         TO1_LOG("[FIRE] captured local shot -> broadcast NEVT_FIRE_SHOT\n");
     }
 

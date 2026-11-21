@@ -27,6 +27,8 @@
 #include "alertsting.hpp"
 #include "music-tier.hpp"
 #include "music-sight.hpp"
+#include "engine/render-camera.hpp"
+#include "near-miss.hpp"
 #include "music-hold.hpp"
 #include "exec-music.hpp"
 #include "shivsting.hpp"
@@ -1685,9 +1687,13 @@ namespace net::replication {
 
             TO1_LOG("[NET] taking %.1f damage from %s\n", evt.damage, sender.name);
 
-            // ext recv_hit_hook: the alert sting reads the calm clock BEFORE the music heat
-            // input marks this frame hot (AlertstingCombat then MusicEvent("we took a hit")).
+            // ext recv_hit_hook: g_hitByMs[g_lastHitSlot] is stamped BEFORE the audio block;
+            // the immersion near-miss receiver uses it 250 ms later to cancel a whizz whose
+            // shot actually connected. The alert sting reads the calm clock BEFORE the music
+            // heat input marks this frame hot (AlertstingCombat then MusicEvent("we took a hit")).
             if (evt.damage > 0.0f && evt.damage < 100000.0f) {
+                net::audio::near_miss::NoteHitFrom(
+                    static_cast<int>(senderSlot), ::GetTickCount64());
                 net::audio::alertsting::Combat("shot / hit out of the quiet");
                 net::audio::music_tier::NoteEvent(3.0f, "we took a hit");
             }
@@ -1938,6 +1944,27 @@ namespace net::replication {
             net::match::downed_bridge::OnEvent(senderSlot, type, data, size);
             break;
 
+        // ext MSG_STUNNED 0x45: the sender's local stun lock started. Ext plays the stun
+        // reaction on that peer's puppet and stamps g_stunPupAt[slot], the rising edge that
+        // feeds the "enemy stunned" (5.0) tier input. The mod has no per-peer stun clip, so
+        // this receiver only feeds the tier; the tier also polls the peer puppet's own
+        // npc-is-stunned? state so the input is live without a local stun broadcaster.
+        case NEVT_STUNNED: {
+            StunnedEvent evt;
+            if (!ReadPod(data, size, evt)) break;
+            net::audio::music_tier::SetPeerStunned(static_cast<int>(senderSlot), true);
+            break;
+        }
+
+        // ext MSG_SHOTRAY 0xAF: the line the sender's shot flew, consumed by our near-miss
+        // whizz receiver. Its geometry / gate is entirely in net/audio/near-miss.*.
+        case NEVT_SHOTRAY: {
+            ShotRayEvent evt;
+            if (!ReadPod(data, size, evt)) break;
+            net::audio::near_miss::OnShotRay(static_cast<int>(senderSlot), evt);
+            break;
+        }
+
         default:
             break;
         }
@@ -1976,6 +2003,8 @@ namespace net::replication {
         net::direct::Reset();
         net::audio::music_tier::Reset();
         net::audio::music_sight::Reset();
+        ::engine::render_camera::Reset();
+        net::audio::near_miss::Reset();
         net::audio::music_hold::Reset();
         net::audio::exec_music::Reset();
         net::audio::shivsting::Reset();

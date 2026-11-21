@@ -8,7 +8,8 @@
 
 #include "script.hpp"       // DC::Call (camera direction)
 #include "object.hpp"       // engine::object::LocalPlayerWorld / EntityWorld (source bodies)
-#include "raycast.hpp"      // engine::raycast::CameraPosition (the listener)
+#include "raycast.hpp"      // engine::raycast::CameraPosition (listener fallback)
+#include "render-camera.hpp" // engine::render_camera::Get (ext's primary listener source)
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -333,13 +334,16 @@ namespace engine::pcm {
             return BodyPos(SID("player"), out);
         }
 
-        // Listener = the game camera (TLOU2 hears from the camera). Position comes from the
-        // camera-through-reticle locator; direction from the reticle-dir native (the ext's
-        // working pair). DIVERGENCE from the ext: its PRIMARY source was the render camera its
-        // icam hook captured every frame, which the mod does not port; the reticle camera is
-        // the primary here and the own-body-at-head-height tier matches the ext's last resort.
+        // Listener = the game camera (TLOU2 hears from the camera). ext SfxSpatial's order is
+        // now matched: the final render camera captured by engine::render_camera (its icam
+        // filter hook) is PRIMARY; the camera-through-reticle locator + reticle-dir native is
+        // an extra robustness tier (the ext's own "camera natives" tier was dead); the own
+        // body at head height with zero direction is the last resort in both. Opting out of
+        // the capture with t2r-no-render-camera.txt restores the old reticle-first behaviour.
         bool ListenerPosDir(float cp[3], float cd[3])
         {
+            if (engine::render_camera::Get(cp, cd))
+                return true;
             Vector3 p;
             if (engine::raycast::CameraPosition(p)) {
                 cp[0] = p.x; cp[1] = p.y; cp[2] = p.z;

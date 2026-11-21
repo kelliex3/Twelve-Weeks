@@ -30,6 +30,7 @@ namespace net::audio::music_tier {
 
     namespace {
 
+        constexpr uint64_t kPeerStunMs  = 3500;    // ext STUN_SECONDS: the peer-stun window
         constexpr float   kHeatCap      = 30.0f;   // ext: g_musHeat clamped to 30
         constexpr uint64_t kHotEndMs     = 900;     // ext NR_END_MS
         constexpr uint64_t kDwellMs      = 6500;    // ext: minimum combat dwell (t2r-music-dwell-old.txt disables)
@@ -73,7 +74,8 @@ namespace net::audio::music_tier {
         bool     g_downPrev[kMaxNetPlayers]  = {};   // ext down_prev[slot]
         bool     g_markPrev[kMaxNetPlayers]  = {};   // ext mark_prev[slot]
         bool     g_stunPrev[kMaxNetPlayers]  = {};   // ext enemy-stunned rising edge
-        bool     g_peerStun[kMaxNetPlayers]  = {};   // SetPeerStunned producer seam
+        bool     g_peerStun[kMaxNetPlayers]  = {};   // ext g_stunPupAt[slot] != 0
+        uint64_t g_peerStunUntil[kMaxNetPlayers] = {}; // ext: cleared after STUN_SECONDS
         uint32_t g_shotSeen[kMaxNetPlayers]  = {};   // ext shot_seen[slot]
         uint64_t g_lastShot[kMaxNetPlayers]  = {};   // ext g_shotUntil[slot] (ms of last shot)
         uint64_t g_visSince[kMaxNetPlayers]  = {};   // ext vis_since[slot]
@@ -88,6 +90,7 @@ namespace net::audio::music_tier {
             g_closePrev[slot] = g_firePrev[slot] = g_deadPrev[slot] = false;
             g_downPrev[slot] = g_markPrev[slot] = false;
             g_stunPrev[slot] = g_peerStun[slot] = false;
+            g_peerStunUntil[slot] = 0;
             g_shotSeen[slot] = 0;
             g_lastShot[slot] = g_visSince[slot] = g_visLast[slot] = 0;
         }
@@ -118,10 +121,12 @@ namespace net::audio::music_tier {
         //
         // HONEST GATE: the ext's `seen` also uses a camera-frustum + line-of-sight ray (its
         // MusicSlotSeen / TagScreen / g_tagHidden) and a forward cone (MusicSlotCos, 1-8 m).
-        // Both are injected samplers now, but no native producer is installed: with neither
-        // sampler `seen` is the mark flag (seen at any range) plus the within-5 m close quarters
-        // test. An enemy that approaches from outside 5 m without a mark still needs contact.
-        // A future render-camera / LOS port installs the samplers; it does not change this core.
+        // Both samplers are injected by net/audio/music-sight.* (enabled by default, with
+        // t2r-no-music-sight.txt as an opt-out). With the samplers absent, `seen` falls back to
+        // the mark flag (seen at any range) plus the within-5 m close quarters test, so an
+        // enemy approaching from outside 5 m without a mark still needs contact. The sight
+        // producer prefers the final render camera (engine/render-camera.*) with the reticle
+        // camera as an extra tier -- see that module.
         struct WorldScan {
             int   seenNear    = 0;   // alive enemies seen within 30 m
             int   seenClose   = 0;   // ... within 15 m
@@ -176,10 +181,19 @@ namespace net::audio::music_tier {
                 if (marked)
                     g_contactMs = now;               // ext: a mark is contact at any range
                 g_markPrev[slot] = marked;
-                // ext "enemy stunned" (5.0) on the rising edge. No native peer-stun state is
-                // replicated, so SetPeerStunned() has no producer yet and this stays dormant.
+                // ext "enemy stunned" (5.0) on the rising edge of g_stunPupAt[slot]. That flag
+                // is set by the peer's MSG_STUNNED (0x45) -- our NEVT_STUNNED receiver feeds
+                // SetPeerStunned() from it. Since a mod client has no local stun broadcaster
+                // yet, also poll the peer puppet's own `npc-is-stunned?` state as a native
+                // fallback (the same call ext's ShivStunned uses on a handle). Either source
+                // refreshes the 3.5 s deadline; the rising-edge gate keeps it a single input.
+                if (!mate && p.npcSid && d < 40.0f) {
+                    const uint64_t st = DC::Call<"npc-is-stunned?">(p.npcSid);
+                    if (st != ~0ULL && (st & 0xff))
+                        SetPeerStunned(slot, true);
+                }
                 if (!mate && g_peerStun[slot] && !g_stunPrev[slot] && dead == false
-                    && d < 60.0f)
+                    && d < 40.0f)
                     NoteEvent(StunHeat(), "enemy stunned");
                 g_stunPrev[slot] = g_peerStun[slot];
 
@@ -280,8 +294,19 @@ namespace net::audio::music_tier {
 
     void SetPeerStunned(int slot, bool stunned) noexcept
     {
-        if (slot >= 0 && slot < kMaxNetPlayers)
-            g_peerStun[slot] = stunned;
+        if (slot < 0 || slot >= kMaxNetPlayers)
+            return;
+        if (stunned) {
+            // Two producers feed this: the NEVT_STUNNED receiver (ext MSG_STUNNED) and the
+            // per-frame `npc-is-stunned?` poll in ScanWorld. Both refresh the same 3.5 s
+            // window -- ext g_stunPupAt stays set for the full STUN_SECONDS even after the
+            // clip blends out, so a short native stun still raises the input once.
+            g_peerStun[slot] = true;
+            g_peerStunUntil[slot] = ::GetTickCount64() + kPeerStunMs;
+        } else {
+            g_peerStun[slot] = false;
+            g_peerStunUntil[slot] = 0;
+        }
     }
 
     void NoteEvent(float add, const char* cause)
@@ -348,6 +373,12 @@ namespace net::audio::music_tier {
             ? static_cast<float>(now - g_lastMs) / 1000.0f : 0.016f;
         g_lastMs = now;
         g_heat *= std::pow(0.5f, dt / 3.0f);   // ext: heat halves every 3 s
+
+        // ext FeatureStunLock clears g_stunPupAt after STUN_SECONDS. Our producers stamp a
+        // 3.5 s deadline; expire it here BEFORE the world scan samples the rising edge.
+        for (int slot = 0; slot < kMaxNetPlayers; ++slot)
+            if (g_peerStun[slot] && now >= g_peerStunUntil[slot])
+                g_peerStun[slot] = false;
 
         // ---- portable local producers (ext FeatureCombatMusic) --------------------------
         const bool firing = DC::Call<"player-is-firing?">() != 0;

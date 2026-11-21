@@ -35,8 +35,11 @@
 //     "enemy shot heard" / "enemy fire continues" from the peer shot-count radar;
 //     "enemy fired near" from the peer firing-byte rising edge; close quarters, down / revive
 //     and stun from the world scan.
-//   * "we are stunned" (6.0) is fed from gameplay/stun-lock.*; "enemy stunned" (5.0) has a
-//     SetPeerStunned seam but no native peer-stun producer yet, so it stays dormant.
+//   * "we are stunned" (6.0) is fed from gameplay/stun-lock.*; "enemy stunned" (5.0) is fed
+//     from SetPeerStunned(slot, true) by two producers -- the NEVT_STUNNED (ext MSG_STUNNED
+//     0x45) receiver and a per-frame `npc-is-stunned?` poll of the peer puppet in ScanWorld
+//     (ext's ShivStunned call). Ext uses only the replicated message; the native poll is a
+//     documented divergence that makes the input live without a local stun broadcaster.
 // The default No Return rules are used; t2r-music-nr-rules-old.txt selects the ext's earlier
 // 3-step heat ladder (that path is portable and is included).
 //

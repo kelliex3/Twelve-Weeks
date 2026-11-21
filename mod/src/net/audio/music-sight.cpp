@@ -4,8 +4,10 @@
 
 #include "music-tier.hpp"
 
+#include "engine/flag.hpp"
 #include "log.hpp"                 // TO1_LOG must precede engine/script.hpp (template helper)
 #include "engine/raycast.hpp"
+#include "engine/render-camera.hpp" // ext's primary camera source (final render camera)
 #include "engine/script.hpp"
 
 #include "net/match/match.hpp"
@@ -21,6 +23,11 @@ namespace net::audio::music_sight {
         constexpr float kChestUpM    = 1.1f;    // ext: chest = locator + 1.1 m on Y
         constexpr float kConeCosMin  = 0.3f;    // ext MusicSlotCos close-quarters test
         constexpr float kRayClearT   = 0.98f;   // hit this close to the chest still counts as clear
+
+        bool Enabled() noexcept
+        {
+            return kEnabled && engine::flag::Absent("t2r-no-music-sight.txt");
+        }
 
         Vector3  g_camPos{};
         Vector3  g_camDir{};
@@ -44,7 +51,7 @@ namespace net::audio::music_sight {
 
     void Install()
     {
-        if (!kEnabled)
+        if (!Enabled())
             return;
         music_tier::SetSightSampler(&SightFn, nullptr);
         music_tier::SetConeSampler(&ConeFn, nullptr);
@@ -52,16 +59,31 @@ namespace net::audio::music_sight {
 
     void Tick()
     {
-        if (!kEnabled)
+        if (!Enabled()) {
+            for (int slot = 0; slot < kMaxNetPlayers; ++slot)
+                g_seen[slot] = false, g_cos[slot] = -2.0f, g_job[slot] = 0;
             return;
+        }
 
-        g_camOk = engine::raycast::CameraPosition(g_camPos);
+        // ext MusicSlotSeen / MusicSlotCos read the final render camera captured by its icam
+        // filter hook; that is now our primary source too. The reticle locator + native is an
+        // extra robustness tier for when the observer has no fresh snapshot (matches pcm's
+        // listener and documented in music-sight.hpp).
+        float cp[3], cd[3];
+        g_camOk = engine::render_camera::Get(cp, cd);
         if (g_camOk) {
-            const Vector3* d = DC::Call<"camera-get-dir-through-reticle", const Vector3>();
-            if (d && std::isfinite(d->x) && std::isfinite(d->y) && std::isfinite(d->z))
-                g_camDir = *d;
-            else
-                g_camOk = false;
+            g_camPos = { cp[0], cp[1], cp[2] };
+            g_camDir = { cd[0], cd[1], cd[2] };
+        }
+        else {
+            g_camOk = engine::raycast::CameraPosition(g_camPos);
+            if (g_camOk) {
+                const Vector3* d = DC::Call<"camera-get-dir-through-reticle", const Vector3>();
+                if (d && std::isfinite(d->x) && std::isfinite(d->y) && std::isfinite(d->z))
+                    g_camDir = *d;
+                else
+                    g_camOk = false;
+            }
         }
         if (!g_camOk) {
             for (int slot = 0; slot < kMaxNetPlayers; ++slot)

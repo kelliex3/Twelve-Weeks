@@ -15,9 +15,16 @@
 // Wired to the music tier state (net/audio/music-tier.*):
 //  - The calm clock (ext g_als_calm_ms) is refreshed by Tick() on every frame the combat
 //    tier is 0, and Combat() requires it fresh -- the "shot at out of the quiet" gate.
-//    The tier's enemy-aware inputs are honest TODOs, so until they land the tier is driven
-//    by our own actions and hits only. Combat() is called from the damage event (the ext's
-//    recv_hit_hook); the immersion near-miss producer is not ported.
+//    The tier's enemy-aware inputs are ported: enemy shot heard / fire continues from the peer
+//    shot radar, "we hit an enemy" from the outgoing-hit hook, enemy spot calls from the received
+//    mark line, down / revive from the world scan, "we are stunned" from stun-lock, sight / cone
+//    from music-sight.* (enabled, with t2r-no-music-sight.txt as an opt-out; now prefers the
+//    final render camera via engine/render-camera.*), and "enemy stunned" from the NEVT_STUNNED
+//    receiver plus the peer puppet's npc-is-stunned? poll. An enemy cue can push the tier hot
+//    before a hit lands, so the
+//    calm clock correctly stops being fresh. Combat() has two producers now: the damage event
+//    (ext recv_hit_hook) at "shot / hit out of the quiet", and the immersion near-miss receiver
+//    (net/audio/near-miss.*) at "near miss out of the quiet" after its 120 ms hit check.
 //  - Dead / downed use music_tier::Dead() (ext g_msDead) and LocalDowned() (ext g_downed,
 //    itself an honest stub until the downed feature lands).
 //  - Data: alert_sting.h is a private generator. Without T2R_DATA_ALERT_STING, Play() is a
@@ -31,7 +38,8 @@ namespace net::audio::alertsting {
     void Play(float level, const char* why);
 
     // We were suddenly shot at while it was quiet (ext AlertstingCombat). Requires a fresh
-    // calm clock (combat music tier 0), alive and not downed; called from the damage event.
+    // calm clock (combat music tier 0), alive and not downed; called from the damage event and
+    // the near-miss whizz receiver.
     void Combat(const char* why);
 
     // Per frame from boot::FrameTick (ext AlertstingTick, minus the stun / crossbow / cough

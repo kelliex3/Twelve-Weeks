@@ -28,7 +28,7 @@ one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the 
 | 2 | Net event channel | `SendEvent` (winmm `0x18005DC60`, opcodes `0x41..0xAF`) | **exists** — `NetEventType` + `net::session::SendEvent` | slot reservation + exact-byte compatibility |
 | 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*`; build 191 adds the `nrui.c` tab frame + `customize` / `achieve_ui` / `mfnr` / `lbnr` / `pmunlock` / `namerim` / `fac13ui` pages | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source; every build-191 page unported |
 | 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c`; build 191 adds `vintage` / `voxchar` / `sendoff` and the `ach_chime` / `choose_vox` / `choose_music` / `revive_nr` cues | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring; the new build-191 cues are unported |
-| 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV` | render-camera path + track evaluator |
+| 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV`; read-only `engine/render-camera.*` observer (ext icam capture) | camera write path + track evaluator |
 | 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **ported** — `engine/pad.*` (virtual presses / sticks via mid-hooks at rel32-scanned call sites; command-bit learning; activity stamp; dev-bot consumers still unported) | call-site scan needs live-exe verification |
 | 7 | Generated data pipeline | 84 headers (`tools/ext/GENERATED.md`; +6 private in build 191, + `vintage_bolt_built.h` via `__has_include`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy / build-time header guard |
 | 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` in this branch's ext; build-191 adds 186 new strings | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config, then reclassify the new build-191 toggles |
@@ -178,10 +178,11 @@ mix-dump file and MMCSS workarounds (dev-only perf, not behaviour).
 **3D voices (ported).** The ext's dynamic voice fields (`dyn` / `ent` / `wp` / `rnear` / `rfar` + the
 per-frame gain ramp) are ported: a dynamic voice follows its body (`ent`, or a world point) and is
 panned / attenuated against the listener every frame by `engine::pcm::VoicesUpdate()` (called from
-`boot::FrameTick`). The listener is the camera-through-reticle locator via the
-`camera-get-dir-through-reticle` native, with the own-body-at-head-height fallback; the ext's
-render-camera (icam) hook is deliberately not ported (documented in `pcm.cpp`). First consumer: the
-blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
+`boot::FrameTick`). The listener now prefers the final render camera captured by the new
+`engine/render-camera.*` read-only observer (the ext's icam filter hook), with the
+camera-through-reticle locator + `camera-get-dir-through-reticle` native as an extra robustness tier
+and the own-body-at-head-height fallback; `t2r-no-render-camera.txt` restores the old reticle-first
+behaviour. First consumer: the blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
 
 **Combat music tier state + floors (ported).** `net/audio/music-tier.*` ports the *state* other
 features gate on: `MusicEvent` (heat + the event / contact / awareness clocks), the heat decay, the
@@ -197,19 +198,38 @@ before `NoteEvent("we took a hit")`, matching the ext's hook order. The *music p
 loops, beds, themes / sets / v5 rotation, grid-quantised cut timing, stinger layer) is deliberately
 not ported: it needs the private PCM blobs and the generated `music_families.h` / `music_pools.h`
 tables. The camera-frustum / LOS "seen" test and the 5–8 m forward cone now have a native producer
-in `net/audio/music-sight.*`: `engine::raycast::CameraPosition` + the reticle-direction native give
-the ext's `cp`/`cd`, a peer's replicated position + 1.1 m gives the chest, and the async static-world
-ray replaces the ext's tag visibility ray. It feeds the tier's `SetSightSampler` / `SetConeSampler`
-seams; `music_sight::kEnabled == false` for now (ext stays the behaviour owner; the ext's primary
-was the final render camera, so live A/B is required before enabling). With no sampler installed
-the two inputs answer "not seen" and the tier keeps its conservative mark / close-quarters floor.
+in `net/audio/music-sight.*`: the final render camera from `engine/render-camera.*` (the ext's
+primary) gives the ext's `cp`/`cd`, with the reticle locator + direction native as an extra tier;
+a peer's replicated position + 1.1 m gives the chest, and the async static-world ray replaces the
+ext's tag visibility ray. It feeds the tier's `SetSightSampler` / `SetConeSampler` seams. It is
+**enabled by default** with `t2r-no-music-sight.txt` as an opt-out. The render camera observer is
+read-only (the write path / track evaluator in §5 stays unported), so live A/B is still advised.
+`t2r-no-render-camera.txt` makes the reticle camera primary. Opting out of music-sight clears the two
+samplers, in which case the inputs answer "not seen" and the tier keeps its conservative mark /
+close-quarters floor.
 The ext's enemy-aware *event* values are pure helpers in the same module (`ShotHeat`, `NearFireHeat`,
 `CloseHeat`, `DownHeat`, `ReviveHeat`, `StunHeat`, `WeStunnedHeat`). Every event input is now wired:
 `we hit an enemy` from `ReportLocalHitOnPuppet`, `spotted by an enemy (spot call)` from an enemy's
 received mark line in `net::vox::HandleLine`, `enemy shot heard` / `enemy fire continues` from the
 peer shot-count radar, `we are stunned` from `gameplay/stun-lock.*`, and down / revive from the world
-scan. Only `enemy stunned` remains dormant: its `SetPeerStunned` seam has no native producer because
-peer stun is not replicated.
+scan. `enemy stunned` is fed by two producers: the `NEVT_STUNNED` (ext `MSG_STUNNED` 0x45) receiver
+and a per-frame `npc-is-stunned?` poll of the peer puppet in the world scan (the ext uses only the
+replicated message, so the poll is a documented divergence that makes the input live without a
+local stun broadcaster). Both stamp a 3.5 s deadline; the rising edge is at `d < 40.0f`, as in ext.
+
+**`recv_hit_hook` + immersion near miss (ported).** The damage event now stamps a per-slot hit
+time before the alert-sting / music block (`g_hitByMs[g_lastHitSlot]` in ext `RecvHitHook`), keeping
+the ext's order: `AlertstingCombat("shot / hit out of the quiet")` then `MusicEvent("we took a hit")`.
+`net/audio/near-miss.*` ports the live ext producer: the shooter replicates the line its shot flew
+(`NEVT_SHOTRAY` 0xAF, 17 bytes, pinned to the ext's wire), and the receiver computes the segment's
+closest approach to its head (t >= 1 m from the muzzle, lateral <= 2.5 m — the live ext value, not
+the stale header's ~1.5 m), with a 120 ms delay, a 150 ms whizz cooldown, a 400 ms freshness gate,
+an async LOS gate and a 250 ms hit-cancel from that slot. It calls
+`AlertstingCombat("near miss out of the quiet")` even when the PCM voice fails (ext behaviour).
+Sender is `t2r-no-shotray.txt`, playback `t2r-no-near-miss.txt`, independent as in ext. The whizz
+wave table is private (`sp_bullet_by.h` / `sp_bullet_by.pcm`), so playback stays behind
+`T2R_DATA_BULLET_BY` while the alert-sting and geometry paths are always live. The geometry and wire
+helpers are pure and covered by the standalone `near_miss_core_test`.
 
 **Shiv-victim chain + exec music (ported cores, gated producers).** `gameplay/stun-lock.*` carries
 the ext's `g_stun_until`: 3.5 s lock, 0.35 s blend-out, 1.2 s cough cadence, the 1.2 s post-end
@@ -223,8 +243,10 @@ ext's `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` plus `M
 `shiv-ground-execution-*` route to the sting / drum cut, `ctxdown` routes to neither, and any other
 victim-side move starts the exec cue. `shivsting`/`alertsting` now read the stun core for the
 back-shiv alert gate, and `shivsting` cuts / holds combat music through `music-hold` on a shiv
-victim start. Every producer is a sink or an inert bridge: no PCM cue, DC music call, stun-network
-producer or final render-camera hook is wired, so ext remains the behaviour owner. The standalone
+victim start. Within this group every producer is a sink or an inert bridge: no PCM cue, DC music
+call or stun-network producer is wired, so ext remains the behaviour owner for those modules. The
+new final render-camera observer (`engine/render-camera.*`) is read-only and does not drive any cue
+here; the camera-writing path / track evaluator in §5 is still unported. The standalone
 `audio_core_test` harness covers the four cores without game headers.
 
 **Build 191 adds (unported).** `vintage.c` (Part I Vintage Rifle gunshot from `p1-vintage.pcm`,
@@ -259,9 +281,15 @@ the camera.
 
 **Mod today** (`src/engine/script.hpp` `CAMERA`): `GET_CAMERA_LOCATOR`, `SET_OVERLAY`,
 `OVERRIDE_FOV`, `SET_CAMERA_POSITION`; used in `net-replication.cpp` (spectate) and `net-gui2.cpp`.
+The new `engine/render-camera.*` is a **read-only** capture of the final render camera: a
+safetyhook mid-hook at `FUN_141477750 + 15` (past the ext's 15-byte prologue detour) snapshots the
+final position + quaternion forward into a seqlock that `engine::pcm` and `net::audio::music_sight`
+consume. It never writes the camera, so the ext stays the behaviour owner; opt out with
+`t2r-no-render-camera.txt`.
 
-**Gap.** The render-camera path the ext needs (writing the final camera, not the script camera) and a
-track evaluator that can play a generated track and blend back. FOV continuity.
+**Gap.** The render-camera *write* path the ext needs (modifying the final camera, not the script
+camera) and a track evaluator that can play a generated track and blend back. FOV continuity. The
+read-only observer does not close this gap.
 
 **Deliverable.** Extend `CAMERA` with the render-camera hook (safetyhook mid-hook on the camera
 update) + a `CameraTrack` evaluator that consumes generated tracks. Keep the DC wrappers as-is.
@@ -811,7 +839,9 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
 | `mod/src/net/audio/music-tier.hpp` + `.cpp` | extend — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`), injectable sight / forward-cone samplers, all enemy-aware event inputs (hit / spot / shot / fire / down / revive / stun) and event-value helpers; playback stays in the ext |
-| `mod/src/net/audio/music-sight.hpp` + `.cpp` | **new** — gated native `MusicSlotSeen` / `MusicSlotCos` producer (reticle camera + async static-world ray + replicated peer chest); `kEnabled == false`, render-camera divergence documented |
+| `mod/src/net/audio/music-sight.hpp` + `.cpp` | **new** — native `MusicSlotSeen` / `MusicSlotCos` producer (final render camera via `engine/render-camera.*`, reticle camera tier, async static-world ray + replicated peer chest); enabled by default, `t2r-no-music-sight.txt` opt-out |
+| `mod/src/net/audio/near-miss.hpp` + `.cpp` | **new** — immersion near-miss producer: pure closest-approach / wire quantisation helpers, `NEVT_SHOTRAY` sender + receiver ring, 120 ms hit-cancelled whizz with alert sting, LOS gate and private-data PCM path; `t2r-no-shotray.txt` / `t2r-no-near-miss.txt` |
+| `mod/tests/near_miss_core_test.cpp` | **new** — standalone C++17 harness for the near-miss geometry / wire helpers (`NEAR_MISS_CORE_TEST_OK`) |
 | `mod/src/net/audio/music-hold.hpp` + `.cpp` | **new** — pure ext `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` state + `MusicPlay` sid (`FNV64("*name*")`), behind an inert DC sink |
 | `mod/src/net/audio/exec-music.hpp` + `.cpp` | **new** — pure exec victim cue timing (ext `exec_music.c`: `EXMUS_HIT[]` / `EXMUS_CAP_MS` / `EXMUS_FADE_MS` / `EXMUS_RESUME_MS`), gated PCM sink |
 | `mod/src/net/audio/xcam.hpp` + `.cpp` | **new** — pure `xcam_start` role-2 routing (upgraded / shiv / `ctxdown` / exec), inert dispatch seam |
@@ -841,6 +871,8 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/widget.hpp` + `.cpp` | extend — mouse navigation (ext `UiRectSs` / `UiMouseOver` / `UiOverViewport`): transform-rect "escape bounds" hover fallback, prologue-checked pinned RVA, `t2r-no-mouse-nav.txt` opt-out |
 | `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
+| `mod/src/engine/render-camera.hpp` + `.cpp` | **new** — read-only final render camera observer (ext icam capture): safetyhook mid-hook at `FUN_141477750 + 15` snapshots position + quaternion forward into a seqlock for `pcm` / `music-sight`; pure `ForwardFromQuaternion` / `QuaternionOk` / `Fresh` core; `t2r-no-render-camera.txt` opt-out; camera write path / track evaluator stay in the ext |
+| `mod/tests/render_camera_core_test.cpp` | **new** — standalone C++17 harness for the render-camera pure helpers (`RENDER_CAMERA_CORE_TEST_OK`); no game headers |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
 | `mod/FEATURES.md` | data-table column: generator availability; build-191 inventory — 154 direct modules (+3 nested `customize_*`), 12 new headers / 6 private generated rows, deleted `t2r-engine.*`, and `build 191:` flags on every ported row with new work |
 | `mod/src/engine/loc_table_pl.hpp` | regenerate from `main:tools/ext/loc_pl.h` (build 191: `12-customize`, `13-achievements`, restored lines, Spanish melee skills); keep the registry API unchanged |

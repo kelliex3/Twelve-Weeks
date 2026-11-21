@@ -87,7 +87,8 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `pmunlock.c` | build 191: the post-match UNLOCKS stage — the match's new achievements + CUSTOMIZE items (`clan_widgets.py` group "unlocks") | UI / HUD / menus | P1 | widget | 0 | net/ui/postmatch-screens.cpp | not started |
 | `sendoff.c` | build 191: menu send-off — birds / crows after the war horn, WLF vehicles / Seraphite horses into the loading screen (re/menu-sendoff-impl-1115.md) | UI / HUD / menus | P1 | audio, widget, camera | 4 e.g. `t2r-no-sendoff.txt` | menu/net-menu.cpp, engine/pcm.* | not started |
 | `titlebg.c` | title (boat) screen background = Hillcrest overlook: camera + sway + render layer (menu_title.py; t2r-menu-boat.txt = off) | UI / HUD / menus | P1 | widget, camera, hook | 3 e.g. `t2r-menu-boat.txt` | menu/net-menu.cpp | not started |
-| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | net/audio/alertsting.cpp, engine/pcm.cpp | in progress |
+| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer). Both `Combat()` producers are wired: the damage event (ext `recv_hit_hook`) and the near-miss whizz receiver | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | net/audio/alertsting.cpp, net/audio/near-miss.cpp, engine/pcm.cpp | in progress |
+| `immersion.c` (near miss) | enemy shot passes within 2.5 m of our head without hitting: replicated shot line (`MSG_SHOTRAY` 0xAF / `NEVT_SHOTRAY`), 120 ms hit-cancelled whizz + alert sting; whizz waves are private `sp_bullet_by.h` data | Audio (PCM) | P2 | net, audio, camera, data | 2 `t2r-no-shotray.txt` (send), `t2r-no-near-miss.txt` (play) | net/audio/near-miss.*, net/protocol/net-protocol.hpp, net/game/net-replication.cpp, net/game/net-hooks.cpp, loader/boot.cpp | in progress (sting + geometry live; PCM behind `T2R_DATA_BULLET_BY`) |
 | `bomb_roll.c` | thrown bombs: impact / bounce / roll sounds from their per-frame position (TLOU2 waves, PCM mixer) | Audio (PCM) | P2 | audio, data | 3 e.g. `t2r-bomb-roll-native.txt` | — | not started |
 | `death_theme.c` | death screen drone: a quiet TLOU2 SP tonal bed under the death sting / execution victim cue, loops, fades out at respawn (PCM mixer) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-death-drone.txt` | — | not started |
 | `downed_music.c` | downed music: three TLOU2 SP layers crossfaded by the bleed-out fraction, darker the closer to bleed-out (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-downed-music.txt` | — | not started |
@@ -380,23 +381,31 @@ timing (hit seconds 2.44 / 2.35 / 2.31 / 2.35 / 2.39 s against the death-screen 
 cap, the 300 ms fade and the 1.5 s resume. `net/audio/xcam.*` reproduces the `xcam_start` role-2
 routing: an upgraded pipe-mod one-shot suppresses exec music, a shiv (except
 `shiv-ground-execution-*`) dispatches the shiv sting / drum cut, a `ctxdown` move takes neither,
-and everything else victim-side starts the exec cue. The PCM cue producers, the final render-camera
-hook and the DC music calls stay gated behind sinks; ext remains the behaviour owner.
+and everything else victim-side starts the exec cue. The PCM cue producers and the DC music calls
+stay gated behind sinks; ext remains the behaviour owner. The new final render-camera observer
+(`engine/render-camera.*`) is read-only and drives none of these cues; the camera-writing path stays
+unported.
 
 `net/audio/music-tier.*` now also accepts injected enemy-sight and forward-cone samplers (the ext's
 `MusicSlotSeen` / `MusicSlotCos`) and exports the ext's enemy-aware event values as pure helpers
 (`enemy shot heard` 2.0 / 1.2, `enemy fire continues` 1.0 / 0.6, `enemy fired near` 1.5,
 `teammate fired near` 0.75, `enemy at close quarters` 3.0, `enemy down near` /
 `teammate down / dead near` / `enemy revived` 4.0, `enemy stunned` 5.0, `we are stunned` 6.0).
-`net/audio/music-sight.*` now supplies a **native producer** for both samplers: the frustum/cosine
-gate from the camera-through-reticle locator + `camera-get-dir-through-reticle` native, and
-occlusion from the async static-world ray, with a peer chest point from the replicated position
-+ 1.1 m. `music_sight::kEnabled == false`, so the samplers stay unset and ext remains the behaviour
-owner; enabling it only affects the mod's own tier state and needs live A/B (the ext's primary was
-the final render camera, which the mod does not port). The remaining *event* inputs are wired too:
-`we hit an enemy` from the outgoing puppet-hit hook, `spotted by an enemy (spot call)` from a
-received enemy mark / spot-call vox line, and `we are stunned` from `gameplay/stun-lock.*`.
-`enemy stunned` has a `SetPeerStunned` seam but no replicated peer-stun state, so it stays dormant.
+`net/audio/music-sight.*` supplies a **native producer** for both samplers: the frustum/cosine
+gate prefers the final render camera captured by `engine/render-camera.*` (the ext's primary), with
+the camera-through-reticle locator + `camera-get-dir-through-reticle` native as an extra tier, and
+uses the async static-world ray for occlusion, with a peer chest point from the replicated position
++ 1.1 m. It is **enabled by default** with `t2r-no-music-sight.txt` as an opt-out; the render-camera
+observer is read-only (the write path / track evaluator stay unported), so live A/B is still advised
+(the 500 ms sight dwell / 300 ms break absorb a frame or two of ray latency).
+`t2r-no-render-camera.txt` makes the reticle camera primary. The remaining
+*event* inputs are wired too: `we hit an enemy` from the outgoing puppet-hit hook,
+`spotted by an enemy (spot call)` from a received enemy mark / spot-call vox line, and
+`we are stunned` from `gameplay/stun-lock.*`. `enemy stunned` (5.0) is fed from the `NEVT_STUNNED`
+receiver and a per-frame `npc-is-stunned?` poll of the peer puppet; ext uses only the replicated
+message, so the poll is a documented divergence that makes the input live without a local stun
+broadcaster. The damage event also stamps a per-slot hit time (`recv_hit_hook`'s `g_hitByMs`),
+consumed by the near-miss receiver to cancel a whizz whose shot actually connected.
 
 ## Generated data headers
 

@@ -201,6 +201,10 @@ enum NetEventType : uint8_t {
     // that module's wire bridge is still gated (see FEATURES.md / PHASE1.md).
     NEVT_DOWNED      = 0x43,   // ext MSG_DOWNED: [u8 state][u8 downer][u8 knockDir+1][u8 mix][u8 bleed+0.5][u8 epoch] (net/match/downed-state.hpp)
     NEVT_REVIVE      = 0x44,   // ext MSG_REVIVE: [u8 who] -- a teammate completed the revive
+    // ext MSG_STUNNED 0x45: the sender's local stun lock started. The receiver stamps the
+    // peer-stun rising edge that feeds the music "enemy stunned" (5.0) input. Pinned to the
+    // ext's exact byte for cutover interop.
+    NEVT_STUNNED     = 0x45,   // StunnedEvent
     NEVT_ARMOR_HIT   = 0x4A,   // ext MSG_ARMOR_HIT: [u8 victim][u8 piece][u8 broke][f32 absorbed][f32 left]
     NEVT_PSYNC       = 0x4B,   // ext MSG_PSYNC: paired-move lifecycle / ping / pong / ack
     NEVT_HIT_REL     = 0x6C,   // ext MSG_HIT_REL: reliable one-shot hits (net/match/hit-rel.hpp)
@@ -210,6 +214,11 @@ enum NetEventType : uint8_t {
     NEVT_HITREACT2   = 0x9A,   // ext MSG_HITREACT2: [u8 flags][u64 clip][u16 cut ms]
     NEVT_MEX         = 0x9C,   // ext MSG_MEX: melee exchange window
     NEVT_MV3         = 0x9E,   // ext MSG_MV3: melee-v3 bubble / inputs / hash
+
+    // ext MSG_SHOTRAY 0xAF: where the sender's shot actually flew (immersion.c whizz-bys).
+    // Pinned to the ext's exact byte for cutover interop. NOTE: 0xAF is also a daemon tag inside
+    // the 0xE3 report (NetDaemonOp::kAfkTrailer) -- a different wire, so there is no collision.
+    NEVT_SHOTRAY     = 0xAF,   // ShotRayEvent
 };
 
 // ---- other wire opcodes introduced by the ext -> mod port -------------------------------
@@ -328,6 +337,24 @@ struct FireShotEvent {
     float launchVel[3];
 };
 static_assert(sizeof(FireShotEvent) == 44, "FireShotEvent layout");
+
+// ext MSG_STUNNED payload is [u8 dir+1][u8 frame parity]; only byte 0 is read by the ext and
+// by us. 0 = front, 1 = back, 2 = left, 3 = right (ext g_stunDir). `dir` here is already +1.
+struct StunnedEvent {
+    uint8_t dirPlusOne;
+};
+static_assert(sizeof(StunnedEvent) == 1, "StunnedEvent layout");
+
+// ext MSG_SHOTRAY payload (17 bytes): [u8 reserved][f32 origin x3][i8 dir*127 x3][u8 len m].
+// Kept byte-identical to the ext so the two transports can interoperate during cutover.
+// `len == 0` means unknown; the ext receiver then uses 120 m.
+struct ShotRayEvent {
+    uint8_t reserved;
+    float   origin[3];
+    int8_t  dir[3];
+    uint8_t lenM;
+};
+static_assert(sizeof(ShotRayEvent) == 17, "ShotRayEvent layout");
 
 struct MatchOverEvent {
     int8_t winner;
