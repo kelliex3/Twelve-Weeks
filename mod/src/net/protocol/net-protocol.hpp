@@ -212,6 +212,37 @@ enum NetEventType : uint8_t {
     NEVT_MV3         = 0x9E,   // ext MSG_MV3: melee-v3 bubble / inputs / hash
 };
 
+// ---- other wire opcodes introduced by the ext -> mod port -------------------------------
+// One source of truth for every byte that goes on a wire. Peer events use NetEventType above;
+// the direct-melee helper, the daemon RPC services and the backpack payload versions live
+// here so a feature module never has to pin its own copy of an ext byte. Values are the ext's
+// exact numbers -- do not renumber them (they must interoperate during cutover).
+enum class NetDirectOp : uint8_t {
+    kData  = 0x05,   // direct peer payload (ext netdirect.c)
+    kHello = 0x06,   // direct peer handshake
+    kAck   = 0x07,   // direct peer handshake reply
+};
+
+enum class NetDaemonOp : uint8_t {
+    kAfkTrailer     = 0xAF,   // 4-byte tag inside the 0xE3 report: [0xAF][u16 idle s][flags]
+    kJipTeamSwap    = 0xA7,   // trailing [u8 n][n x (slot, team)] block in the 0xE5 reply
+    kNoticePoll     = 0xBA,
+    kNoticeReply    = 0xBB,
+    kRequeuePoll    = 0xBC,
+    kRequeueReply   = 0xBD,
+    kRankTable      = 0xBF,   // request and reply are the same byte
+    kFriendsRequest = 0xD8,
+    kFriendsReply   = 0xD9,
+    kJipClockReport = 0xE3,
+    kJipClockReply  = 0xE5,
+};
+
+enum class NetBackpackPayload : uint8_t {
+    kPhase      = 1,    // MSG_BACKPACK phase broadcast (BP_VER 1)
+    kSpinec     = 0x54, // recorded spine-c track chunk ("BPT1")
+    kRoot       = 0x55, // recorded root track chunk ("BPR1")
+};
+
 struct ExecutionEvent {
     uint8_t  victimSlot;
     NetSid64 moveSID;

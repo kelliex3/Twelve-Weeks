@@ -18,6 +18,7 @@
 #include "net/match/melee-bridge.hpp"
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
+#include "net/game/net-smooth-bridge.hpp"
 #include "net/social/friends13.hpp"
 #include "net/social/rank-badge.hpp"
 #include "net/ui/postmatch-screens.hpp"
@@ -838,12 +839,26 @@ namespace net::replication {
         if (posSane(&st.posX) && IsUnitQuat(&st.rotX) &&
             posSane(&prev.posX) && IsUnitQuat(&prev.rotX)) {
             const float ax = fminf(a, kMaxExtrapolateAlpha);
-            const float pos[3] = {
+            float pos[3] = {
                 Lerp(st.posX, st.posX + (st.posX - prev.posX), ax),
                 Lerp(st.posY, st.posY + (st.posY - prev.posY), ax),
                 Lerp(st.posZ, st.posZ + (st.posZ - prev.posZ), ax),
             };
-            const float q[4] = { st.rotX, st.rotY, st.rotZ, st.rotW };
+            float q[4] = { st.rotX, st.rotY, st.rotZ, st.rotW };
+
+            // netsmooth live cutover: the buffered playout owns the puppet's locator. The
+            // native interpolation above is retained as the fallback while the core's
+            // buffer is unprimed (session start, first few lists, sender clock change) and
+            // as the 100 ms handover blend. PingMs()/2 is the ext's PsyncOneway lead.
+            net::netsmooth::Transform native, smoothed;
+            memcpy(native.pos, pos, 12);
+            memcpy(native.quat, q, 16);
+            const int ping = p.PingMs();
+            const double onewayMs = ping > 0 ? static_cast<double>(ping) * 0.5 : 0.0;
+            if (net::netsmooth::bridge::Apply(p.netSlot, native, smoothed, onewayMs)) {
+                memcpy(pos, smoothed.pos, 12);
+                memcpy(q, smoothed.quat, 16);
+            }
 
             LOCATOR::SET_OBJECT_LOCATOR(p.npcSid,
                 MEMORY::ALLOC_BOUND_FRAME(Vector3{ pos[0], pos[1], pos[2] },
@@ -1444,6 +1459,7 @@ namespace net::replication {
 
         net::vox::Tick(dt);
         net::player::Tick(dt);
+        net::netsmooth::bridge::Tick();
 
         UpdateKillFeed();
         UpdateListenMode();
@@ -1947,6 +1963,7 @@ namespace net::replication {
         net::match::kick::Reset();
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();
+        net::netsmooth::bridge::ResetAll();
         net::match::liveness::Reset();
         net::ui::postmatch::Reset();
         net::requeue::Reset();

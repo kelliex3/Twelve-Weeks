@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "net-protocol.hpp"
 #include "engine/exe_side.hpp"
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
@@ -46,8 +47,8 @@ namespace net::friends13 {
         constexpr size_t kArgMax = 100;
         constexpr size_t kRepCap = 24000;
         constexpr size_t kReqLen = 64 + 3 + kArgMax;
-        constexpr uint8_t kOpReq = 0xD8;
-        constexpr uint8_t kOpRep = 0xD9;
+        constexpr uint8_t kOpReq = static_cast<uint8_t>(NetDaemonOp::kFriendsRequest);
+        constexpr uint8_t kOpRep = static_cast<uint8_t>(NetDaemonOp::kFriendsReply);
         constexpr uint64_t kFlagMs = 5000;
         constexpr uint64_t kActionCoolMs = 600;
         constexpr uint64_t kOpenCoolMs = 1200;

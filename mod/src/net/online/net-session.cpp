@@ -14,6 +14,7 @@
 #include "net-matchmaking.hpp"
 #include "net-account.hpp"
 #include "net-debug.hpp"
+#include "net/game/net-smooth-bridge.hpp"
 
 namespace net::session {
 
@@ -473,6 +474,11 @@ namespace net::session {
 
         p.PushState(st, hdr.sequence, now);
 
+        // netsmooth: stamp this state on the sender's timeline. The AnimCmd (msg 7) packet
+        // carries the matching sender clock; either packet may arrive first and the core
+        // pairs them by sequence.
+        net::netsmooth::bridge::OnState(hdr.senderSlot, hdr.sequence, &st.posX, &st.rotX);
+
         if (st.eventBytes > 0 && linkChan) {
             linkChan->ReadBlock(st.eventBuf, st.eventBytes,
                 [&](uint8_t type, uint8_t sender, uint8_t target, const uint8_t* data, uint8_t sz)
@@ -531,6 +537,10 @@ namespace net::session {
         memcpy(&sendMs, body + offsetof(AnimCmdPayload, sendMs),    sizeof(sendMs));
         if (bits == 0 || bits > (uint32_t)kMaxAnimCmdBytes * 8u) return;
         if (NetAnimCmdWireSize(bits) != bodyLen) return;        // truncated / malformed
+
+        // netsmooth: sendMs is the sender's GetTickCount64() & 0xffffffff. Rebase +
+        // 15.625 ms dequantisation happen in the core (ext PaRecvHook -> NsRebase/NsDequant).
+        net::netsmooth::bridge::OnAnim(hdr.senderSlot, hdr.sequence, sendMs);
 
         NetSetRemoteAnimCmds(hdr.senderSlot, body + offsetof(AnimCmdPayload, data), bits, skelId, epoch, sendMs);
 

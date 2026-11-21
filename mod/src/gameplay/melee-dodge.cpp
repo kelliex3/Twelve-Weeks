@@ -2,14 +2,17 @@
 
 #include "melee-dodge.hpp"
 
+#include "melee-tell.hpp"
+
 #include <algorithm>
-#include <cstring>
+#include <cmath>
 
 namespace gameplay::melee_dodge {
 
     namespace {
 
         Sink* g_sink = nullptr;
+        WindowOverrides g_overrides;
 
         struct Swing {
             uint64_t ms = 0;       // ext g_mdg.sw[s].ms (arrival of the swing announce)
@@ -32,6 +35,10 @@ namespace gameplay::melee_dodge {
         int      g_charges = kCharges;
         int      g_streakN = 0;
         bool     g_strict = true;
+        bool     g_windowOpen = false;  // ext g_mdg.window_open (the loose geometry flag)
+        bool     g_held = false;        // ext g_mdh.on
+        bool     g_replay = false;      // ext g_mdhReplay (a replayed blow is never held again)
+        HeldBlow g_heldBlow;
         struct { uint64_t until = 0; uint8_t dir = 0xff; } g_imm[kMaxPeers];
 
         uint64_t CooldownMs() { return g_strict ? 2500 : 1500; }
@@ -45,15 +52,92 @@ namespace gameplay::melee_dodge {
             return kStreak[n];
         }
 
-        void Log(const char* text)
-        {
-            if (g_sink)
-                g_sink->Log(text);
-        }
-
     } // namespace
 
     void SetSink(Sink* sink) { g_sink = sink; }
+    void SetWindowOverrides(const WindowOverrides& overrides) { g_overrides = overrides; }
+
+    bool GeometryOk(const Pose& self, const Pose& peer, uint64_t swingMs, uint64_t nowMs,
+                    bool loose, float* dist)
+    {
+        for (float v : self.pos)
+            if (!std::isfinite(v))
+                return false;
+        for (float v : peer.pos)
+            if (!std::isfinite(v))
+                return false;
+        for (float v : peer.rot)
+            if (!std::isfinite(v))
+                return false;
+        const float dx = self.pos[0] - peer.pos[0];
+        const float dz = self.pos[2] - peer.pos[2];
+        const float d = std::sqrt(dx * dx + dz * dz);
+        if (d > (loose ? kLooseReachM : kReachM)
+            || std::fabs(self.pos[1] - peer.pos[1]) > kHeightTolM)
+            return false;
+        if (dist)
+            *dist = d;
+        if (d < kNearDistM)
+            return true;
+        const float* q = peer.rot;    // ext q = locator + 4, quaternion x,y,z,w
+        const float fx = 2.0f * (q[0] * q[2] + q[3] * q[1]);
+        const float fz = 1.0f - 2.0f * (q[0] * q[0] + q[1] * q[1]);
+        const float fl = std::sqrt(fx * fx + fz * fz);
+        if (!(fl > 1e-3f))
+            return false;
+        const float cosv = (fx * dx + fz * dz) / (fl * d);
+        // The puppet body is still turning towards us for MD_TURN_MS after the swing note.
+        if (swingMs && nowMs >= swingMs && nowMs - swingMs < kTurnMs)
+            return cosv >= 0.0f;
+        return cosv >= (loose ? kLooseConeCos : kConeCos);
+    }
+
+    bool HoldBlow(const HeldBlow& blow, uint64_t nowMs, float onewayMs, float playoutMs)
+    {
+        if (g_replay || g_held || !(blow.damage > 0.0f) || blow.damage >= 200.0f
+            || blow.slot < 0 || blow.slot >= kMaxPeers || Iframes(nowMs))
+            return false;
+        if (Window(nowMs, nullptr) != blow.slot)
+            return false;          // only a blow of the swing whose window is open right now
+        float ow = onewayMs;
+        if (!(ow > 0.0f) || ow > 250.0f)
+            ow = 40.0f;            // ext PsyncOneway fallback
+        float po = playoutMs > 0.0f ? playoutMs : 40.0f;
+        if (po > 150.0f)
+            po = 150.0f;           // ext g_ns[slot].dcur clamp
+        int grace = static_cast<int>(std::lround(ow + po));
+        grace = std::clamp(grace, 40, 90);
+        g_heldBlow = blow;
+        g_heldBlow.graceMs = grace;
+        g_heldBlow.t0 = nowMs;
+        g_heldBlow.until = nowMs + static_cast<uint64_t>(grace);
+        g_held = true;
+        g_swings[blow.slot].holdUntil = g_heldBlow.until;
+        return true;
+    }
+
+    void HeldTick(uint64_t nowMs, bool matchLive, bool busy)
+    {
+        if (!g_held)
+            return;
+        const bool pressed = g_pressMs >= g_heldBlow.t0 && Iframes(nowMs);
+        const bool gone = !matchLive;
+        if (!pressed && !gone && nowMs < g_heldBlow.until && !busy)
+            return;
+        const HeldBlow h = g_heldBlow;
+        g_held = false;
+        if (h.slot >= 0 && h.slot < kMaxPeers
+            && g_swings[h.slot].holdUntil == h.until)
+            g_swings[h.slot].holdUntil = 0;   // no longer keeps the dodge window open
+        if (gone)
+            return;
+        g_replay = true;                       // a replayed blow must never be held again
+        if (g_sink)
+            g_sink->ReplayBlow(h);
+        g_replay = false;
+    }
+
+    bool HeldActive() noexcept { return g_held; }
 
     void NoteSwing(int slot, uint64_t nowMs, uint16_t seq)
     {
@@ -84,8 +168,15 @@ namespace gameplay::melee_dodge {
     int Window(uint64_t nowMs, uint16_t* winMs)
     {
         const uint16_t streakWin = StreakWindow(nowMs);
-        const uint16_t win = streakWin;
-        const uint16_t react = win < kWindowMs ? win : kReactMs;
+        uint16_t win = streakWin;
+        uint16_t react = win < kWindowMs ? win : kReactMs;
+        {
+            const uint64_t tw = melee_tell::WinMs(), tr = melee_tell::ReactMs();
+            if (tw && win > tw)
+                win = static_cast<uint16_t>(tw);
+            if (tr && react > tr)
+                react = static_cast<uint16_t>(tr);
+        }
         if (winMs)
             *winMs = win;
         int best = -1;
@@ -98,6 +189,9 @@ namespace gameplay::melee_dodge {
                 continue;
             if (sw.landedMs >= sw.ms)
                 continue;                       // this blow already resolved
+            if (g_overrides.geometry
+                && !g_overrides.geometry(s, nowMs, g_windowOpen, nullptr))
+                continue;                       // ext MdgGeomOk
             if (!sw.openMs || sw.openMs < sw.ms)
                 sw.openMs = nowMs;
             uint64_t end = sw.ms + win;
@@ -105,6 +199,23 @@ namespace gameplay::melee_dodge {
                 end = sw.openMs + react;
             if (end > sw.ms + kWindowHardMs)
                 end = sw.ms + kWindowHardMs;
+            uint64_t xend = 0;
+            int xr = 0;
+            if (g_overrides.exchange) {
+                xr = g_overrides.exchange(s, &xend);  // ext MexWindowEnd
+                if (xr == 2)
+                    continue;
+                if (xr == 1)
+                    end = xend;
+            }
+            if (!xr && g_overrides.duel) {
+                uint64_t dend = 0;
+                const int dr = g_overrides.duel(s, nowMs, sw.ms, &dend); // ext MduWindowEnd
+                if (dr == 1)
+                    end = dend;
+                else if (dr == 2 && !held)
+                    continue;
+            }
             if (nowMs > end && !held)
                 continue;
             if (!held && streakWin < kWindowMs && nowMs + streakWin < end)
@@ -116,6 +227,7 @@ namespace gameplay::melee_dodge {
             }
         }
         g_winEnd = best >= 0 ? bestEnd : 0;
+        g_windowOpen = best >= 0;
         return best;
     }
 
@@ -209,15 +321,17 @@ namespace gameplay::melee_dodge {
 
     void Reset()
     {
-        std::memset(g_swings, 0, sizeof g_swings);
+        for (Swing& s : g_swings)
+            s = Swing{};
         g_seqNext = g_seqUsed = 0;
         g_winEnd = g_lastDodgeMs = g_hitMs = g_pressMs = g_iframeUntil = 0;
+        g_windowOpen = g_held = g_replay = false;
+        g_heldBlow = HeldBlow{};
         g_hpLast = -1.0f;
         g_charges = kCharges;
         g_streakN = 0;
-        std::memset(g_imm, 0, sizeof g_imm);
         for (auto& e : g_imm)
-            e.dir = 0xff;
+            e = { 0, 0xff };
     }
 
 } // namespace gameplay::melee_dodge

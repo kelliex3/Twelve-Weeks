@@ -6,6 +6,7 @@
 #include "notice.hpp"
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "net-protocol.hpp"
 #include "engine/exe_side.hpp"
 #include "engine/flag.hpp"
 #include "engine/locale.hpp"
@@ -29,8 +30,8 @@ namespace net::notice {
     namespace {
 
         // ---- wire (tools/notices.py) ----
-        constexpr uint8_t kOpNoticePoll = 0xBA;   // -> [64B token][u8 ver][u8 lang][u8 flags]
-        constexpr uint8_t kOpNoticeRep = 0xBB;    // <- "n=<k>\n<id>|<kind>|<param>|<text>\n..."
+        constexpr uint8_t kOpNoticePoll = static_cast<uint8_t>(NetDaemonOp::kNoticePoll); // -> [64B token][u8 ver][u8 lang][u8 flags]
+        constexpr uint8_t kOpNoticeRep = static_cast<uint8_t>(NetDaemonOp::kNoticeReply);  // <- "n=<k>\n<id>|<kind>|<param>|<text>\n..."
 
         constexpr int    kPollMs = 6000;          // base poll cadence
         constexpr int    kPollCapMs = 30000;      // spread the poll out during an outage

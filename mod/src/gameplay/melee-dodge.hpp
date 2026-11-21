@@ -14,10 +14,11 @@
 // observable events in and receives wire sends through DodgeSink. With no sink installed the
 // module only tracks state.
 //
-// Honest gates (TODO): melee_tell's shortening (MtellWinMs / MtellReactMs), melee_exchange's
-// window override, melee_duel's fair window, the geometry test (MdgGeomOk) and the late-press
-// hold all need their own ports. Window() here is the base ext rule; those producers narrow it
-// once ported. The wire opcodes are reserved in net-protocol.hpp.
+// The window now also applies the ported melee_tell shortening (MtellWinMs / MtellReactMs),
+// the melee_exchange / melee_duel window overrides, and the MdgGeomOk geometry test. Those
+// producers are injected through WindowOverrides; with no overrides installed Window() keeps
+// the base ext rule. The late-press hold (g_mdh) is the pure grace / replay state; the engine's
+// busy / match-state gates are supplied by the caller. Wire opcodes live in net-protocol.hpp.
 
 namespace gameplay::melee_dodge {
 
@@ -37,6 +38,39 @@ namespace gameplay::melee_dodge {
     inline constexpr int      kCharges       = 2;     // ext MDG_CHARGES
     inline constexpr int      kMaxPeers      = 8;
 
+    // ext MD_REACH / MD_COS / MD_TURN_MS and MdgGeomOk's loose-mode tolerances.
+    inline constexpr float    kReachM        = 3.6f;
+    inline constexpr float    kLooseReachM   = 4.4f;  // MD_REACH + 0.8
+    inline constexpr float    kHeightTolM    = 1.3f;
+    inline constexpr float    kConeCos       = 0.766f; // ~40 deg
+    inline constexpr float    kLooseConeCos  = 0.5f;
+    inline constexpr uint64_t kTurnMs        = 450;   // a young swing only needs the front half
+    inline constexpr float    kNearDistM     = 0.05f;
+
+    // ext g_mdh: a blow waiting for a late dodge press. The caller owns the engine objects
+    // (me / attacker / weapon / ammo) and receives the blow back through Sink::ReplayBlow.
+    struct HeldBlow {
+        uint64_t me = 0;
+        uint64_t attacker = 0;
+        uint64_t weapon = 0;
+        uint64_t ammo = 0;
+        float    damage = 0.0f;
+        uint8_t  flag = 0;
+        int      slot = -1;
+        int      graceMs = 0;
+        uint64_t t0 = 0;
+        uint64_t until = 0;
+    };
+
+    // MdgGeomOk's pure geometry: positions in metres, quaternion in x,y,z,w order. The ext
+    // used the engine's puppet locator and the local player's locator; the host supplies both.
+    struct Pose {
+        float pos[3] = { 0.0f, 0.0f, 0.0f };
+        float rot[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    };
+    bool GeometryOk(const Pose& self, const Pose& peer, uint64_t swingMs, uint64_t nowMs,
+                    bool loose, float* dist = nullptr);
+
     // Movement directions (body frame): 0 front, 1 left, 2 right, 3 back.
     enum Direction : uint8_t { kFront = 0, kLeft = 1, kRight = 2, kBack = 3 };
 
@@ -46,9 +80,22 @@ namespace gameplay::melee_dodge {
         virtual void SendPress(uint8_t dest, uint8_t immune, uint8_t dir, uint64_t clipSid) = 0;
         virtual void SendResult(uint8_t dest) = 0;   // MSG_DODGE_RES 0x98, empty
         virtual void Log(const char* text) = 0;
+        // A held late-press blow is replayed here once its grace ends (or a press covers it).
+        // No-op by default so existing inert sinks stay valid.
+        virtual void ReplayBlow(const HeldBlow& blow) { (void)blow; }
     };
 
     void SetSink(Sink* sink);
+
+    // Producers that narrow a peer's window (ext MdgWindow). A callback returning 0 means "not
+    // ours", 1 means "*end is the window end", 2 means "closed" (drop this swing). The geometry
+    // callback should call GeometryOk with the peer's current net pose.
+    struct WindowOverrides {
+        int  (*exchange)(int slot, uint64_t* end) = nullptr; // ext MexWindowEnd
+        int  (*duel)(int slot, uint64_t nowMs, uint64_t swingMs, uint64_t* end) = nullptr; // MduWindowEnd
+        bool (*geometry)(int slot, uint64_t nowMs, bool loose, float* dist) = nullptr;
+    };
+    void SetWindowOverrides(const WindowOverrides& overrides);
 
     // ---- swing tracking (the attacker's side feeds these) -------------------------------
     // A remote swing began at `nowMs` with its sequence number (ext g_mdg.sw[s]).
@@ -58,8 +105,16 @@ namespace gameplay::melee_dodge {
     // A late blow is held for the grace window (ext g_mdh): keeps the window open.
     void HoldSwing(int slot, uint64_t untilMs);
 
+    // ---- late-press hold (ext MdgHitHold / MdgHeldTick) -------------------------------------
+    // onewayMs is the ext PsyncOneway(as); playoutMs is the receive buffer's current delay
+    // (ext g_ns[as].dcur). The grace is round(oneway + playout), clamped to 40..90 ms -- the
+    // ext's current tuning (its older comment still says 60..180). Returns false when this
+    // blow must take the normal hit path.
+    bool HoldBlow(const HeldBlow& blow, uint64_t nowMs, float onewayMs, float playoutMs);
+    void HeldTick(uint64_t nowMs, bool matchLive, bool busy = false);
+    bool HeldActive() noexcept;
+
     // ext MdgWindow: the best open window (slot, or -1); *winMs gets the current window length.
-    // Producers that narrow the window are gated (see the header note).
     int  Window(uint64_t nowMs, uint16_t* winMs);
     uint64_t WindowEnd();
 

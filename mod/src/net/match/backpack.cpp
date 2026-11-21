@@ -49,7 +49,7 @@ namespace net::match::backpack {
         }
 
         // ---- wire (ext MSG_BACKPACK / BP_VER) --------------------------------------------
-        constexpr uint8_t kMsgBackpack = 0x5B;    // pinned to the ext's byte (NEVT_BACKPACK)
+        constexpr uint8_t kMsgBackpack = static_cast<uint8_t>(NEVT_BACKPACK); // pinned to the ext's byte
         constexpr uint8_t kVer         = 1;
 
         constexpr int kPhaseIdle = 0, kPhaseOpen = 1, kPhaseClosing = 2, kPhaseAbort = 3;
@@ -115,8 +115,8 @@ namespace net::match::backpack {
         constexpr int     kBptN     = 320;
         constexpr int     kBptChunk = 24;
         constexpr int     kBptrChunk = 16;
-        constexpr uint8_t kBptVer   = 0x54;
-        constexpr uint8_t kBptrVer  = 0x55;
+        constexpr uint8_t kBptVer   = static_cast<uint8_t>(NetBackpackPayload::kSpinec);
+        constexpr uint8_t kBptrVer  = static_cast<uint8_t>(NetBackpackPayload::kRoot);
         constexpr uint32_t kBptMagic  = 0x31545042u;   // "BPT1"
         constexpr uint32_t kBptrMagic = 0x31525042u;   // "BPR1"
         constexpr const char* kBptFile  = "t2r-bp-track.bin";

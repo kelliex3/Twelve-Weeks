@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "net-protocol.hpp"
 #include "engine/flag.hpp"
 #include "engine/script.hpp"
 #include "engine/widget.hpp"
@@ -38,8 +39,8 @@ namespace net::requeue {
         constexpr size_t kTokenLen = 64;
         constexpr size_t kReqLen   = 66;        // token + sub 0 + mode 0
         constexpr size_t kRepCap   = 160;
-        constexpr uint8_t kOpPoll  = 0xBC;
-        constexpr uint8_t kOpReply = 0xBD;
+        constexpr uint8_t kOpPoll  = static_cast<uint8_t>(NetDaemonOp::kRequeuePoll);
+        constexpr uint8_t kOpReply = static_cast<uint8_t>(NetDaemonOp::kRequeueReply);
 
         enum AskResult : int {
             kAskNone = 0,

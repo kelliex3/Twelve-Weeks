@@ -9,8 +9,10 @@
 #include "net/match/hit-rel.hpp"
 #include "net/match/match-liveness.hpp"
 #include "gameplay/melee-dodge.hpp"
+#include "gameplay/melee-duel.hpp"
 #include "gameplay/melee-hit-react.hpp"
 #include "gameplay/melee-exchange.hpp"
+#include "gameplay/melee-tell.hpp"
 
 #include <cstdint>
 
@@ -99,7 +101,10 @@ namespace net::match::melee_bridge {
                 return s < 0 ? 255u : static_cast<uint8_t>(s);
             }
             float OnewayMs(uint8_t) override { return 0.0f; }     // no psync one-way source yet
-            uint16_t TellTc(int, uint16_t authored) override { return authored; }
+            uint16_t TellTc(int wcls, uint16_t authored) override
+            {
+                return gameplay::melee_tell::Tc(wcls, authored);
+            }
             uint16_t QteFlags() override { return 0; }
             uint16_t QtePressOffset() override { return 0; }
             uint8_t QteCap() override { return 0; }
@@ -113,6 +118,19 @@ namespace net::match::melee_bridge {
             void BeginQte(uint8_t) override {}
             void EndQte() override {}
         };
+
+        // melee-dodge's window narrowing: the exchange / duel cores are pure and already feed
+        // their window ends from their own wire / lifecycle state. The geometry callback is
+        // deliberately absent until a native peer-pose producer exists (no engine reads here).
+        int ExchangeWindowEnd(int slot, uint64_t* end)
+        {
+            return gameplay::melee_exchange::WindowEnd(static_cast<uint8_t>(slot), end);
+        }
+
+        int DuelWindowEnd(int slot, uint64_t nowMs, uint64_t swingMs, uint64_t* end)
+        {
+            return gameplay::melee_duel::WindowEnd(slot, nowMs, swingMs, end);
+        }
 
         bool g_installed = false;
 
@@ -130,8 +148,12 @@ namespace net::match::melee_bridge {
         static HitReactBridge  s_hitreact;
         static ExchangeBridge  s_exchange;
 
+        gameplay::melee_dodge::WindowOverrides windows;
+        windows.exchange = &ExchangeWindowEnd;
+        windows.duel = &DuelWindowEnd;
         net::match::hitrel::SetSink(&s_hitrel);
         gameplay::melee_dodge::SetSink(&s_dodge);
+        gameplay::melee_dodge::SetWindowOverrides(windows);
         gameplay::melee_hit_react::SetSink(&s_hitreact);
         gameplay::melee_exchange::SetSink(&s_exchange);
         g_installed = true;
@@ -145,6 +167,7 @@ namespace net::match::melee_bridge {
         const uint64_t now = ClockMs();
         net::match::hitrel::Tick();
         gameplay::melee_dodge::Tick(now);
+        gameplay::melee_dodge::HeldTick(now, net::match::liveness::Live());
         gameplay::melee_hit_react::Tick();
         gameplay::melee_exchange::Tick(now, false);
     }
@@ -194,6 +217,8 @@ namespace net::match::melee_bridge {
             return;
         net::match::hitrel::Reset(true);
         gameplay::melee_dodge::Reset();
+        gameplay::melee_duel::Reset();
+        gameplay::melee_tell::Reset();
         gameplay::melee_hit_react::Reset();
         gameplay::melee_exchange::OnLeftMatch();
     }

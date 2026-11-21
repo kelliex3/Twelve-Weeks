@@ -24,7 +24,7 @@ namespace net::glass {
     namespace {
 
         // ---- wire (ext MSG_GLASS) ----------------------------------------------
-        constexpr uint8_t  kMsgGlass = 0x7A;                  // pinned to the ext's byte
+        constexpr uint8_t  kMsgGlass = static_cast<uint8_t>(NEVT_GLASS); // pinned to the ext's byte
         constexpr uint64_t kBreak    = 0x2ccc09d462355d58ULL; // the engine's break event hash
 
         // ---- registry (ext GL_REG_MAX / GL_HASH / g_gl_fast) -------------------

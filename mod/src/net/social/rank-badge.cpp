@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp
+#include "net-protocol.hpp"
 #include "engine/widget.hpp"
 #include "daemon-rpc.hpp"
 #include "net-account.hpp"
@@ -22,8 +23,8 @@ namespace net::rank_badge {
     namespace {
 
         constexpr size_t kTokenLen = 64;
-        constexpr uint8_t kOpReq   = 0xBF;
-        constexpr uint8_t kOpRep   = 0xBF;
+        constexpr uint8_t kOpReq   = static_cast<uint8_t>(NetDaemonOp::kRankTable);
+        constexpr uint8_t kOpRep   = static_cast<uint8_t>(NetDaemonOp::kRankTable);
         // 300 entries * ~20 bytes (ext rankbadge.py LIMIT) + the "n=<k>" header.
         constexpr size_t kRepCap   = 16384;
 

@@ -36,6 +36,7 @@ one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the 
 | 10 | Localisation | `loc.c` / `loc_pl.h` (lookup + language detection every 2 s) | **ported** — `engine/locale.*` (language registry + table-driven lookup, exact / `%d`-`%s` templates / `{1}` captures / `{N|…}` plurals / rich-text split / diacritic fold), `engine/loc_table_pl.hpp` (ported Polish table), `net/social/friends-state.*` (`Tr` uses the active table) | engine text-lookup probe for `auto` detection is not wired in mod/ yet (auto resolves to English); only the Polish table ships, other languages resolve to English until their generated table is added |
 | 11 | Tabbed page frame / composed outfits (build 191) | `nrui.c` (`nr_style.py`), `customize_compose.c` (`MSG_CUSTOM_LOOK`, `cz_body_*`) | **not started** — no frame API, no look-wire slot, no composed `look2` consumer | needs §3 widgets, a reserved net slot and `mod/widgets/`; no cutover |
 | 12 | Built-header guard (build 191) | `build_ext.py check_built_headers()`, `__has_include("vintage_bolt_built.h")`, `T2R_EXT_NO_BUILT_H=1` | **partial** — `T2R_DATA_*` compile gates and stub strategy exist | wire a mod build-time presence check for generated headers |
+| 13 | Remote-puppet playout (netsmooth) | `netsmooth.c`: msg 5/7 pairing, jitter buffer, adaptive delay + playout clock, lerp/slerp + extrapolation, error correction, 10 s `net stats:`; winmm apply/alpha/compose hooks + pinned VAs | **ported (live apply)** — `net/game/net-smooth.*` pure core + `net-smooth-bridge.*` native clock/stats; feeds in `net-session.cpp`, locator cutover in `net-replication.cpp` with an unprimed fallback | ext fixed-VA patches / winmm hooks / send cap / relay dedup / host-bw / root-vec4 / anim-clock advisory have no native equivalent; no live game A/B yet |
 
 ---
 
@@ -94,6 +95,10 @@ the source build calls `SendEvent` directly, so no send hook is needed.
   feature (added *with the feature*, not all up front — but the slot numbers are reserved now).
 - A table in `PORTING.md`: ext `MSG_*` ⇄ `NEVT_*` ⇄ owning feature module. Treat it as a fixed wire
   contract while both builds ship.
+- `net-protocol.hpp` is the SINGLE registry for every byte on the wire: peer `NetEventType` values
+  plus `NetDirectOp` (direct-melee helper), `NetDaemonOp` (notice / requeue / rank / friends / JIP
+  / AFK tail) and `NetBackpackPayload` (phase / recorded-track chunk). Feature modules alias these
+  enums instead of pinning a second copy of an ext opcode. Values are never renumbered.
 
 **Gate.** Port one single-message net feature (`scopeglint` `MSG_GLINT 0x91` or `glass` `MSG_GLASS
 0x7A`) and A/B a ported client against an ext client: the message is produced and consumed on both.
@@ -538,8 +543,21 @@ stays the bridge and no cutover toggle is flipped. The exact ext wire IDs are re
   in the ext until the relay bridge is ported.
 - **Melee dodge** — `gameplay/melee-dodge.*`. Streak windows `480/260/180/130` ms, `380` ms reaction,
   `1000` ms hard cap, `260` ms i-frames, two charges with `2500/1500` ms cooldowns, swing tracking
-  and press / dodged verdicts. Gate: pad injection is available (`engine/pad.*`) but the swing /
-  contact / animation / prompt producers and the relay wire are not wired to it yet.
+  and press / dodged verdicts. Also the ported window narrowing: melee-tell `WinMs/ReactMs`, the
+  `MexWindowEnd` / `MduWindowEnd` overrides, the pure `GeometryOk` (3.6 m / ~40 deg, loose
+  4.4 m / 0.5, 1.3 m height, 450 ms turn grace) and the late-press hold (`g_mdh`, grace
+  `round(oneway + playout)` clamped **40..90 ms** -- the ext's current code, not its older 60..180
+  comment) with held-blow replay. Gate: pad injection is available (`engine/pad.*`) but the swing /
+  contact / animation / prompt producers, the peer pose feed and the relay wire are not wired to it
+  yet; the bridge supplies the exchange / duel window callbacks, not the geometry callback.
+- **Melee tell** — `gameplay/melee-tell.*`. Pure timing core: contact at the tell (320 ms default,
+  `200..500` range), x1.0..x1.25 windup speed-up, the 0.5 EMA contact estimate per weapon class and
+  `WinMs = tell + 120` / `ReactMs = tell` (0 when opted out or melee v2). The audio / clip cue half
+  stays gated; the host supplies the ext's file-toggle state through the setters.
+- **Melee duel fair window** — `gameplay/melee-duel.*`. Pure duel window (`MduWindowEnd`: contact
+  cap, 400 ms swing-match tolerance) and next-press fairness floor (`VicExitMs` 650 ms / rate 1.12,
+  `VicLead` 54 - 2*oneway + 2*oneway + 10, +40 slack, capped at base + 60 ms / 900). The duel clip
+  / -hit pair / psync / wire producers are not ported, so the core stays inactive until fed.
 - **Hit reactions** — `gameplay/melee-hit-react.*`. `MHR_CUT_MS {360,440,520}` strength rule, the
   `MSG_HITREACT2` decode / flags / validation `[150,600]`, victim graze / replace / cut, attacker
   lock cap `480` ms + `900` ms confirm, and the 50 ms predicted puppet reaction. Gate: the SP clip
@@ -665,6 +683,49 @@ renumbered, and every new producer stays with the ext until its native counterpa
 
 ---
 
+## 13. Remote-puppet playout — netsmooth ported, live cutover
+
+**Ext behaviour (build 191 reference).** `tools/ext/netsmooth.c` wraps winmm's remote-puppet
+placement with a per-slot jitter buffer. Each msg-5 state (pos `peer+0x68`, quat `+0x74`) is
+stamped with the sender time carried by the msg-7 AnimCmd list of the same sequence. A 4 s
+least-delay offset (`oref`) and a jitter peak (`jpk`) drive a playout clock
+`R = now + oref - delay`; the puppet is lerped/slerped between samples bracketing `R`, with
+capped extrapolation, smooth error correction, a 100 ms handover from winmm's own placement,
+and a 10 s `net stats:` line.
+
+**Native port.** `net/game/net-smooth.hpp/.cpp` is an engine-free, single-threaded port of that
+core: 8 slots (`0..7`, slot 0 = host, matching ext `T2R_MAX_PEERS`), a 64-sample ring, the
+32-entry msg-7 pairing ring, sender-clock rebase + 15.625 ms dequantisation (least squares
+through 24 pairs), jitter/loss EWMAs, the adaptive delay + stable `dcur`, the `R` clock,
+bracketing interpolation, `NsVel` extrapolation with capped angular rate, the E/hold-Q error
+correction and stutter metrics. It uses the caller's double-ms timeline; no engine headers,
+no wire changes, no ext toggle read.
+
+`net/game/net-smooth-bridge.hpp/.cpp` supplies `engine::frame::NowMs()` as that timeline,
+`NetPlayer::PingMs()/2` as the ext `PsyncOneway` prediction lead, the 10 s `[NETSMOOTH]` log
+(ext's line 2104), and the live apply. Feeds are in `net-session.cpp`: `OnState` right after
+`PushState()` in `HandleState`, `OnAnim` after the `sendMs` decode in `HandleAnimCmd` (native
+State and AnimCmd share `g_myStateSeq`, so the ext's msg-5/msg-7 pairing is preserved).
+`net-replication.cpp::ApplyRemote()` now writes the smoothed transform to
+`LOCATOR::SET_OBJECT_LOCATOR`; the previous native extrapolation is retained only as the
+fallback while the ring is unprimed / a sender clock changes. `replication::Tick()` rolls the
+stats window and `ResetRuntime()` clears all slots.
+
+**Out of scope (no native equivalent, need a live exe):** the winmm apply/alpha/compose hooks
+and fixed-VA code patches (`+0x68/+0x74/+0xc5`, time ring `+0x2820/38/3c`, reset bit
+`+0x77e4`, anim clock `+0x74c8`), the anim-clock advisory `g_nsAnim`, the send cap / relay
+dedup / host-bw LOD, the five root-vec4 interpolation (not present in `PlayerNetState`) and
+the dev netsim. The native anim layer keeps its own 25 ms play clock; this port does not couple
+to it.
+
+**Verification.** `mod/tests/netsmooth_core_test.cpp` is a standalone C++17 harness (feeds +
+sampling, pairing, teleport detection, dequantisation, sender-clock rebase, msg-7 loss,
+handover blend, unprimed fallback) that passes here; the bridge compiles syntax-only. There is no game build here, so the live A/B against the ext and the
+`[NETSMOOTH]` vs `net stats:` comparison are still outstanding; the fallback is not an enable
+gate, and no ext toggle or wire ID was touched.
+
+---
+
 ## Sequencing
 
 Ordered by dependency, cheapest-unblock-first:
@@ -697,8 +758,11 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/script.hpp` | `DC::Native` cached helper; extend `GUI2` (find/child/transform); camera track hook |
 | `mod/src/engine/pcm.hpp` + `.cpp` | **new** — PCM mixer |
 | `mod/src/engine/pad.hpp` + `.cpp` | **new** — pad injection (safetyhook) |
-| `mod/src/net/protocol/net-protocol.hpp` | ext `NEVT_*` slot values + payload structs |
-| `mod/src/net/game/net-replication.cpp` | dispatch `case`s for ported slots |
+| `mod/src/net/protocol/net-protocol.hpp` | ext `NEVT_*` slot values + payload structs + central `NetDirectOp` / `NetDaemonOp` / `NetBackpackPayload` opcodes (all ported wire bytes, exact ext values) |
+| `mod/src/net/game/net-replication.cpp` | dispatch `case`s for ported slots; **netsmooth live cutover** — `ApplyRemote` writes the smoothed transform to `LOCATOR::SET_OBJECT_LOCATOR` (native interpolation retained as unprimed fallback), `Tick()` rolls the 10 s stats window, `ResetRuntime()` clears slots |
+| `mod/src/net/game/net-smooth.hpp` + `.cpp` | **new** — pure remote-puppet playout core (ext `netsmooth.c`): 8-slot 64-sample ring, msg 5/7 pairing, rebase + 15.625 ms dequant, jitter/loss/delay, playout clock, lerp/slerp + extrapolation, error correction, stats; engine-free, single-threaded |
+| `mod/src/net/game/net-smooth-bridge.hpp` + `.cpp` | **new** — native bridge: `frame::NowMs()` clock, `PingMs()/2` lead, 10 s `[NETSMOOTH]` log, live apply; state/anim feeds wired in `net-session.cpp` |
+| `mod/tests/netsmooth_core_test.cpp` | **new** — standalone C++17 pure-core harness (no engine headers, not in CMake); run command in the file header |
 | `mod/widgets/*.widget.json` | **new** — widget defs translated from `tools/features/*_widgets.py` |
 | `mod/cmake/gen-*.py` + `mod/CMakeLists.txt` | data-header codegen template + wiring |
 | `mod/src/loader/config.hpp` (+ runtime config if needed) | toggle policy surface |
@@ -727,7 +791,10 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/game/player-status.hpp` + `.cpp` | extend — `MatchLive()` reads the shared engine liveness latch; `LocalDownState()` / `PuppetDownState()` expose the 0/1/2 dying distinction to `bloodbuild.cpp` |
 | `mod/src/net/match/downed-bridge.hpp` + `.cpp` | **new** — gated integration seam for the downed core: inert sink + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
 | `mod/src/net/match/hit-rel.hpp` + `.cpp` | **new** — reliable one-shot hit core (ext hitrel section): seq / retransmits / ACK / dedupe ring, behind `HitRelSink` |
-| `mod/src/gameplay/melee-dodge.hpp` + `.cpp` | **new** — pure dodge timing / state core (ext `melee_dodge.c`), behind `DodgeSink` |
+| `mod/src/gameplay/melee-dodge.hpp` + `.cpp` | extend — pure dodge timing / state core (ext `melee_dodge.c`) + tell narrowing, exchange / duel window overrides, `GeometryOk` and late-press hold (`g_mdh`), behind `DodgeSink` |
+| `mod/src/gameplay/melee-tell.hpp` + `.cpp` | **new** — pure windup-tell contact / window core (ext `melee_tell.c`: `MtellWinMs` / `MtellReactMs`, `MtellTc` / `MtellSpeed` / `MtellNoteContact`); cue audio / clips gated |
+| `mod/src/gameplay/melee-duel.hpp` + `.cpp` | **new** — pure duel fair-window core (ext `melee_duel.c`: `MduWindowEnd`, `MduVicExitMs`, ps45 `Md45VicLead` / next-press gate), behind explicit host state; duel engine / wire gated |
+| `mod/tests/melee_timing_core_test.cpp` | **new** — standalone C++17 harness for the tell / duel / dodge window and hold cores (`MELEE_TIMING_CORE_TEST_OK`); no game headers |
 | `mod/src/gameplay/melee-hit-react.hpp` + `.cpp` | **new** — pure hit-reaction / attacker-lock / prediction core (ext `melee_hitreact.c`), behind `HitReactSink`; clip table gated |
 | `mod/src/gameplay/melee-exchange.hpp` + `.cpp` | **new** — pure exchange state machine / wire core (ext `melee_exchange.c`), behind `MexSink` |
 | `mod/src/gameplay/mv3/{types.hpp,sim.cpp,net-core.hpp,net-core.cpp}` | **new** — melee-v3 contract + generated table + deterministic sim + engine-free rollback / wire core (ext `mv3.h` / `mv3_moves.h` / `mv3_sim.c` / `mv3_net_core.h`); names pinned to the shared contract |
@@ -747,6 +814,11 @@ which is the Phase-2 cutover pattern in miniature.
 
 - **No local build here.** Every gate above needs the user's Windows toolchain (clang-cl + LLVM +
   game install); this environment can write/refactor source and scripts but cannot run the A/B.
+- **Netsmooth cutover is unverified in-game.** The pure core has an offline behavioural harness,
+  but there is no winmm/exe here to A/B remote-puppet motion against the ext. The retained native
+  path only covers an unprimed buffer; watch the `[NETSMOOTH]` 10 s line against the ext's
+  `net stats:` (delay, extrap %, snaps, stutter) on a live build and revert the four call sites in
+  `net-session.cpp` / `net-replication.cpp` if remote puppets stutter.
 - **`main` has diverged (Port build 191).** The new ext modules / headers are now inventoried in
   FEATURES.md and §12, but none is ported and the branch is intentionally *not* merged (ext/mod
   casing differs too widely for a text merge). Several already-ported features gained new work on

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "log.hpp"
+#include "net-protocol.hpp"
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
 #include "net-transport.hpp"
@@ -25,9 +26,9 @@ namespace net::direct {
         constexpr int      kRing       = 128;
         constexpr int      kMaxPayload = 120;
         constexpr int      kMaxWire    = 160;
-        constexpr uint8_t  kHello      = 0x06;
-        constexpr uint8_t  kAck        = 0x07;
-        constexpr uint8_t  kData       = 0x05;
+        constexpr uint8_t  kHello      = static_cast<uint8_t>(NetDirectOp::kHello);
+        constexpr uint8_t  kAck        = static_cast<uint8_t>(NetDirectOp::kAck);
+        constexpr uint8_t  kData       = static_cast<uint8_t>(NetDirectOp::kData);
         constexpr uint8_t  kKindMessage = 1;
         constexpr uint8_t  kKindPing   = 2;
         constexpr uint8_t  kKindPong   = 3;

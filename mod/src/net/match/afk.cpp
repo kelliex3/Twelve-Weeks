@@ -5,6 +5,7 @@
 #include <winsock2.h>        // daemon-rpc.hpp uses sockaddr-in types
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "net-protocol.hpp"
 #include "engine/draw.hpp"
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
@@ -199,7 +200,7 @@ namespace net::afk {
         if (s > 0xFFFE)
             s = 0xFFFE;
         const uint16_t v = known ? static_cast<uint16_t>(s) : 0xFFFF;
-        p[0] = 0xAF;
+        p[0] = static_cast<uint8_t>(NetDaemonOp::kAfkTrailer);
         p[1] = static_cast<uint8_t>(v);
         p[2] = static_cast<uint8_t>(v >> 8);
         p[3] = static_cast<uint8_t>((g_afk.counting ? 1 : 0) | (g_afk.warn ? 2 : 0));

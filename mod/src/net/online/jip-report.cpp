@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "net-protocol.hpp"
 #include "engine/flag.hpp"
 #include "engine/lobby.hpp"
 #include "engine/script.hpp"
@@ -29,8 +30,8 @@ namespace net::jip {
     namespace {
 
         // ---- wire (tools/daemon.py) ------------------------------------------------
-        constexpr uint8_t  kOpClock = 0xE3;
-        constexpr uint8_t  kOpReply = 0xE5;
+        constexpr uint8_t  kOpClock = static_cast<uint8_t>(NetDaemonOp::kJipClockReport);
+        constexpr uint8_t  kOpReply = static_cast<uint8_t>(NetDaemonOp::kJipClockReply);
         constexpr size_t   kReqCap  = 80;                            // token 64 + header 9 + afk 4
         constexpr size_t   kRepPayload = 2 + 8 * 0x32 + 1 + 2 + 8 * 2; // roster + wave + swap block
         constexpr size_t   kRepCap  = 3 + kRepPayload;                // [u16 len][op][payload]
@@ -50,7 +51,7 @@ namespace net::jip {
         constexpr bool kApplyGhostPeers = false;
         constexpr bool kRequestTeamSwap = false;
 
-        constexpr uint8_t  kOpSwap     = 0xA7;
+        constexpr uint8_t  kOpSwap     = static_cast<uint8_t>(NetDaemonOp::kJipTeamSwap);
         constexpr uint64_t kGhostSilentMs = 15000;  // ext GHOST_SILENT_MS
         constexpr uint64_t kListedMaxMs   = 10000;  // ext: stale listed mask is ignored
 
