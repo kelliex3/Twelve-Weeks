@@ -9,6 +9,15 @@ Rule of this phase (from the Great Merge reframe): the ext module is the **behav
 never code to move. We reimplement the mechanism natively; where a mechanism already exists in the
 mod, the deliverable is *verification + extension*, not a rewrite.
 
+**Branch state (2026-11-21).** These notes describe the port committed on `desloppify/code-health`
+(`5c47def` adds the table-driven localisation support; the earlier `UNTESTED:` commits port the rest).
+The branch is deliberately **not merged** into `main`: `main` has advanced with the `Port build 191: …`
+commits, which add new ext modules (achievements, CUSTOMIZE, CHOOSE YOUR SIDE, bodyshield, private
+lobby, send-off, …), six private generated headers and expanded Polish tables. The ext and mod
+codebases differ massively in casing (`snake_case` vs `PascalCase` / `g_camelCase`), so a text merge
+is not tractable — build 191 stays a separate behavioural reference and its behaviours are ported
+one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the work on this branch.
+
 ## Mechanism status
 
 | # | Mechanism | Ext reference | `mod/` today | Gap |
@@ -22,6 +31,7 @@ mod, the deliverable is *verification + extension*, not a rewrite.
 | 7 | Generated data pipeline | 78 headers (`tools/ext/GENERATED.md`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy |
 | 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config |
 | 9 | Engine RVA call / hook | `*(exe + rva)(…)` + hand-built RWX trampolines (`bp_pick`, `padinject.c`) | **partial** — `engine/transform.*`, `engine/pcm.*`, `engine/backpack-prop.*` call pinned RVAs; `net-patches.cpp` / `loader/boot.cpp` / `engine/pad.cpp` hook via safetyhook | pattern resolution + a shared exe-call helper + version guard |
+| 10 | Localisation | `loc.c` / `loc_pl.h` (lookup + language detection every 2 s) | **ported** — `engine/locale.*` (language registry + table-driven lookup, exact / `%d`-`%s` templates / `{1}` captures / `{N|…}` plurals / rich-text split / diacritic fold), `engine/loc_table_pl.hpp` (ported Polish table), `net/social/friends-state.*` (`Tr` uses the active table) | engine text-lookup probe for `auto` detection is not wired in mod/ yet (auto resolves to English); only the Polish table ships, other languages resolve to English until their generated table is added |
 
 ---
 
@@ -401,6 +411,10 @@ consumed by the Phase-1 PCM port.
 - **Logging.** Unify on `TO1_LOG` (`src/log.hpp`, compiled out in `TO1_RELEASE`). Each ported feature
   drops its ext `xlog` / `t2r-ext-boot.txt` trail and uses `TO1_LOG` with the same prefix (so the A/B
   grep still works).
+- **Language selection.** `engine::locale` resolves the active language from `T2R_LANG` or a one-line
+  `t2r-lang.txt` next to the exe (`en` / `pl` / `auto` / any registered code), re-read every 2 s.
+  There is no toggle to port here: the existing sidecar names are kept for compatibility, and the
+  0/1 Polish flag sent to the daemon (`friends13`, `notice`) still uses `IsPolish()`.
 - **Hooks.** All new hooks go through safetyhook; the ext's `hookreg.h` overlap detection becomes the
   build-time/CI check (`tools/ext/tests/test_hook_overlap.py` is the reference).
 
@@ -644,6 +658,8 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/social/friends-state.hpp` + `.cpp` | **new** — pure 0xD9 JSON state / rows / actions core (ext `friends13.h`) + rank-table core (ext `rankbadge.c` / `rank13.h`: name key, bounded 0xBF reply parse, lookup / placeholder, symbol / weeks / icon path) |
 | `mod/src/net/social/rank-badge.hpp` + `.cpp` | **new** — async 0xBF rank-table poll + `RankUi` widget drawing (ext `rankbadge.c`), consumed by friends13 rows; no ext cutover |
 | `mod/src/net/social/friends13.hpp` + `.cpp` | **new** — in-game FRIENDS / PARTY panel, toasts, buttons, party gate + search gate (ext `friends13.c`), rank badge row reservation + MATCH FOUND roster tabs / names |
+| `mod/src/engine/locale.hpp` + `.cpp` | **new** — table-driven localisation (ext `loc.c`): language registry keyed by code, English -> per-language lookup with exact / template / plural / capture / rich-text rules, diacritic-folded raw draws, `T2R_LANG` / `t2r-lang.txt` selection re-read every 2 s, `SetOverride` / `Reset` test seams; call sites use `Tr(en[, pl])` / `Translate` / `TranslateDraw` |
+| `mod/src/engine/loc_table_pl.hpp` | **new** — generated Polish translation table + probe ids (ext `loc_pl.h`), one row in the registry; adding another language is a new generated header + registry row, no call-site changes |
 | `mod/src/engine/widget.hpp` + `.cpp` | extend — mouse navigation (ext `UiRectSs` / `UiMouseOver` / `UiOverViewport`): transform-rect "escape bounds" hover fallback, prologue-checked pinned RVA, `t2r-no-mouse-nav.txt` opt-out |
 | `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
@@ -654,6 +670,10 @@ which is the Phase-2 cutover pattern in miniature.
 
 - **No local build here.** Every gate above needs the user's Windows toolchain (clang-cl + LLVM +
   game install); this environment can write/refactor source and scripts but cannot run the A/B.
+- **`main` has diverged (Port build 191).** New ext modules and generated headers landed on `main`
+  after this branch point; they are intentionally *not* merged (ext/mod casing differs too widely
+  for a text merge). This inventory and the mechanism notes therefore lag build 191 until each new
+  behaviour is ported natively — do not treat the counts here as current for `main`.
 - **Wire compatibility.** Ported and ext clients share a lobby during coexistence; net opcodes must
   keep their exact byte values, and no port may reuse an ext opcode.
 - **Private generators.** Features whose data generator is private cannot be fully ported until the
