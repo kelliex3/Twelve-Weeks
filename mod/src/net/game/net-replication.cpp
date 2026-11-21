@@ -26,6 +26,12 @@
 #include "net-timer.hpp"
 #include "alertsting.hpp"
 #include "music-tier.hpp"
+#include "music-sight.hpp"
+#include "music-hold.hpp"
+#include "exec-music.hpp"
+#include "shivsting.hpp"
+#include "xcam-bridge.hpp"
+#include "gameplay/stun-lock.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -1969,6 +1975,12 @@ namespace net::replication {
         net::requeue::Reset();
         net::direct::Reset();
         net::audio::music_tier::Reset();
+        net::audio::music_sight::Reset();
+        net::audio::music_hold::Reset();
+        net::audio::exec_music::Reset();
+        net::audio::shivsting::Reset();
+        net::audio::xcam_bridge::Reset();
+        gameplay::stun_lock::Reset();
 
         kListenModeDurability = 1.0f;
 

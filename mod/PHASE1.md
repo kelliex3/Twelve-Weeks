@@ -196,8 +196,36 @@ dead / downed, so the "shot at out of the quiet" path can arm; the damage event 
 before `NoteEvent("we took a hit")`, matching the ext's hook order. The *music playback* (risers,
 loops, beds, themes / sets / v5 rotation, grid-quantised cut timing, stinger layer) is deliberately
 not ported: it needs the private PCM blobs and the generated `music_families.h` / `music_pools.h`
-tables. Honest gates: the camera-frustum / LOS test and the 5–8 m forward-cone sight check stay
-gated (no render-camera path), so those two floor inputs are conservative until that mechanism lands.
+tables. The camera-frustum / LOS "seen" test and the 5–8 m forward cone now have a native producer
+in `net/audio/music-sight.*`: `engine::raycast::CameraPosition` + the reticle-direction native give
+the ext's `cp`/`cd`, a peer's replicated position + 1.1 m gives the chest, and the async static-world
+ray replaces the ext's tag visibility ray. It feeds the tier's `SetSightSampler` / `SetConeSampler`
+seams; `music_sight::kEnabled == false` for now (ext stays the behaviour owner; the ext's primary
+was the final render camera, so live A/B is required before enabling). With no sampler installed
+the two inputs answer "not seen" and the tier keeps its conservative mark / close-quarters floor.
+The ext's enemy-aware *event* values are pure helpers in the same module (`ShotHeat`, `NearFireHeat`,
+`CloseHeat`, `DownHeat`, `ReviveHeat`, `StunHeat`, `WeStunnedHeat`). Every event input is now wired:
+`we hit an enemy` from `ReportLocalHitOnPuppet`, `spotted by an enemy (spot call)` from an enemy's
+received mark line in `net::vox::HandleLine`, `enemy shot heard` / `enemy fire continues` from the
+peer shot-count radar, `we are stunned` from `gameplay/stun-lock.*`, and down / revive from the world
+scan. Only `enemy stunned` remains dormant: its `SetPeerStunned` seam has no native producer because
+peer stun is not replicated.
+
+**Shiv-victim chain + exec music (ported cores, gated producers).** `gameplay/stun-lock.*` carries
+the ext's `g_stun_until`: 3.5 s lock, 0.35 s blend-out, 1.2 s cough cadence, the 1.2 s post-end
+grace and the exact front / back shiv victim check (front requires a stunned victim; back accepts
+`dd <= 3.5 m` with `ang >= 105` or `ang <= -125`, or a stun). `net/audio/music-hold.*` owns the
+ext's `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` plus `MusicPlay`'s
+`FNV64("*name*")` sid. `net/audio/exec-music.*` ports the pending cue timing: the hit seconds
+2.44 / 2.35 / 2.31 / 2.35 / 2.39 s land on the death screen (kill + 83 ms delay + 70 ms cut), a
+12.5 s cap, a 300 ms fade and a 1.5 s resume. `net/audio/xcam.*` ports the victim-side
+`xcam_start` routing: role 2 only, upgraded pipe-mod one-shots suppress exec music, shivs except
+`shiv-ground-execution-*` route to the sting / drum cut, `ctxdown` routes to neither, and any other
+victim-side move starts the exec cue. `shivsting`/`alertsting` now read the stun core for the
+back-shiv alert gate, and `shivsting` cuts / holds combat music through `music-hold` on a shiv
+victim start. Every producer is a sink or an inert bridge: no PCM cue, DC music call, stun-network
+producer or final render-camera hook is wired, so ext remains the behaviour owner. The standalone
+`audio_core_test` harness covers the four cores without game headers.
 
 **Build 191 adds (unported).** `vintage.c` (Part I Vintage Rifle gunshot from `p1-vintage.pcm`,
 falling back to the hunting rifle event; re-timed bolt copies from `vintage_bolt_built.h`),
@@ -209,9 +237,10 @@ triggers or blobs is wired in the mod, and `loc.c` / `padinject.c` / `glass.c` /
 
 **Gap.** Loop points and the crossfade used by `downed_music`, and the data wiring (item 7): the PCM
 blobs are private generators, so `net/audio/*` compiles with the `T2R_DATA_*` gates off and
-`Start()` / `Play()` are no-ops until the headers exist. The remaining sting / blade *triggers*
-(the xcam hook and the melee-label hooks) are also unported, so the wired cues cannot all fire on
-their own yet.
+`Start()` / `Play()` are no-ops until the headers exist. The *routing* for the shiv / exec cues is
+ported in `xcam.*`, but no native `xcam_start` hook exists to call it; the shiv drum / exec PCM
+producers and the DC `MusicPlay` sink stay inert, and the stun producer is absent, so the ext still
+owns those behaviours. The remaining blade *triggers* (the melee-label hooks) are also unported.
 
 **Deliverable.** `src/engine/pcm.hpp/.cpp` — done. Source the buffers from generated PCM headers
 (item 7). `mod/scripts/make-xvag.py` already exists and is the model for the generator wiring.
@@ -781,7 +810,13 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset) |
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
-| `mod/src/net/audio/music-tier.hpp` + `.cpp` | **new** — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`); playback stays in the ext |
+| `mod/src/net/audio/music-tier.hpp` + `.cpp` | extend — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`), injectable sight / forward-cone samplers, all enemy-aware event inputs (hit / spot / shot / fire / down / revive / stun) and event-value helpers; playback stays in the ext |
+| `mod/src/net/audio/music-sight.hpp` + `.cpp` | **new** — gated native `MusicSlotSeen` / `MusicSlotCos` producer (reticle camera + async static-world ray + replicated peer chest); `kEnabled == false`, render-camera divergence documented |
+| `mod/src/net/audio/music-hold.hpp` + `.cpp` | **new** — pure ext `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` state + `MusicPlay` sid (`FNV64("*name*")`), behind an inert DC sink |
+| `mod/src/net/audio/exec-music.hpp` + `.cpp` | **new** — pure exec victim cue timing (ext `exec_music.c`: `EXMUS_HIT[]` / `EXMUS_CAP_MS` / `EXMUS_FADE_MS` / `EXMUS_RESUME_MS`), gated PCM sink |
+| `mod/src/net/audio/xcam.hpp` + `.cpp` | **new** — pure `xcam_start` role-2 routing (upgraded / shiv / `ctxdown` / exec), inert dispatch seam |
+| `mod/src/gameplay/stun-lock.hpp` + `.cpp` | **new** — pure stun lock + end grace + front / back shiv victim check (ext `g_stun_until` / `g_stunEndedT60`), network producer gated |
+| `mod/tests/audio_core_test.cpp` | **new** — standalone C++17 harness for the stun / music-hold / exec-music / xcam cores and the tier / sight pure helpers (`AUDIO_CORE_TEST_OK`); no game headers |
 | `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`): engine substate 6 / end banner via `engine/lobby.*` with a mod-phase fallback; `Live()` / `WasLive()` / `MatchOver()` / `MatchEndHold()` consumed by requeue, friends13, `player_status` + AFK |
 | `mod/src/net/match/kick-state.hpp` + `.cpp` | **new** — shared kick timestamp / text tests (ext `g_kickMs` / `MsgIsKick` / `MsgIsMove`), fed by the notice kind-'p' line, consumed by requeue + notice |
 | `mod/src/net/ui/postmatch-screens.hpp` + `.cpp` | **new** — post-match / menu latches (ext clan13x `Cl13PostActive`, `g_pm.pending`, `g_ev.pending`, GEAR UP `g_loState`, `g_mmBack`): sampled once/frame from the menu stack; `ScreensDone()` is requeue's single gate; `g_mmBack` pop seam gated (`kPopOnMmBack == false`) |

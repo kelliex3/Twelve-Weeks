@@ -6,6 +6,7 @@
 #include "net-session.hpp"
 #include "net-matchmaking.hpp"
 #include "net-debug.hpp"
+#include "music-tier.hpp"
 
 #include <random>
 
@@ -68,6 +69,32 @@ namespace net::vox {
         "vox-igc-to1-mltma-kill-005", "vox-igc-to1-mltma-kill-006",
         "vox-igc-to1-mltma-kill-007",
     };
+
+    // An enemy's "marked" line is the ext's VX_MARK spot call: the speaker has spotted someone.
+    static bool IsSpotCallLine(uint64_t lineSid)
+    {
+        for (const char* n : kSeraphMarked)
+            if (SID(n) == lineSid) return true;
+        for (const char* n : kWlfMarked)
+            if (SID(n) == lineSid) return true;
+        return false;
+    }
+
+    // ext VXR: a heard spot line is only a "we were seen" sign when the speaker is close enough
+    // (35 m for the normal mark lines; the 12 m quiet-line case does not apply here). With no
+    // position at all a normal line still counts, matching the ext's non-quiet branch.
+    static bool SpotCallHeard(int slot)
+    {
+        const NetPlayer& speaker = NetPlayers::BySlot(slot);
+        const NetPlayer* local = NetPlayers::Local();
+        if (!local || !local->hasState || !speaker.hasState)
+            return true;
+        const PlayerNetState& s = speaker.State();
+        const PlayerNetState& l = local->State();
+        const float dx = s.posX - l.posX, dy = s.posY - l.posY, dz = s.posZ - l.posZ;
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        return d2 <= 35.0f * 35.0f;
+    }
 
     struct LineList { const char* const* items; int count; };
 
@@ -233,6 +260,14 @@ namespace net::vox {
     void HandleLine(uint8_t speakerSlot, uint64_t lineSid)
     {
         const int slot = static_cast<int>(speakerSlot);
+        // ext VXR: an ENEMY's spot call tells us we were seen ("spotted by an enemy (spot
+        // call)", 4.0). The friendly check excludes our own speaker (and teammates' mark
+        // lines, which the ext does not count as being spotted).
+        if (slot >= 0 && slot < kMaxNetPlayers
+            && !NetPlayers::SlotIsFriendly(slot) && IsSpotCallLine(lineSid)
+            && SpotCallHeard(slot))
+            net::audio::music_tier::NoteEvent(4.0f, "spotted by an enemy (spot call)");
+
         if (PlayLocal(slot, lineSid)) return;
 
         if (s_pendingCount >= kMaxHeldLines) {

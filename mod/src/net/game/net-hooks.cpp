@@ -13,6 +13,7 @@
 #include "gameplay/perks/perk-registry.hpp"
 #include "gameplay/barrel-check.hpp"
 #include "gameplay/melee.hpp"
+#include "music-tier.hpp"
 
 #include <bit>
 #include <cmath>
@@ -193,6 +194,11 @@ namespace net::hooks {
                                static_cast<uint8_t>(predictedLethal ? 1 : 0),
                                static_cast<uint8_t>(headshot ? 1 : 0) };
         net::session::SendEvent(NEVT_TAKE_DAMAGE, dmg, static_cast<uint8_t>(puppet.netSlot));
+
+        // ext HitTickHook: a damaging hit we land is a music input ("we hit an enemy", 3.0).
+        // This is our outgoing counterpart to the "we took a hit" input on the receive side.
+        if (damage > 0.0f && damage < 100000.0f)
+            net::audio::music_tier::NoteEvent(3.0f, "we hit an enemy");
 
         gameplay::HitContext hitCtx;
         hitCtx.victimSlot = puppet.netSlot;

@@ -12,8 +12,9 @@ Domain / overlap / status maps are curated by hand. The build-191 rows below wer
 would read this branch's older ext and drop them.
 
 **Branch state (2026-11-21).** The port work in this tree is committed on `desloppify/code-health`
-(`5c47def`, the localisation support; `4248c97`, the backpack composed-bag seam; earlier `UNTESTED:` commits port the rest). The netsmooth and melee-timing ports in this tree are still **uncommitted** and are **not merged**
-into `main`. `main` has advanced with the `Port build 191: …` commits (`a1aa3e5`,
+(`7e4572c`, netsmooth + opcodes + melee timing; `5c47def`, localisation support; `4248c97`, the
+backpack composed-bag seam; earlier `UNTESTED:` commits port the rest). It is **not merged** into
+`main`. `main` has advanced with the `Port build 191: …` commits (`a1aa3e5`,
 `95597a4`, `5ee40f6`, `fb5e6eb`) which add **19 new direct ext modules** (plus 3 nested
 `customize_*.c` modules), 12 new headers, six new private generated headers, 186 new `t2r-*.txt`
 strings and regenerated Polish tables (`12-customize`, `13-achievements`, …). The inventory below
@@ -92,7 +93,7 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `downed_music.c` | downed music: three TLOU2 SP layers crossfaded by the bleed-out fraction, darker the closer to bleed-out (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-downed-music.txt` | — | not started |
 | `downed_vox.c` | downed players groan / struggle (engine effort events, every client for every downed body) | Audio (PCM) | P2 | net, audio, data | 2 e.g. `t2r-no-downed-vox.txt` | — | not started |
 | `exec_beg.c` | execution begging: the victim's adrenaline plea cut by the shot, bullet-hit grunts, silence on the death shot (PCM mixer) | Audio (PCM) | P2 | audio, data | 6 e.g. `t2r-exec-keep-long-scream.txt` | — | not started |
-| `exec_music.c` | victim music during an execution (3 TLOU2 cues, PCM mixer, fade-out at the death screen) | Audio (PCM) | P2 | audio, data | 0 | — | not started |
+| `exec_music.c` | victim music during an execution (5 TLOU2 cues, PCM mixer, fade-out at the death screen) | Audio (PCM) | P2 | audio, data | 0 | net/audio/exec-music.*, net/audio/music-hold.* | in progress |
 | `execsp.c` | SP audio layer of the executions: Abby's fist-fight contact events, wind-up grunts / swing foley / victim takes in the silent gaps, short melee pleas | Audio (PCM) | P2 | audio | 4 e.g. `t2r-exec-sp-contacts.txt` | — | not started |
 | `explus.c` | the execution sound design plus: footsteps, whooshes, cloth, gear, grabs, falls, breath / pain voices from the 2013 clips | Audio (PCM) | P2 | audio, data | 7 e.g. `t2r-exec-foley-plus-gain.txt` | — | not started |
 | `footsteps.c` | remote players' footsteps at the 2013 range (PCM mixer, notes in footsteps.c) | Audio (PCM) | P2 | net, audio, camera, data | 2 e.g. `t2r-footsteps.txt` | — | not started |
@@ -100,7 +101,7 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `intvox.c` | Interrogation voices: the interrogator's demand / the held victim's plea on the 2013 interrogate-enter pairs (real TLOU2 enemy takes, BEG_INT of vox_lines.py; t2r-no-int-vox.txt) | Audio (PCM) | P2 | audio, hook, data | 6 e.g. `t2r-ivx-native.txt` | — | not started |
 | `pmsfx.c` | post-match sounds: No Return's score count / stamp / page waves (rip_postmatch_sfx.py) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-postmatch-sfx.txt` | — | not started |
 | `pullout_sting.c` | Prone pull-out victim feel (SP trace): grab kick + grunt, struggle screen, fail death sfx/vox + the set's decay | Audio (PCM) | P2 | camera | 8 e.g. `t2r-no-pullout-sting.txt` | — | not started |
-| `shiv_sting.c` | shock sting for the shiv victim (PCM mixer, faded when the death sting starts) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | net/audio/shivsting.cpp, engine/pcm.cpp | in progress |
+| `shiv_sting.c` | shock sting + struggle drums for the shiv victim (PCM mixer, faded when the death sting starts), with the combat-music cut / hold and the stunned-victim alert gate | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | net/audio/shivsting.cpp, net/audio/music-hold.*, gameplay/stun-lock.*, engine/pcm.cpp | in progress |
 | `sp_parity.c` | SP parity (re/sp-parity.md): our own foley = SP player foley, global level check, opt-in MP sound census | Audio (PCM) | P2 | net, camera, hook | 9 e.g. `t2r-agility-fxdrop-off.txt` | — | not started |
 | `vintage.c` | build 191: Vintage Rifle — the Part I hunting rifle gunshot from the side file (`p1-vintage.pcm`), else the hunting rifle event; bolt copies via generated `vintage_bolt_built.h` (`__has_include`) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-vintage-p1.txt` | engine/pcm.*, net/audio/* | not started |
 | `voxchar.c` | build 191: a player body whose head has no voice (KELLIE) gets its faction's voice group | Audio (PCM) | P2 | audio, net | 0 | engine/pcm.*, net/audio/* | not started |
@@ -368,6 +369,34 @@ clip window) are carried in the same core as `SetLocalDying()` / `SetDyingUntilF
 `LocalState()` / `PuppetDownState()` answer the exact 0 (up) / 1 (down, crawling) / 2 (dying)
 distinction that `bloodbuild.cpp` reads. No death-clip producer is cut over yet, so the local
 latch stays clear and the answer is 1 while down.
+
+The shiv-victim chain from `t2r-ext.c` / `shiv_sting.c` / `exec_music.c` is now carried by four
+pure cores plus inert seams. `gameplay/stun-lock.*` owns the 3.5 s lock, the 0.35 s blend-out, the
+1.2 s post-end grace and the front/back shiv victim check; the network producer that starts a stun
+is still absent, so it stays clear until a host feeds it. `net/audio/music-hold.*` owns the ext's
+`g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` semantics and the `MusicPlay`
+sid (`FNV64("*name*")`), with an inert DC sink. `net/audio/exec-music.*` owns the pending-cue
+timing (hit seconds 2.44 / 2.35 / 2.31 / 2.35 / 2.39 s against the death-screen delay), the 12.5 s
+cap, the 300 ms fade and the 1.5 s resume. `net/audio/xcam.*` reproduces the `xcam_start` role-2
+routing: an upgraded pipe-mod one-shot suppresses exec music, a shiv (except
+`shiv-ground-execution-*`) dispatches the shiv sting / drum cut, a `ctxdown` move takes neither,
+and everything else victim-side starts the exec cue. The PCM cue producers, the final render-camera
+hook and the DC music calls stay gated behind sinks; ext remains the behaviour owner.
+
+`net/audio/music-tier.*` now also accepts injected enemy-sight and forward-cone samplers (the ext's
+`MusicSlotSeen` / `MusicSlotCos`) and exports the ext's enemy-aware event values as pure helpers
+(`enemy shot heard` 2.0 / 1.2, `enemy fire continues` 1.0 / 0.6, `enemy fired near` 1.5,
+`teammate fired near` 0.75, `enemy at close quarters` 3.0, `enemy down near` /
+`teammate down / dead near` / `enemy revived` 4.0, `enemy stunned` 5.0, `we are stunned` 6.0).
+`net/audio/music-sight.*` now supplies a **native producer** for both samplers: the frustum/cosine
+gate from the camera-through-reticle locator + `camera-get-dir-through-reticle` native, and
+occlusion from the async static-world ray, with a peer chest point from the replicated position
++ 1.1 m. `music_sight::kEnabled == false`, so the samplers stay unset and ext remains the behaviour
+owner; enabling it only affects the mod's own tier state and needs live A/B (the ext's primary was
+the final render camera, which the mod does not port). The remaining *event* inputs are wired too:
+`we hit an enemy` from the outgoing puppet-hit hook, `spotted by an enemy (spot call)` from a
+received enemy mark / spot-call vox line, and `we are stunned` from `gameplay/stun-lock.*`.
+`enemy stunned` has a `SetPeerStunned` seam but no replicated peer-stun state, so it stays dormant.
 
 ## Generated data headers
 

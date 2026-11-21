@@ -15,6 +15,7 @@
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
 #include "gameplay/barrel-check.hpp"
+#include "gameplay/stun-lock.hpp"
 #include "net/ui/notice.hpp"
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
@@ -24,7 +25,11 @@
 #include "net/audio/shivsting.hpp"
 #include "net/audio/alertsting.hpp"
 #include "net/audio/music-tier.hpp"
+#include "net/audio/music-sight.hpp"
+#include "net/audio/exec-music.hpp"
+#include "net/audio/xcam-bridge.hpp"
 #include "net/audio/bladesfx.hpp"
+#include "net/game/player-status.hpp"
 #include "net/match/afk.hpp"
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
@@ -167,6 +172,8 @@ namespace boot {
 		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores (dormant until enabled)
 		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
 		net::match::downed_bridge::Tick();    // bleed-out / revive / peer state (dormant until enabled)
+		net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio
+		net::audio::music_sight::Install();   // gated native MusicSlotSeen / Cos samplers
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
 		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
 		{
@@ -187,9 +194,12 @@ namespace boot {
 		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
 		net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
 		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
+		net::audio::music_sight::Tick(); // gated native sight / cone samplers (before the tier consumes them)
 		net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
-		net::audio::shivsting::Tick();  // shiv victim shock sting (ported from tools/ext/shiv_sting.c)
+		gameplay::stun_lock::Tick(::GetTickCount64(), net::player_status::MatchLive()); // stun end / grace
+		net::audio::shivsting::Tick();  // shiv victim shock sting + drums (ported from tools/ext/shiv_sting.c)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
+		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
