@@ -336,10 +336,18 @@ panel page / rows / text entry, friend-request + party-invite cards (plain toast
 defs or `t2r-no-friend-toast.txt` opt out), P / pad button, lobby decorations, notice-c toast
 hooks, and the party ready / follow rule + search gate. The gate is wired into `net-gui2.cpp`
 just before `FindMatch` (a member's press toggles ready instead of searching) and into requeue
-(`IsMember()` / `NoteAutoPush()`). Honest gates: rank badges (0xBF), the raw lobby object /
-`kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings, mouse-over
-click nav and the card's per-widget keyframes stay in the ext; widget writes are inert when the
-defs are absent.
+(`IsMember()` / `NoteAutoPush()`). The 2013 rank badge is now native for these rows: `friends-state.*`
+holds the pure 0xBF table (name key / reply parser / lookup / rank13 helpers), `rank-badge.*` owns
+the async 0xBF poll and `RankUi` widget drawing (2.5 s after a miss, 12 s otherwise, only while a
+screen drew a badge in the last 15 s, 20 s retry after two unanswered tries) and `SetRow` reserves
+the 120-unit badge width; MATCH FOUND team tabs / names use `engine::lobby::RosterSorted` /
+`RosterName`. Click-to-nav is native as well: the ext's `FrScan` canvas boxes hit-test the rows and
+footer prompts through the native cursor canvas; a row click only moves the focus (the engine's
+mouse-sourced menu-select is dropped for 8 frames, as in the ext), and the hovered row gets the
+`Fill`/`SetRow` highlight. Honest gates: the exact raw `kPartyStatus` byte, the searchers' table
+(`g_srchTab` / `g_srchName` -- no mod producer for the daemon's relative [T1]/[T2] markers), lobby
+object writes, exact `menu-*` pad bindings and the card's per-widget keyframes stay in the ext;
+widget writes are inert when the defs are absent.
 
 **Gap.** No binary / RE notes are available locally to verify the call-site scan or the pinned
 RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confirm. The dev-bot
@@ -605,7 +613,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/cmake/gen-*.py` + `mod/CMakeLists.txt` | data-header codegen template + wiring |
 | `mod/src/loader/config.hpp` (+ runtime config if needed) | toggle policy surface |
 | `mod/src/engine/ptr.hpp` | `Readable` / `Writable` guarded pointer reads (ext `IsBadReadPtr` / raw deref) |
-| `mod/src/engine/lobby.hpp` + `.cpp` | **new** — read-only engine net lobby (ext `MatchSubstate` / `LobbyObj` / roster + peer-record + `TeamOf`): substate 6, `+0x2ca4` end banner, clock, roster helpers; no writes |
+| `mod/src/engine/lobby.hpp` + `.cpp` | **new** — read-only engine net lobby (ext `MatchSubstate` / `LobbyObj` / roster + peer-record + `TeamOf`): substate 6, `+0x2ca4` end banner, clock, roster helpers; `RosterSorted` (ext `LobbyRowsSorted`: our team blue first, enemy red) + `RosterName` for MATCH FOUND friends rows; no writes |
 | `mod/src/engine/frame.hpp` + `.cpp` | QPC ms clock (`NowMs`, ext `BpMs`) alongside the 60 Hz frame counter |
 | `mod/src/engine/object.hpp` + `.cpp` | **new** — entity / joint locators, draw-control mesh hide/show, set-locator (ext `XbxLoc` / `GvisDc` / `BpDc` / `PsyncBfFromLoc`) |
 | `mod/src/engine/anim-prims.hpp` + `.cpp` | **new** — `AnimateFrom` / `AnimLen` (ext `animate_` recipe + `get-animation-duration`) |
@@ -633,8 +641,10 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/gameplay/melee-hit-react.hpp` + `.cpp` | **new** — pure hit-reaction / attacker-lock / prediction core (ext `melee_hitreact.c`), behind `HitReactSink`; clip table gated |
 | `mod/src/gameplay/melee-exchange.hpp` + `.cpp` | **new** — pure exchange state machine / wire core (ext `melee_exchange.c`), behind `MexSink` |
 | `mod/src/gameplay/mv3/{types.hpp,sim.cpp,net-core.hpp,net-core.cpp}` | **new** — melee-v3 contract + generated table + deterministic sim + engine-free rollback / wire core (ext `mv3.h` / `mv3_moves.h` / `mv3_sim.c` / `mv3_net_core.h`); names pinned to the shared contract |
-| `mod/src/net/social/friends-state.hpp` + `.cpp` | **new** — pure 0xD9 JSON state / rows / actions core (ext `friends13.h`) |
-| `mod/src/net/social/friends13.hpp` + `.cpp` | **new** — in-game FRIENDS / PARTY panel, toasts, buttons, party gate + search gate (ext `friends13.c`) |
+| `mod/src/net/social/friends-state.hpp` + `.cpp` | **new** — pure 0xD9 JSON state / rows / actions core (ext `friends13.h`) + rank-table core (ext `rankbadge.c` / `rank13.h`: name key, bounded 0xBF reply parse, lookup / placeholder, symbol / weeks / icon path) |
+| `mod/src/net/social/rank-badge.hpp` + `.cpp` | **new** — async 0xBF rank-table poll + `RankUi` widget drawing (ext `rankbadge.c`), consumed by friends13 rows; no ext cutover |
+| `mod/src/net/social/friends13.hpp` + `.cpp` | **new** — in-game FRIENDS / PARTY panel, toasts, buttons, party gate + search gate (ext `friends13.c`), rank badge row reservation + MATCH FOUND roster tabs / names |
+| `mod/src/engine/widget.hpp` + `.cpp` | extend — mouse navigation (ext `UiRectSs` / `UiMouseOver` / `UiOverViewport`): transform-rect "escape bounds" hover fallback, prologue-checked pinned RVA, `t2r-no-mouse-nav.txt` opt-out |
 | `mod/src/engine/window.hpp` + `.cpp` | extend — `KeyDown` / `CursorCanvas` helpers (ext `GetAsyncKeyState` / `UiCursorCanvas`) |
 | `mod/src/engine/exe.hpp` | **new** — raw exe-RVA call + prologue-checked safetyhook mid-hook helper (ext pinned-RVA calls / RWX trampolines) |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |

@@ -19,6 +19,7 @@
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
+#include "net/social/rank-badge.hpp"
 #include "net/ui/postmatch-screens.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
@@ -1942,6 +1943,7 @@ namespace net::replication {
         net::afk::Reset();
         net::jip::Reset();
         net::friends13::Reset();
+        net::rank_badge::Reset();
         net::match::kick::Reset();
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();

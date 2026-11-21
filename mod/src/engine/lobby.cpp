@@ -122,4 +122,58 @@ namespace engine::lobby {
         return fn(lo, static_cast<uint32_t>(slot));
     }
 
+    int RosterSorted(int idx[kRosterMax], int enemy[kRosterMax])
+    {
+        if (!idx || !enemy)
+            return -1;
+        const uint8_t* lo = Object();
+        // Object() is readable through +0x2ca8, so the roster fields are safe.
+        // ext: lo[0x1b0] == 2 is the "match record live" phase (0 / 1 while searching).
+        if (!lo || lo[0x1B0] != 2)
+            return -1;
+        const int n = lo[0x1A];
+        if (n <= 0 || n > static_cast<int>(kRosterMax))
+            return -1;
+        const int me = lo[0x19];
+        int mine = lo[0x1C] & 1;
+        for (int i = 0; i < n; i++) {
+            const uint8_t* e = lo + 0x1D + static_cast<size_t>(i) * kEntryBytes;
+            if (e[0] == me) {
+                mine = e[0x31] & 1;
+                break;
+            }
+        }
+        int r = 0;
+        for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; i < n && r < static_cast<int>(kRosterMax) - 1; i++) {
+                const uint8_t* e = lo + 0x1D + static_cast<size_t>(i) * kEntryBytes;
+                const int en = (e[0x31] & 1) != mine;
+                if (e[0] == me || en != pass)
+                    continue;
+                idx[r] = i;
+                enemy[r] = en;
+                r++;
+            }
+        return r;
+    }
+
+    bool RosterName(int index, char* out, size_t cap)
+    {
+        if (!out || cap == 0) {
+            if (out) out[0] = 0;
+            return false;
+        }
+        const uint8_t* e = RosterEntry(index);
+        if (!e) {
+            out[0] = 0;
+            return false;
+        }
+        size_t n = 0;
+        const size_t lim = cap - 1 < kEntryBytes - 1 ? cap - 1 : kEntryBytes - 1;
+        while (n < lim && e[1 + n])
+            out[n] = static_cast<char>(e[1 + n]), n++;
+        out[n] = 0;
+        return true;
+    }
+
 } // namespace engine::lobby

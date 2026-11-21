@@ -11,6 +11,7 @@
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
 #include "engine/locale.hpp"
+#include "engine/lobby.hpp"
 #include "engine/script.hpp"
 #include "engine/widget.hpp"
 #include "engine/window.hpp"
@@ -22,6 +23,7 @@
 #include "notify.hpp"
 #include "notice.hpp"
 #include "friends-state.hpp"
+#include "rank-badge.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -51,6 +53,9 @@ namespace net::friends13 {
         constexpr uint64_t kOpenCoolMs = 1200;
         constexpr uint64_t kAutoWindowMs = 8000;
         constexpr uint64_t kFakeSearchMs = 9000;
+        constexpr float    kRankRes46 = 120.0f;   // ext RKB_RES46 (reserved badge width before a 46 pt name)
+        constexpr float    kNamePivotX = 36.0f;   // authored pivot of a row's name widget
+        constexpr float    kNamePivotY = 40.0f;
 
         enum ToastKind { kToastRequest, kToastInvite, kToastGood, kToastBad, kToastInfo };
 
@@ -128,6 +133,17 @@ namespace net::friends13 {
         bool           g_keyCur[256]{}, g_keyPrev[256]{};
         uint64_t       g_autoPush = 0, g_openAt = 0, g_lastMemberPress = 0;
         bool           g_armedOpen = false;
+
+        // Click-to-nav (ext F13.hv_col / hv_row / hv_back / hv_sel / hv_act and g_clickEdge).
+        // The left-button edge is sampled every frame in Tick() -- even while the panel is
+        // closed -- so a button held across the page opening never counts as a click. The
+        // hover boxes are the ext's pinned friends13_widgets.py canvas geometry, read through
+        // the native engine::window::CursorCanvas (ext UiCursorCanvas). t2r-no-mouse-nav.txt
+        // opts the whole mouse path out, like engine::widget::MouseOver's gate.
+        bool           g_lbHeld = false, g_click = false;
+        uint64_t       g_clickFrame = 0;          // ext F13.click_f (drop the click's menu-select)
+        int            g_hvCol = -1, g_hvRow = -1;
+        bool           g_hvBack = false, g_hvSel = false, g_hvAct = false;
 
         struct RecentLine { char text[300]{}; uint64_t at = 0; };
         RecentLine     g_recent[8];
@@ -628,9 +644,10 @@ namespace net::friends13 {
         }
 
         void SetRow(int col, int i, bool vis, int tone, const char* name,
-            const char* st, const char* tag, const char* ac, bool foc, bool hov)
+            const char* st, const char* tag, const char* ac, bool foc, bool hov,
+            bool playerRow = true)
         {
-            char g[96], p[160];
+            char g[96], p[160], rp[160];
             std::snprintf(g, sizeof g, "anim-group.%s.%cRow%d", col ? "rt" : "lf",
                 col ? 'r' : 'l', i);
             UiVisible(g, vis);
@@ -639,10 +656,17 @@ namespace net::friends13 {
                 std::snprintf(p, sizeof p, "%s.%cBd%d_%d", g, col ? 'r' : 'l', k, i);
                 UiVisible(p, k == tone);
             }
-            // TODO(friends13): rank badges (0xBF / rankbadge.c) are not ported; the ext
-            // draws a badge before a player row. The name / status / action text still
-            // fills its box, just without the badge's 120-unit reservation.
-            RowPath(p, sizeof p, col, i, "Nm");  Fit(p, name, col ? 920.0f : 680.0f, 47.0f);
+            // rank badge (ext FrSetRow): a PLAYER row shows the 0xBF badge and its
+            // name moves right by the reserved width; an action row ("ADD A FRIEND"
+            // ...) keeps the plain layout (no rank-0 fallback). rRk/rRn leaves come
+            // from rank_badge_widgets.py; absent widgets make every write inert.
+            RowPath(p, sizeof p, col, i, "Rk");
+            RowPath(rp, sizeof rp, col, i, "Rn");
+            const bool hasBadge = ::net::rank_badge::DrawBadge(p, rp, name, playerRow);
+            RowPath(p, sizeof p, col, i, "Nm");
+            engine::widget::Pivot(engine::widget::Page(p),
+                kNamePivotX + (hasBadge ? kRankRes46 : 0.0f), kNamePivotY);
+            Fit(p, name, (col ? 920.0f : 680.0f) - (hasBadge ? kRankRes46 : 0.0f), 47.0f);
             RowPath(p, sizeof p, col, i, "St");  Fit(p, st, col ? 850.0f : 620.0f, 33.0f);
             RowPath(p, sizeof p, col, i, "Tg");  Fit(p, tag, 540.0f, 33.0f);
             RowPath(p, sizeof p, col, i, "Ac");  Fit(p, ac, 560.0f, 33.0f);
@@ -666,6 +690,35 @@ namespace net::friends13 {
         {
             return social::Rows(&g_state, r,
                 1 + social::kMaxInvites + 2 * kRightRows + social::kMaxFriends);
+        }
+
+        // ext FrScan: hit-test the panel's rows and footer prompts in the 3840x2160
+        // canvas. The boxes are pinned to friends13_widgets.py (ext FR_NL=6 /
+        // FR_RROWS=7 -- the same rows Fill() draws); no widget lookup is needed, so a
+        // missing GUI pak only hides the highlight, it never faults. A right-list row
+        // scrolled out of the window is not hoverable (ext's off[1] + row >= rows).
+        void ScanHover(int ln, int nr)
+        {
+            g_hvCol = g_hvRow = -1;
+            g_hvBack = g_hvSel = g_hvAct = false;
+            if (!engine::flag::Absent("t2r-no-mouse-nav.txt")) return;
+            float cx = 0.0f, cy = 0.0f;
+            if (!engine::window::CursorCanvas(&cx, &cy)) return;
+            constexpr int kLY[kLeftRows] = { 540, 710, 880, 1050, 1260, 1410 };
+            constexpr int kLH[kLeftRows] = { 150, 150, 150, 150, 130, 130 };
+            if (cx >= 300.0f && cx <= 1700.0f)
+                for (int i = 0; i < ln && i < kLeftRows; i++)
+                    if (cy >= kLY[i] && cy <= kLY[i] + kLH[i])
+                        g_hvCol = 0, g_hvRow = i;
+            if (cx >= 1900.0f && cx <= 3540.0f)
+                for (int i = 0; i < kRightRows; i++)
+                    if (cy >= 540.0f + 160.0f * i && cy <= 680.0f + 160.0f * i)
+                        g_hvCol = 1, g_hvRow = i;
+            if (g_hvCol == 1 && g_panel.off[1] + g_hvRow >= nr)
+                g_hvCol = g_hvRow = -1;
+            g_hvBack = cx >= 250.0f && cx <= 730.0f && cy >= 1880.0f && cy <= 1970.0f;
+            g_hvSel  = cx >= 740.0f && cx < 1500.0f && cy >= 1880.0f && cy <= 1970.0f;
+            g_hvAct  = cx >= 1500.0f && cx < 2260.0f && cy >= 1880.0f && cy <= 1970.0f;
         }
 
         Action RowPrimary(int col, const Row* rows, int nr);
@@ -723,14 +776,16 @@ namespace net::friends13 {
                         m.ready ? Tr("READY  ", "GOTOWY  ") : "", word);
                     SetRow(0, i, true, social::Tone(social::Presence(m.status)), a, c,
                         i == 0 && g_state.hasParty ? Tr("PARTY", "GRUPA") : "",
-                        social::ActionLabel(&g_state, pri), foc, false);
+                        social::ActionLabel(&g_state, pri), foc, g_hvCol == 0 && g_hvRow == i);
                 } else if (i == g_state.nm) {
                     SetRow(0, i, true, 0, Tr("READY UP", "GOTOWY"), "", "",
-                        social::ActionLabel(&g_state, pri), foc, false);
+                        social::ActionLabel(&g_state, pri), foc,
+                        g_hvCol == 0 && g_hvRow == i, false);
                 } else {
                     SetRow(0, i, true, 0, g_state.meLeader ? Tr("DISBAND PARTY", "ROZWIĄŻ GRUPĘ")
                         : Tr("LEAVE PARTY", "OPUŚĆ GRUPĘ"), "", "",
-                        social::ActionLabel(&g_state, pri), foc, false);
+                        social::ActionLabel(&g_state, pri), foc,
+                        g_hvCol == 0 && g_hvRow == i, false);
                 }
             }
             for (int k = 0; k < kRightRows; k++) {
@@ -742,9 +797,11 @@ namespace net::friends13 {
                 social::RowActions(&g_state, 1, i, rows, nr, pri, sec);
                 const char* name = "", *st = "", *tag = "";
                 int tone = 0;
+                bool playerRow = true;   // ADD A FRIEND is an action row (no rank fallback)
                 if (r.kind == RowKind::Add) {
                     name = Tr("ADD A FRIEND", "DODAJ ZNAJOMEGO");
                     tag = Tr("TYPE A NAME OR A STEAM ID", "WPISZ NAZWĘ LUB ID STEAM");
+                    playerRow = false;
                 } else if (r.kind == RowKind::PartyInvite) {
                     const social::Request& q = g_state.pinv[r.idx];
                     name = q.name; tag = Tr("PARTY INVITE", "ZAPROSZENIE DO GRUPY");
@@ -761,7 +818,8 @@ namespace net::friends13 {
                     tag = Tr("REQUEST SENT", "ZAPROSZENIE WYSŁANE");
                 }
                 std::snprintf(d, sizeof d, "%s", social::ActionLabel(&g_state, pri));
-                SetRow(1, k, true, tone, name, st, tag, d, foc, false);
+                SetRow(1, k, true, tone, name, st, tag, d, foc,
+                    g_hvCol == 1 && g_hvRow == k, playerRow);
             }
             if (Now() < g_net.msgUntil) Fit("anim-group.msgTx", g_net.msg, 1700.0f, 33.0f);
             else UiText("anim-group.msgTx", "");
@@ -991,17 +1049,32 @@ namespace net::friends13 {
             bool next = MenuEdge(g_held.next, g_hNext);
             bool act = MenuEdge(g_held.act, g_hAct);
             bool esc = KeyEdge(VK_ESCAPE);
-            bool click = false;   // TODO(friends13): click-to-nav needs UiMouseOver's widget bounds
+
+            // Click-to-nav (ext FrScan + the click_f gate): a row click ONLY moves the
+            // selection -- a mouse-sourced menu-select always belongs to the engine's
+            // focused row, so it is dropped for a few frames after any click. An action
+            // then needs the footer prompt (hv_sel / hv_act) or a key / pad button.
+            bool click = g_click;
+            if (click) g_clickFrame = engine::frame::Count() ? engine::frame::Count() : 1;
+
+            Row rows[1 + social::kMaxInvites + 2 * kRightRows + social::kMaxFriends];
+            int nr = RightRows(rows);
+            int ln = LeftN();
+            ScanHover(ln, nr);
 
             if (g_panel.typing) {
                 TypingTick(now);
                 if (esc || back) { TypingStop(); esc = back = false; }
                 else if (KeyEdge(VK_RETURN)) SendTyped();
+                else if (click && !g_hvBack
+                    && !(g_hvCol == 1 && g_hvRow == 0 && g_panel.off[1] == 0))
+                    TypingStop();                  // a click elsewhere leaves the field
                 back = false;
+                if (!g_hvBack) click = false;      // BACK still closes while typing
                 selEdge = upEdge = downEdge = leftEdge = rightEdge = 0;
                 prev = next = act = false;
             }
-            if (esc) { Close(); return; }
+            if (esc || (click && g_hvBack)) { Close(); return; }
             if (back) g_panel.backFrame = engine::frame::Count() ? engine::frame::Count() : 1;
             if (g_panel.backFrame && engine::frame::Count() >= g_panel.backFrame + 6) {
                 g_panel.backFrame = 0;
@@ -1010,19 +1083,29 @@ namespace net::friends13 {
             }
             if (KeyEdge('P')) { Close(); return; }
 
-            Row rows[1 + social::kMaxInvites + 2 * kRightRows + social::kMaxFriends];
-            int nr = RightRows(rows);
-            int ln = LeftN();
             bool x = KeyEdge('X') || KeyEdge(VK_DELETE);
             bool r = KeyEdge('R'), l = KeyEdge('L');
             bool sw = KeyEdge(VK_TAB) || KeyEdge('Q') || KeyEdge('E');
             if (!g_net.have) { selEdge = upEdge = downEdge = x = r = l = 0; }
+            if (selEdge && g_clickFrame && engine::frame::Count() - g_clickFrame <= 8)
+                selEdge = false;                   // the engine's select rode on the click
             int col = g_panel.col, n = col ? nr : ln, foc = g_panel.foc[col];
             if (upEdge && n) { foc = (foc + n - 1) % n; Sfx("sfx-cycle"); }
             if (downEdge && n) { foc = (foc + 1) % n; Sfx("sfx-cycle"); }
             if (sw || prev || next || leftEdge || rightEdge) {
                 if (ln) { col = !col; g_panel.col = col; n = col ? nr : ln; foc = g_panel.foc[col]; Sfx("sfx-cycle"); }
             }
+            bool clkRow = false;
+            if (click && g_hvRow >= 0) {
+                const int ci = g_hvCol, ri = g_hvCol ? g_panel.off[1] + g_hvRow : g_hvRow;
+                col = ci; g_panel.col = col;       // hovered row becomes the focus
+                foc = ri;
+                n = col ? nr : ln;
+                Sfx("sfx-cycle");
+                clkRow = true;
+            }
+            if (click && !clkRow && g_hvSel && !g_panel.typing) selEdge = true;
+            if (click && !clkRow && g_hvAct && !g_panel.typing) act = true;
             if (foc < 0) foc = 0;
             if (n && foc >= n) foc = n - 1;
             g_panel.foc[col] = foc;
@@ -1030,8 +1113,8 @@ namespace net::friends13 {
             social::RowActions(&g_state, col, foc, rows, nr, pri, sec);
             if (r) { Action ap, as; social::RowActions(&g_state, 0, 0, rows, nr, ap, as); Do(ap, 0, 0, rows, nr); }
             if (l) { Action ap, as; social::RowActions(&g_state, 0, g_state.nm + 1, rows, nr, ap, as); Do(ap, 0, g_state.nm + 1, rows, nr); }
-            if (selEdge || act) Do(pri, col, foc, rows, nr);
-            if (x || click) Do(sec, col, foc, rows, nr);
+            if (selEdge) Do(pri, col, foc, rows, nr);
+            if (x || act) Do(sec, col, foc, rows, nr);
             PageAlpha(1.0f);
             Fill();
         }
@@ -1072,11 +1155,12 @@ namespace net::friends13 {
                 !r && g_state.lsearch ? " (the leader searches: we follow)" : "");
         }
 
-        // TODO(friends13): the raw lobby object / kPartyStatus / g_srchTab / g_srchName
-        // producers are still ext-owned. The daemon snapshot gives us the party state,
-        // ready bits and the leader's search flag, so the follow rule itself is native;
-        // the match-found team tabs and the searchers' table are gated until those
-        // producers exist in mod/.
+        // The daemon snapshot gives us the party state, ready bits and the leader's
+        // search flag, so the follow rule itself is native; kPartyStatus (ext's raw
+        // session byte) is mapped onto net::matchmaking::State. MATCH FOUND team tabs
+        // / names now come from engine::lobby (RosterSorted / RosterName) in
+        // LobbyDecorations. Only the SEARCHERS' table stays gated: mod has no producer
+        // for the daemon's relative [T1]/[T2] markers (ext g_srchTab / g_srchName).
         int PartyStatus()
         {
             const auto st = net::matchmaking::GetState();
@@ -1141,10 +1225,43 @@ namespace net::friends13 {
 
         void LobbyDecorations(uint64_t top)
         {
-            // ext FrLobbyTabs / FrLobbyPartyRows: the party READY badges are derivable
-            // from the daemon snapshot; the match-found blue/red team tabs need the
-            // lobby roster (lobby object +0x1d / game slot teams) which mod does not
-            // expose yet. Those tabs stay hidden instead of guessing a team.
+            // ext FrLobbyTabs / FrLobbyNames / FrLobbyPartyRows. The MATCH FOUND
+            // roster is now derivable from engine::lobby (RosterSorted / RosterName):
+            // row 0 = us (blue), rows 1.. = our team first (blue), the enemy after
+            // (red), each in slot order. The friendly READY badges stay for the
+            // pre-match party. The SEARCHERS' table (ext g_srchTab / g_srchName) is
+            // still gated: mod has no producer for the daemon's relative [T1]/[T2]
+            // markers, so a searching lobby keeps the engine's own row order.
+            static const char* const kTab[5] =
+                { "", "tabGrey", "tabGreen", "tabBlue", "tabRed" };
+            int idx[engine::lobby::kRosterMax], en[engine::lobby::kRosterMax];
+            int found = -1;
+            if (PartyStatus() >= 3 && top != PageId("main-menu")
+                && engine::lobby::Ready())
+                found = engine::lobby::RosterSorted(idx, en);
+            if (found >= 0) {
+                for (int r = 0; r < 8; r++) {
+                    const int tab = r == 0 ? 3 : (r - 1 < found ? (en[r - 1] ? 4 : 3) : 0);
+                    for (int k = 1; k <= 4; k++) {
+                        char p[112];
+                        std::snprintf(p, sizeof p, "anim-group.lobbyPanel.lobbyList.Player%d.%s", r, kTab[k]);
+                        UiVisible(p, tab == k);
+                    }
+                    char p[112];
+                    std::snprintf(p, sizeof p, "anim-group.lobbyPanel.lobbyList.Player%d.partyBar", r);
+                    UiVisible(p, false);
+                    std::snprintf(p, sizeof p, "anim-group.lobbyPanel.lobbyList.Player%d.pmReady", r);
+                    UiVisible(p, false);
+                    if (r > 0 && r - 1 < found) {   // row 0's name stays the engine's (us)
+                        char nm[49];
+                        if (engine::lobby::RosterName(idx[r - 1], nm, sizeof nm) && nm[0]) {
+                            std::snprintf(p, sizeof p, "anim-group.lobbyPanel.lobbyList.Player%d.nameLabel", r);
+                            UiText(p, nm);
+                        }
+                    }
+                }
+                return;
+            }
             if (top == PageId("main-menu") || top == PageId("find-match-menu")) {
                 if (g_net.have && g_state.hasParty) {
                     for (int i = 0; i < social::kMaxMembers; i++) {
@@ -1202,6 +1319,12 @@ namespace net::friends13 {
         if (!FeatureEnabled()) return;
         SampleKeys();
         SampleMenu();
+
+        // ext UiClickGateTick: the left-button rising edge, sampled every frame even
+        // with the panel closed so a button held across the page opening is not a click.
+        const bool lb = engine::window::KeyDown(VK_LBUTTON);
+        g_click = lb && !g_lbHeld;
+        g_lbHeld = lb;
 
         const uint64_t now = Now();
         const uint64_t top = engine::widget::TopPage();
@@ -1272,6 +1395,10 @@ namespace net::friends13 {
         g_tok[0] = 0;
         g_autoPush = g_openAt = g_lastMemberPress = 0;
         g_armedOpen = false;
+        g_lbHeld = g_click = false;
+        g_clickFrame = 0;
+        g_hvCol = g_hvRow = -1;
+        g_hvBack = g_hvSel = g_hvAct = false;
         g_hSel = g_hUp = g_hDown = g_hLeft = g_hRight = false;
         g_hBack = g_hPrev = g_hNext = g_hAct = g_hP = g_hPadNext = false;
         g_repUp = g_repDown = 0;

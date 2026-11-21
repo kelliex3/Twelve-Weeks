@@ -3,12 +3,15 @@
 #include "widget.hpp"
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "engine/exe_side.hpp"
 #include "engine/frame.hpp"
 #include "engine/ptr.hpp"
 #include "engine/script.hpp"
+#include "engine/window.hpp"
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -190,6 +193,78 @@ namespace engine::widget {
         if (!w || !path)
             return;
         GUI2::SET_WIDGET_IMAGE(w, path);
+    }
+
+    // ---- mouse navigation (ext UiRectSs / UiMouseOver / UiOverViewport) ---------------
+
+    bool WidgetRect(uint64_t w, float* x0, float* y0, float* x1, float* y1)
+    {
+        if (!w || !x0 || !y0 || !x1 || !y1)
+            return false;
+        // ext UiRectSs: pinned exe function that fills a transform's four corners.
+        // The prologue check makes a game update fail closed instead of calling a
+        // moved RVA (the ext pins tlou-ii.exe 1.6.10721).
+        static const uint8_t kPrologue[7] =
+            { 0x48, 0x89, 0x5C, 0x24, 0x18, 0x57, 0x48 };
+        constexpr uintptr_t kRva = 0x20029c0;
+        uint8_t* exe = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+        if (!exe || std::memcmp(exe + kRva, kPrologue, sizeof kPrologue) != 0)
+            return false;
+
+        const uint64_t xf = DC::Call<"gui2-get-widget-transform">(w);
+        if (!xf || xf == kInvalid || !::engine::ptr::Readable(xf, 0x60))
+            return false;
+
+        using FnCorners = void(__fastcall*)(void*, float*);
+        const auto corners = reinterpret_cast<FnCorners>(exe + kRva);
+        alignas(32) float c[16];
+        corners(reinterpret_cast<void*>(xf), c);
+
+        *x0 = *x1 = c[0];
+        *y0 = *y1 = c[1];
+        for (int k = 1; k < 4; k++) {
+            const float x = c[k * 4], y = c[k * 4 + 1];
+            if (!std::isfinite(x) || !std::isfinite(y))
+                return false;
+            if (x < *x0) *x0 = x;
+            if (x > *x1) *x1 = x;
+            if (y < *y0) *y0 = y;
+            if (y > *y1) *y1 = y;
+        }
+        return *x1 > *x0 && *y1 > *y0;
+    }
+
+    bool MouseOver(uint64_t w, bool arm)
+    {
+        static int off = -1;
+        if (off < 0)
+            off = ::engine::exe_side::Exists("t2r-no-mouse-nav.txt") ? 1 : 0;
+        if (off || !w)
+            return false;
+
+        if (arm)
+            DC::Call<"gui2-set-widget-hoverable">(w, 1);
+        const uint64_t hov = DC::Call<"gui2-widget-is-currently-mouse-hovered?">(w);
+        if ((hov & 0xff) == 1)
+            return true;
+
+        // ext "escape bounds": the engine's hover answer is often too tight for a
+        // row widget, so a hit inside the transform's screen-space rect also counts.
+        float cx = 0.0f, cy = 0.0f, x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+        if (::engine::window::CursorCanvas(&cx, &cy)
+            && WidgetRect(w, &x0, &y0, &x1, &y1))
+            return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+        return false;                 // unknown bounds never ADD a hit
+    }
+
+    bool OverViewport(uint64_t w)
+    {
+        // ext UiOverViewport: unknown rect / cursor never blocks (return true).
+        float cx = 0.0f, cy = 0.0f, x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+        if (!::engine::window::CursorCanvas(&cx, &cy)
+            || !WidgetRect(w, &x0, &y0, &x1, &y1))
+            return true;
+        return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
     }
 
     float TextWidth(const char* s, float scale)

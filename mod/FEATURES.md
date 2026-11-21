@@ -104,7 +104,7 @@ Domain / overlap / status maps are curated by hand. Re-run after the ext's modul
 | `nrbox.c` | No Return supply crate (rl-cache-crate-military) over every supply box, open / close mirrored (re/nr-supply-box.md; t2r-old-supplybox.txt = off) | 2013 gameplay modes | P3 | camera, hook | 8 e.g. `t2r-crate-clip-sounds.txt` | — | not started |
 | `overtime.c` | overtime: the clock does not end a round while a team is out of lives - it goes on until elimination, cap 60 s (re/overtime-1028.md; t2r-no-overtime.txt) | 2013 gameplay modes | P3 | net | 4 e.g. `t2r-dev-match-minutes.txt` | — | not started |
 | `placedbomb2013.c` | 2013 placed (proximity) nail bomb: pb_* | 2013 gameplay modes | P3 | net, audio, camera, hook, data | 13 e.g. `t2r-dev-plant.txt` | — | not started |
-| `rankbadge.c` | the rank badge in front of EVERY player name (daemon op 0xBF rank table; lobby rows, vote roster, friends panel, scoreboard): rkb_draw / rkb_tick | 2013 gameplay modes | P3 | widget | 0 | net/ui/net-gui2.cpp | not started |
+| `rankbadge.c` | the rank badge in front of EVERY player name (daemon op 0xBF rank table; lobby rows, vote roster, friends panel, scoreboard): rkb_draw / rkb_tick | 2013 gameplay modes | P3 | widget | 0 | net/social/friends-state.cpp (pure table), net/social/rank-badge.cpp, net/social/friends13.cpp (panel rows) | in progress |
 | `revive2013.c` | the 2013 revive as a psync pair: ENTER -> LOOP -> FINISH of both bodies (re/factions2013/revive-2013.md) | 2013 gameplay modes | P3 | net, audio, camera, pad | 3 e.g. `t2r-no-engine-sfx.txt` | — | not started |
 | `scopeglint.c` | scope glint: TLOU2's own sniper-scope-flare on anyone scoped in (MSG_GLINT 0x91) | 2013 gameplay modes | P3 | net, camera, hook | 3 e.g. `t2r-dev-glint.txt` | net/ui/scopeglint.hpp, net/ui/scopeglint.cpp | ported |
 | `skills.c` | 2013 survival skills | 2013 gameplay modes | P3 | net, audio, widget, camera, pad, hook, data | 17 e.g. `t2r-2013-revive-off.txt` | gameplay/perks/* | not started |
@@ -228,11 +228,18 @@ decorations, the notice-c cross-feature toasts and dedupe, and the party ready /
 supplies `MatchEndHold()` to requeue and `Live()` / `MatchEndHold()` to friends13, so all consumers
 see one read of the engine substate 6 / `LobbyObj()+0x2ca4` end banner (via `engine/lobby.*`) with
 the mod's own match phase as the fallback. `MatchOver()` exposes the end banner to
-`player_status::MatchLive()` and AFK. Honest gates: the rank table (0xBF / `rankbadge.c`), the raw
-lobby object writes / `kPartyStatus` / `g_srchTab` / `g_srchName` producers, exact `menu-*` pad bindings,
-mouse-over click nav and the card's per-widget keyframes are not ported; widget writes are inert
-when the defs are absent and the ext still owns those producers while it is the bridge. The two
-opt-outs are `t2r-no-ingame-friends.txt` and `t2r-no-friend-toast.txt`.
+`player_status::MatchLive()` and AFK. The rank badge is now native for the friends rows: the pure
+0xBF table (`friends-state.*`), the async poll / `RankUi` drawing (`rank-badge.*`) and the row
+reservation in `SetRow`; MATCH FOUND team tabs / names come from `engine::lobby::RosterSorted` /
+`RosterName`. Click-to-nav is native too: the ext's `FrScan` canvas hit test drives the row hover
+highlight, the left-button edge moves the focus to the hovered row (a row click only *selects*; the
+engine's menu-select that rides on a click is dropped for 8 frames) and the footer prompts / keys /
+pad perform the action. Honest gates: the exact raw `kPartyStatus` session byte, the searchers'
+table (`g_srchTab` / `g_srchName` -- mod has no producer for the daemon's relative [T1]/[T2]
+markers), lobby object writes, exact `menu-*` pad bindings and the card's per-widget keyframes are
+not ported; widget writes are inert when the defs are absent and the ext still owns those producers
+while it is the bridge. The two opt-outs are `t2r-no-ingame-friends.txt` and
+`t2r-no-friend-toast.txt`; mouse navigation additionally honours `t2r-no-mouse-nav.txt`.
 
 `net/game/net-direct.*` ports the Steam-helper loopback socket, [06]/[07] hello/ack, the
 [05] ping/pong/message wire, the 800 ms cross-path dedupe ring, direct RTT EWMA gating and
@@ -387,7 +394,7 @@ Included directly by the unity build; carry code or a contract, not bulk data.
 | `paired.h` | psync: paired moves in sync on every client (paired.c, re/paired-sync.md) |
 | `peerresync.h` | "new peer seen" resync scheduler (re/jip-state-resync-1019.md): g_rs, resync_features() / peer_resync_tick() near the end |
 | `peertrust.h` | receive-side trust helpers (floats, slots, host-only, rate limit, mines, revive), re/peer-msg-trust-1019.md, tests/peertrust_test.c |
-| `rank13.h` | the 2013 rank symbol + weeks number next to a name (rank_ui; daemon tools/clan.py rank_of) |
+| `rank13.h` | the 2013 rank symbol + weeks number next to a name (rank_ui; daemon tools/clan.py rank_of); symbol / weeks / icon-path helpers ported into net/social/friends-state.* |
 | `scar_guns.h` | — |
 | `second_holster.h` | — |
 | `skills.h` | 2013 survival skills (skills.c, included before t2r_tick) |

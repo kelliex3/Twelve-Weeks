@@ -9,8 +9,10 @@
 // this as its own module keeps the wire/state testable without a game and lets the
 // panel, the party gate and the toasts share one definition of "the state".
 //
-// TODO(friends-state): rank badges (0xBF / rankbadge.c) are a separate unported feature;
-// the ext's RkbLookup / RankUi naming is done by the panel, not here.
+// Rank badges (tools/ext/rankbadge.c + rank13.h, daemon op 0xBF) live here as a pure
+// core: the shown-name key, the bounded rank table reply parser, the lookup /
+// placeholder rules and the symbol / weeks helpers. The 0xBF poll and the widget
+// drawing are the feature half (net/social/rank-badge.*, consumed by friends13).
 
 namespace net::social {
 
@@ -83,5 +85,31 @@ namespace net::social {
 
     const char* ErrorText(const char* code);          // daemon refusal -> local text
     const char* OkText(Action a, bool becameFriends); // successful write -> local text
+
+    // ---- rank table (ext rankbadge.c / rank13.h, daemon op 0xBF) -----------------------
+    // The daemon's 0xBF reply is "n=<k> <HHHHHHHH:r:w> ...": one row per known player,
+    // keyed by a hash of the SHOWN name (ext RkbHash = tools/rankbadge.py key()). r is
+    // the chalk rank symbol 0..9, w the weeks survived 0..999. A name the table does not
+    // list is drawn as rank 0 / 0 weeks once the daemon has answered at least once, so a
+    // new player still has a badge.
+    inline constexpr int kRankMax     = 400;   // ext RKB_MAX
+    inline constexpr int kRankSymbols = 10;    // ext RANK13_SYMBOLS (icons rank-0..9.png)
+    inline constexpr int kRankMaxWeeks = 999;  // ext RANK13_MAX_WEEKS
+
+    struct RankEntry { uint32_t h = 0; int rk = 0; int wk = 0; };
+    struct RankTable {
+        RankEntry entries[kRankMax]{};
+        int      n = 0;
+        uint32_t ver = 0;   // ext g_rkb_ver: bumped on each successful 0xBF reply
+    };
+
+    uint32_t RankHash(const char* name);                        // ext RkbHash / py key()
+    int      RankParse(RankTable* t, const char* text, size_t len); // returns rows, bumps ver
+    bool     RankLookup(const RankTable* t, const char* name, int* rk, int* wk);
+    bool     RankPlaceholder(const char* name);  // empty / "PLAYER n" / "SEARCHING" => no badge
+
+    int      RankSym(int rk);                     // -1 unknown, else clamp to 0..9
+    int      RankWeeks(int wk);                   // clamp to 0..999
+    void     RankIconPath(char* out, size_t n, int rk); // "streaming/t2r/icons/rank-<s>.png"
 
 }

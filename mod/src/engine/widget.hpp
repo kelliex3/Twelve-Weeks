@@ -35,6 +35,25 @@ namespace engine::widget {
     void SetText(uint64_t w, const char* text);
     void SetImage(uint64_t w, const char* path);
 
+    // ---- mouse navigation (ext UiRectSs / UiMouseOver / UiOverViewport) ---------------
+    // The ext's "widget escape bounds": the engine's own hover answer is often too
+    // tight (a row widget's clickable area misses its label), so when the engine says
+    // "not hovered" a screen-space rect derived from the widget's gui2 transform is
+    // checked against the cursor (both in the centred 16:9 canvas). A pinned exe
+    // function turns a transform into its four corners; a prologue check makes a game
+    // update fail closed (WidgetRect returns false) instead of calling a moved RVA.
+    bool WidgetRect(uint64_t w, float* x0, float* y0, float* x1, float* y1);
+
+    // ext UiMouseOver: true when the cursor is over `w`. With `arm` the widget is first
+    // marked hoverable (gui2-set-widget-hoverable). A t2r-no-mouse-nav.txt sidecar
+    // opts out (false). Unknown bounds never block -- they fall back to the engine's
+    // answer (which is false here).
+    bool MouseOver(uint64_t w, bool arm);
+
+    // ext UiOverViewport: true when the cursor is inside `w`'s rect, OR the rect /
+    // cursor is unknown (never block on unknown bounds). Useful as a click gate.
+    bool OverViewport(uint64_t w);
+
     // The ext's per-letter width estimate (FeedTextW): good enough to wrap a sentence
     // without a real text measurement.
     float TextWidth(const char* s, float scale);

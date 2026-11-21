@@ -43,4 +43,15 @@ namespace engine::lobby {
     uint8_t* PeerRecord(int slot);    // nullptr when the engine has no such record
     int      TeamOf(int slot);        // -1 when it cannot be answered
 
+    // ext LobbyRowsSorted (t2r-ext.c): the MATCH FOUND roster order -- our team first
+    // (blue), the enemy after (red), each in slot order, our own slot skipped. Row 0
+    // is always us; rows 1.. are idx[k] / enemy[k]. -1 when there is no usable match
+    // record yet (searching / menu), so a caller can tell match-found from searching
+    // without guessing a team. idx / enemy must each hold kRosterMax ints.
+    int  RosterSorted(int idx[kRosterMax], int enemy[kRosterMax]);
+
+    // The shown name of a roster entry (entry +1, NUL-terminated, at most 48 chars).
+    // false / out[0] = 0 when the entry is unavailable.
+    bool RosterName(int index, char* out, size_t cap);
+
 } // namespace engine::lobby

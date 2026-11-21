@@ -1659,6 +1659,7 @@ namespace net::match::backpack {
             static int menuWas;
             static double tMenuOpen;
             static int fbHid;
+            static double tFbLast;   // ext t_fb_last: last frame the menu was up (src=3 fallback tail)
             if (!inMatch) {
                 // level gone: the bodies die with it
                 ::engine::backpack_prop::ClearHeld();
@@ -1747,11 +1748,23 @@ namespace net::match::backpack {
                 else if (!active && ::engine::backpack_prop::Hid())
                     ::engine::backpack_prop::WornOn(me, 2);
                 fbHid = 0;
-            } else {
-                // TODO(bp-menu-fallback): the ext's src=3 fallback (hide the worn bag from the
-                // menu when no controller is reachable at all) needs the per-look prop table
-                // (BpLookProp / BpTables); not ported.
-                (void)fbHid;
+            } else if (me && ::engine::backpack_prop::LookProp(
+                           ::engine::backpack_prop::PlayerLook(me)) >= 0) {
+                // ext src=3 fallback: with no controller reachable, the per-look TAB-prop
+                // table (ported BpTables / BpLookProp) still tells us this look has a bag.
+                // Hide the worn bag while the menu is up (or for 1.5 s after it closes) so
+                // the menu never shows the worn bag over the craft prop. src 3 is the
+                // fallback's enter/leave reason (ext BpWornOff/BpWornOn(me, 3)).
+                if (menu)
+                    tFbLast = now;
+                const bool want = menu || (fbHid && now - tFbLast < 1500.0);
+                if (want && !::engine::backpack_prop::Hid()) {
+                    ::engine::backpack_prop::WornOff(me, 3);
+                    fbHid = 1;
+                } else if (!want && ::engine::backpack_prop::Hid() && fbHid) {
+                    ::engine::backpack_prop::WornOn(me, 3);
+                    fbHid = 0;
+                }
             }
             if (::engine::backpack_prop::Hid() && me)
                 ::engine::backpack_prop::HideWornNow(me);

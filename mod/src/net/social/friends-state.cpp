@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace net::social {
 
@@ -435,6 +436,116 @@ namespace net::social {
         case Action::Cancel:  return Tr("DONE", "GOTOWE");
         default: return "";
         }
+    }
+
+    // ---- rank table (ext rankbadge.c / rank13.h, daemon op 0xBF) -----------------------
+
+    uint32_t RankHash(const char* name)
+    {
+        // ext RkbHash = tools/rankbadge.py key(): FNV-1a over the lowercase ASCII
+        // letters / digits of the SHOWN name, with <font ...> markup, the parenthesised
+        // suffixes ("  (YOU)", " (party lead)", " (not searching)", "  (TY)") and the
+        // relative "[T1]" / "[T2]" search marker skipped. 0 = no key (never listed).
+        uint32_t h = 2166136261u;
+        int any = 0;
+        if (!name)
+            return 0;
+        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(name); *p; p++) {
+            if (*p == '<') {                       // <font ...> markup
+                const char* e = std::strchr(reinterpret_cast<const char*>(p), '>');
+                if (e) { p = reinterpret_cast<const unsigned char*>(e); continue; }
+            }
+            if (p[0] == ' ') {                     // a parenthesised suffix: stop here
+                const unsigned char* q = p;
+                while (*q == ' ') q++;
+                if (*q == '(' && (!std::strncmp(reinterpret_cast<const char*>(q) + 1, "party", 5)
+                    || !std::strncmp(reinterpret_cast<const char*>(q) + 1, "YOU", 3)
+                    || !std::strncmp(reinterpret_cast<const char*>(q) + 1, "TY", 2)
+                    || !std::strncmp(reinterpret_cast<const char*>(q) + 1, "not searching", 13)))
+                    break;
+            }
+            if (p[0] == ' ' && p[1] && p[2] && p[3] && p[4]
+                && p[1] == '[' && p[2] == 'T' && p[3] >= '1' && p[3] <= '2' && p[4] == ']') {
+                p += 4;                            // " [T1]" / " [T2]"
+                continue;
+            }
+            int c = *p;
+            if (c >= 'A' && c <= 'Z') c += 32;
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) continue;
+            h = (h ^ static_cast<uint32_t>(c)) * 16777619u;
+            any = 1;
+        }
+        return any ? h : 0;
+    }
+
+    int RankParse(RankTable* t, const char* text, size_t len)
+    {
+        if (!t)
+            return 0;
+        // The reply is bounded by the RPC buffer; parse a copy so no read runs past len.
+        const std::string s(text ? text : "", text ? len : 0);
+        const char* p = s.c_str();
+        RankEntry tmp[kRankMax];
+        int n = 0;
+        while (*p && n < kRankMax) {
+            while (*p == ' ') p++;
+            unsigned h = 0;
+            int r = 0, w = 0, used = 0;
+            if (std::sscanf(p, "%8x:%d:%d%n", &h, &r, &w, &used) == 3 && used > 0) {
+                tmp[n].h  = h;
+                tmp[n].rk = r < 0 ? 0 : (r >= kRankSymbols ? kRankSymbols - 1 : r);
+                tmp[n].wk = w < 0 ? 0 : (w > kRankMaxWeeks ? kRankMaxWeeks : w);
+                n++;
+                p += used;
+            } else {                               // "n=<k>" or junk: skip the word
+                const char* sp = std::strchr(p, ' ');
+                if (!sp) break;
+                p = sp;
+            }
+        }
+        for (int i = 0; i < n; i++) t->entries[i] = tmp[i];
+        t->n = n;
+        t->ver++;                                  // ext g_rkb_ver: the table has answered
+        return n;
+    }
+
+    bool RankLookup(const RankTable* t, const char* name, int* rk, int* wk)
+    {
+        if (!t) return false;
+        const uint32_t h = RankHash(name);
+        if (!h) return false;
+        for (int i = 0; i < t->n; i++)
+            if (t->entries[i].h == h) {
+                if (rk) *rk = t->entries[i].rk;
+                if (wk) *wk = t->entries[i].wk;
+                return true;
+            }
+        return false;                              // the caller notes the miss (ext g_rkbMiss)
+    }
+
+    bool RankPlaceholder(const char* name)
+    {
+        if (!name || !name[0] || !std::strcmp(name, "-") || !std::strncmp(name, "PLAYER", 6))
+            return true;
+        static const uint32_t kSearching = RankHash("SEARCHING");
+        const uint32_t h = RankHash(name);
+        return h == kSearching || !h;
+    }
+
+    int RankSym(int rk)
+    {
+        return rk < 0 ? -1 : (rk >= kRankSymbols ? kRankSymbols - 1 : rk);
+    }
+
+    int RankWeeks(int wk)
+    {
+        return wk < 0 ? 0 : (wk > kRankMaxWeeks ? kRankMaxWeeks : wk);
+    }
+
+    void RankIconPath(char* out, size_t n, int rk)
+    {
+        const int s = RankSym(rk);
+        std::snprintf(out, n, "streaming/t2r/icons/rank-%d.png", s < 0 ? 0 : s);
     }
 
 }
