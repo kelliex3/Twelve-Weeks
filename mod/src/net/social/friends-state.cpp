@@ -11,7 +11,9 @@ namespace net::social {
 
     const char* Tr(const char* en, const char* pl)
     {
-        return engine::locale::IsPolish() ? pl : en;
+        // Table-driven first (works for every registered language), with the
+        // inline Polish string as the fallback the old two-arg call sites rely on.
+        return engine::locale::Tr(en, pl);
     }
 
     int SubOp(Action a)

@@ -61,7 +61,9 @@ namespace net::social {
     // 11 promote, 12 ready.
     int SubOp(Action action);
 
-    // English / Polish pair (ext FRT), resolved from engine::locale.
+    // English / Polish pair (ext FRT), resolved through engine::locale's active
+    // language: the generated table translates for any registered language, with
+    // `pl` only as the Polish fallback for strings the table does not list.
     const char* Tr(const char* en, const char* pl);
 
     // text of len bytes, not necessarily NUL terminated. 1 on success; on success
