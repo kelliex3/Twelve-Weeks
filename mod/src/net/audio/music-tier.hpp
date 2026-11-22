@@ -28,8 +28,9 @@
 // Enemy-aware inputs (ported):
 //   * the camera-frustum + line-of-sight "seen" test (ext MusicSlotSeen / TagScreen) and the
 //     5-8 m forward cone (MusicSlotCos) are real sampler seams (SetSightSampler /
-//     SetConeSampler); net/audio/music-sight.* supplies a native implementation from the
-//     camera-through-reticle locator + async static-world ray (gated, see that module).
+//     SetConeSampler); net/audio/music-sight.* supplies a native implementation using ext's
+//     CamPosDir() camera pair, the exact puppet locator chest, a port of the ext's tag
+//     body-visibility g_tagHidden and the TagScreen on-screen box (gated, see that module).
 //   * "we hit an enemy" (ext hit-tick hook) is fed from the outgoing puppet-hit hook;
 //     "spotted by an enemy (spot call)" from the received Hawk Eyed / spot-call vox line;
 //     "enemy shot heard" / "enemy fire continues" from the peer shot-count radar;

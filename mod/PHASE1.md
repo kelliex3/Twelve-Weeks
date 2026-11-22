@@ -180,9 +180,9 @@ per-frame gain ramp) are ported: a dynamic voice follows its body (`ent`, or a w
 panned / attenuated against the listener every frame by `engine::pcm::VoicesUpdate()` (called from
 `boot::FrameTick`). The listener now prefers the final render camera captured by the new
 `engine/render-camera.*` read-only observer (the ext's icam filter hook), with the
-camera-through-reticle locator + `camera-get-dir-through-reticle` native as an extra robustness tier
-and the own-body-at-head-height fallback; `t2r-no-render-camera.txt` restores the old reticle-first
-behaviour. First consumer: the blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
+camera-through-reticle locator + `camera-get-dir-through-reticle` native as fallback -- the real pair
+ext's `CamPosDir()` uses for music-sight (ext's own SfxSpatial native tier was dead) -- and the
+own-body-at-head-height fallback; `t2r-no-render-camera.txt` makes the reticle pair primary. First consumer: the blade SFX (`net/audio/bladesfx.*`), played 3D on the blade's body.
 
 **Combat music tier state + floors (ported).** `net/audio/music-tier.*` ports the *state* other
 features gate on: `MusicEvent` (heat + the event / contact / awareness clocks), the heat decay, the
@@ -199,12 +199,18 @@ loops, beds, themes / sets / v5 rotation, grid-quantised cut timing, stinger lay
 not ported: it needs the private PCM blobs and the generated `music_families.h` / `music_pools.h`
 tables. The camera-frustum / LOS "seen" test and the 5–8 m forward cone now have a native producer
 in `net/audio/music-sight.*`: the final render camera from `engine/render-camera.*` (the ext's
-primary) gives the ext's `cp`/`cd`, with the reticle locator + direction native as an extra tier;
-a peer's replicated position + 1.1 m gives the chest, and the async static-world ray replaces the
-ext's tag visibility ray. It feeds the tier's `SetSightSampler` / `SetConeSampler` seams. It is
-**enabled by default** with `t2r-no-music-sight.txt` as an opt-out. The render camera observer is
+primary) gives the ext's `cp`/`cd`, with the reticle locator + direction native as fallback --
+matching the ext's `CamPosDir()` pair, including its direction normalization;
+the peer's exact puppet locator + 1.1 m gives the chest (the same `exe+0x133DB30(proc+0x100)` read
+ext makes through `EntityFromHandle`), and extinction is decided by a local port of the ext's tag
+body-visibility job (`g_tagHidden`, 12 weighted static-world rays, read back next frame) plus the
+ext's `TagScreen` on-screen box (signature-checked engine attachable projection with the
+`world-space-to-screen-space` native as fallback; stance from the wire's `isCrouched` / `isProne`
+flags = ext's peer+0x85 / +0x86). It feeds the tier's `SetSightSampler` / `SetConeSampler` seams. It
+is **enabled by default** with `t2r-no-music-sight.txt` as an opt-out. The render camera observer is
 read-only (the write path / track evaluator in §5 stays unported), so live A/B is still advised.
-`t2r-no-render-camera.txt` makes the reticle camera primary. Opting out of music-sight clears the two
+`t2r-no-render-camera.txt` makes the reticle camera primary; `t2r-no-tag-attach-proj.txt` forces the
+native projection. Opting out of music-sight clears the two
 samplers, in which case the inputs answer "not seen" and the tier keeps its conservative mark /
 close-quarters floor.
 The ext's enemy-aware *event* values are pure helpers in the same module (`ShotHeat`, `NearFireHeat`,
@@ -376,8 +382,8 @@ is due (before it is pushed), which the mod cannot observe, and the `g_mmBack` p
 gated because net-gui2 already pops the page it refuses. Net-direct's `Eligible` now mirrors the ext's
 `NdTypeOk` exactly: the reserved melee opcodes (`0x6C`, `0x97..0x9A`, `0x9C`, plus PSYNC `0x4B`
 and MV3 `0x9E` minus their PING / PONG) take the direct path too, so a ported client and an ext
-client stay interoperable. This is a transport decision, independent of the (dormant) melee
-bridge gate. Requeue's kick signal is now native (see below).
+client stay interoperable. This is a transport decision, independent of the now-live melee bridge.
+Requeue's kick signal is now native (see below).
 
 **Native kick timestamp / g_kickMs (ported).** `net/match/kick-state.*` owns the ext's
 `g_kickMs`, `MsgIsKick` and `MsgIsMove`: the English / Polish kick prefixes and the team-move
@@ -632,17 +638,24 @@ stays the bridge and no cutover toggle is flipped. The exact ext wire IDs are re
   and netcore compile but never run in the mod yet. Asset / move-table parity cannot be verified
   without the game binary.
 
-**Integration seams (landed, dormant).** `net/match/melee-bridge.*` is the single place that
-installs one *inert* sink per core and fans out the frame tick (`boot::FrameTick`), the reserved
-`NEVT_*` receive cases (`net-replication::HandleNetEvent`) and the session reset
-(`net-replication::ResetRuntime`). The sinks supply the real clock / local slot / match-liveness
-so the cores' bookkeeping stays consistent, but every engine / transport effect is a no-op and the
-clip-table / RTT / peer-state gates return conservative defaults. The master gate
-`melee_bridge::kEnabled` is **false**, so all four bridge functions no-op in a shipping build and
-the ext remains the behaviour owner — no ext cutover, no `t2r-*.txt` toggle flipped. Send-side
-interception (`HrSendHit` / `SendArmor` / `NoteOriginal`) and the MV3 `Mv3nIo` / PSYNC placement
-bridges are separate gates not installed here. The remaining path to cutover is: port each real
-producer, enable that feature in the bridge, then disable the matching ext module via its toggle.
+**Integration seams (landed, live).** `net/match/melee-bridge.*` is the single place that
+installs one sink per core and fans out the frame tick (`boot::FrameTick`), the reserved `NEVT_*`
+receive cases (`net-replication::HandleNetEvent`) and the session reset
+(`net-replication::ResetRuntime`). With `melee_bridge::kEnabled == true` the sinks use the real
+clock / slots / per-peer `PingMs()` and send the exact reserved opcodes over
+`net::session::SendEventRaw`: hitrel's reliable `0x6C` (with the plain `NEVT_TAKE_DAMAGE` /
+`NEVT_ARMOR_HIT` fallbacks), the dodge `0x97` / `0x98` / `0x99` messages, hitreact's `0x9A` and
+the exchange's `0x9C`. Reliable hits re-enter `HandleNetEvent(NEVT_TAKE_DAMAGE)` so the normal
+damage bookkeeping / stings / music inputs / lethal claim / `FireAttack` all run once. Local
+producers are wired into the existing hooks: `ReportLocalHitOnPuppet` routes through hitrel and
+arms `OnBlowDealt`, `hk_TryAttack` announces `0x97`, `NEVT_PLAYER_MELEE_ATTACK` feeds
+`melee_dodge::NoteSwing`, `NEVT_TAKE_DAMAGE` feeds `OnBlowTaken`, and the bridge's `Tick()` feeds
+the local dodge press edge from the raw dodge pad bit. Reaction clips / pain VO on the receive
+side animate / say on the sender's puppet by sid. Still gated (no native producer): the private
+hit-react clip table (`PickClip`), punch-at-joint / blade FX confirmation, the QTE system, the
+exchange's engine-held contact replay, MV3's `Mv3nIo` + glue, and PSYNC's wire core — those sinks
+return conservative defaults. The ext copy still owns those effects; no ext cutover and no
+`t2r-*.txt` toggle was flipped.
 
 ---
 
@@ -839,7 +852,8 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
 | `mod/src/net/audio/music-tier.hpp` + `.cpp` | extend — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`), injectable sight / forward-cone samplers, all enemy-aware event inputs (hit / spot / shot / fire / down / revive / stun) and event-value helpers; playback stays in the ext |
-| `mod/src/net/audio/music-sight.hpp` + `.cpp` | **new** — native `MusicSlotSeen` / `MusicSlotCos` producer (final render camera via `engine/render-camera.*`, reticle camera tier, async static-world ray + replicated peer chest); enabled by default, `t2r-no-music-sight.txt` opt-out |
+| `mod/src/net/audio/music-sight.hpp` + `.cpp` | **new** — native `MusicSlotSeen` / `MusicSlotCos` producer (final render camera + reticle fallback = ext's `CamPosDir()`; exact puppet locator chest, ext's tag body-visibility `g_tagHidden` + `TagScreen` on-screen box); enabled by default, `t2r-no-music-sight.txt` opt-out |
+| `mod/tests/music_sight_core_test.cpp` | **new** — standalone C++17 harness for the ext frustum / body-visibility / on-screen pure helpers (`MUSIC_SIGHT_CORE_TEST_OK`) |
 | `mod/src/net/audio/near-miss.hpp` + `.cpp` | **new** — immersion near-miss producer: pure closest-approach / wire quantisation helpers, `NEVT_SHOTRAY` sender + receiver ring, 120 ms hit-cancelled whizz with alert sting, LOS gate and private-data PCM path; `t2r-no-shotray.txt` / `t2r-no-near-miss.txt` |
 | `mod/tests/near_miss_core_test.cpp` | **new** — standalone C++17 harness for the near-miss geometry / wire helpers (`NEAR_MISS_CORE_TEST_OK`) |
 | `mod/src/net/audio/music-hold.hpp` + `.cpp` | **new** — pure ext `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` state + `MusicPlay` sid (`FNV64("*name*")`), behind an inert DC sink |
@@ -850,7 +864,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`): engine substate 6 / end banner via `engine/lobby.*` with a mod-phase fallback; `Live()` / `WasLive()` / `MatchOver()` / `MatchEndHold()` consumed by requeue, friends13, `player_status` + AFK |
 | `mod/src/net/match/kick-state.hpp` + `.cpp` | **new** — shared kick timestamp / text tests (ext `g_kickMs` / `MsgIsKick` / `MsgIsMove`), fed by the notice kind-'p' line, consumed by requeue + notice |
 | `mod/src/net/ui/postmatch-screens.hpp` + `.cpp` | **new** — post-match / menu latches (ext clan13x `Cl13PostActive`, `g_pm.pending`, `g_ev.pending`, GEAR UP `g_loState`, `g_mmBack`): sampled once/frame from the menu stack; `ScreensDone()` is requeue's single gate; `g_mmBack` pop seam gated (`kPopOnMmBack == false`) |
-| `mod/src/net/match/melee-bridge.hpp` + `.cpp` | **new** — gated integration seams: inert sinks + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
+| `mod/src/net/match/melee-bridge.hpp` + `.cpp` | **new** — live integration seams: wire / hit / dodge / anim / sound sinks + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == true`, local producers wired from the melee hooks |
 | `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, the dying latches (`g_downDying` / `g_uc4DyingUntil`) + 0/1/2 `LocalState()` / `PuppetDownState()`, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
 | `mod/src/net/online/jip-report.hpp` + `.cpp` | extend — 0xE5 roster-shadow merge + 0xA7 own-team swap parse + ghost-peer reaper cores (observation-only; engine writes / peer drops / 0x10 gated false) |
 | `mod/src/net/game/player-status.hpp` + `.cpp` | extend — `MatchLive()` reads the shared engine liveness latch; `LocalDownState()` / `PuppetDownState()` expose the 0/1/2 dying distinction to `bloodbuild.cpp` |

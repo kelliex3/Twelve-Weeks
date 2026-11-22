@@ -13,6 +13,8 @@
 #include "gameplay/perks/perk-registry.hpp"
 #include "gameplay/barrel-check.hpp"
 #include "gameplay/melee.hpp"
+#include "gameplay/melee-hit-react.hpp"
+#include "net/match/melee-bridge.hpp"
 #include "music-tier.hpp"
 #include "near-miss.hpp"
 
@@ -198,7 +200,23 @@ namespace net::hooks {
                                predictedLethal ? kForceKillDamage : damage,
                                static_cast<uint8_t>(predictedLethal ? 1 : 0),
                                static_cast<uint8_t>(headshot ? 1 : 0) };
-        net::session::SendEvent(NEVT_TAKE_DAMAGE, dmg, static_cast<uint8_t>(puppet.netSlot));
+        // Route through hitrel: capable peers get the reliable 0x6C copy, others the plain
+        // PlayerDamageEvent. The bridge falls back to that plain send if it is not installed.
+        net::match::melee_bridge::OnLocalHit(static_cast<uint8_t>(puppet.netSlot),
+                                             reinterpret_cast<const uint8_t*>(&dmg));
+
+        // Attacker side of the hit-reaction lock. The private clip table is not ported, so
+        // PickClip cannot pick a reaction here; this still arms the swing lock / pain bits.
+        {
+            gameplay::melee_hit_react::Blow blow;
+            blow.cls = weapon ? gameplay::melee_hit_react::kOneHanded
+                              : gameplay::melee_hit_react::kFist;
+            blow.damage = damage;
+            blow.sharp = false;   // melee_hitfx's blade rule (MhfxClass) is not ported
+            blow.fistSfx = !weapon;
+            blow.weapon = weapon;
+            gameplay::melee_hit_react::OnBlowDealt(puppet.netSlot, blow, false, false);
+        }
 
         // ext HitTickHook: a damaging hit we land is a music input ("we hit an enemy", 3.0).
         // This is our outgoing counterpart to the "we took a hit" input on the receive side.
@@ -456,6 +474,9 @@ namespace net::hooks {
         if (result && player && player == local && net::session::IsRunning()) {
             if (StringId64 action = MELEE::GET_CURRENT_MELEE_ACTION(SID("player"))) {
                 net::session::SendEventSid(NEVT_PLAYER_MELEE_ATTACK, action);
+                // Also announce the swing on the ext's 0x97 byte so peers open their dodge
+                // window. Separate wire, does not renumber the mod's own animation event.
+                net::match::melee_bridge::OnLocalMeleeSwing();
                 TO1_LOG("[NET] melee action %llx broadcast\n",
                     static_cast<unsigned long long>(action));
             }

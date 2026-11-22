@@ -170,8 +170,8 @@ namespace boot {
 
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
-		net::match::melee_bridge::Install();  // gated inert sinks for the melee cores; no-op while kEnabled == false
-		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores (dormant until enabled)
+		net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
+		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
 		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
 		net::match::downed_bridge::Tick();    // bleed-out / revive / peer state (dormant until enabled)
 		net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio

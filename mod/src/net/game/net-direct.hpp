@@ -18,18 +18,24 @@
 // The helper address comes from net::transport::RelayEndpoint(), the mod's equivalent of the
 // ext's kNetCtx +0 (IP) / +0x10 (port). `t2r-no-direct-melee.txt` turns the path off.
 //
-// Honest gates (TODO): the ext's melee-critical producers (hit-rel 0x6C, dodge 0x97..0x9A,
-// hitreact2, MEX 0x9C, MV3 0x9E, PSYNC 0x4B minus its ping/pong) are not ported, so there are
-// no ext message ids to duplicate. The eligible set below is the mod's equivalent latency-
-// sensitive events; the rest of the ext set stays on the ext's own direct path while it is the
-// bridge. The relay RTT baseline is the mod's per-peer PingMs() rather than the ext's g_psRtt[].
-// There is still no generic all-message send/recv hook in the mod; the two integration points
-// are net::session::SendEventRaw (outgoing) and HandleState's HandleNetEvent call (incoming).
+// Honest gates: the melee bridge is live (net/match/melee-bridge.*, kEnabled = true) — its sinks
+// send these exact opcodes over SendEventRaw, apply reliable hits through the normal damage path,
+// and mirror local swings / dodge presses from the existing hooks. Still gated inside it: the
+// private hit-react clip table, QTE, the exchange contact replay, MV3 glue and PSYNC's wire core.
+// The WIRE side is ported: net-protocol.hpp pins the ext's exact melee-critical opcodes
+// and Eligible() below mirrors the ext's NdTypeOk (0x6C hit-rel, 0x97..0x99 dodge, 0x9A hitreact2,
+// 0x9C MEX, 0x4B PSYNC and 0x9E MV3 minus their PING / PONG) plus the two mod-native melee
+// contacts (NEVT_PLAYER_MELEE_ATTACK / NEVT_TAKE_DAMAGE). The relay RTT baseline is the mod's
+// per-peer PingMs() rather than the ext's g_psRtt[]. There is still no generic all-message
+// send/recv hook in the mod; the two integration points are net::session::SendEventRaw (outgoing)
+// and HandleState's RelayIn / HandleNetEvent pair (incoming).
 //
-// Cutover note: the helper remembers one loopback "ext" address from [06] hello. While the ext's
-// own netdirect is live it owns that registration, so this path is only exercised once the ext
-// copy is disabled (the same t2r-no-direct-melee.txt file turns both off). The ext's direct
-// messages use its own opcodes and never reach the mod's handler, so the two do not cross-deliver.
+// Cutover note: the helper remembers one loopback "ext" address from [06] hello and forwards all
+// direct messages to it. Both copies hello with the same cadence while enabled, and the same
+// t2r-no-direct-melee.txt turns both off, so while the ext is live the registration is shared;
+// only after the ext copy is disabled is this path the sole owner. The mod now mirrors the ext's
+// opcodes, so isolation comes from that single registration (one handler per machine), not from
+// distinct message ids.
 
 namespace net::direct {
 

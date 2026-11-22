@@ -334,12 +334,13 @@ namespace engine::pcm {
             return BodyPos(SID("player"), out);
         }
 
-        // Listener = the game camera (TLOU2 hears from the camera). ext SfxSpatial's order is
-        // now matched: the final render camera captured by engine::render_camera (its icam
-        // filter hook) is PRIMARY; the camera-through-reticle locator + reticle-dir native is
-        // an extra robustness tier (the ext's own "camera natives" tier was dead); the own
-        // body at head height with zero direction is the last resort in both. Opting out of
-        // the capture with t2r-no-render-camera.txt restores the old reticle-first behaviour.
+        // Listener = the game camera (TLOU2 hears from the camera), in ext SfxSpatial's order:
+        // the final render camera captured by engine::render_camera (its icam filter hook) is
+        // PRIMARY; then the camera-through-reticle locator + reticle-dir native -- the real pair
+        // ext's CamPosDir() uses for music-sight (SfxSpatial's own native tier tried the
+        // nonexistent "camera-position" with rp = 0 and never worked); then our own body at head
+        // height with zero direction, as in ext. Opting out with t2r-no-render-camera.txt makes
+        // the reticle pair primary.
         bool ListenerPosDir(float cp[3], float cd[3])
         {
             if (engine::render_camera::Get(cp, cd))

@@ -16,6 +16,9 @@
 #include "requeue.hpp"
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
+#include "engine/frame.hpp"
+#include "gameplay/melee-hit-react.hpp"
+#include "gameplay/melee-dodge.hpp"
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/game/net-smooth-bridge.hpp"
@@ -1713,6 +1716,21 @@ namespace net::replication {
             }
 
             net::engine::FireAttack(local, attacker, evt.weaponSID, evt.weaponAmmoSID, evt.damage);
+
+            // Victim side of the hit-reaction core: with no private clip table PickClip fails,
+            // so this records the graze / no-reaction bookkeeping and sends the landed/pain
+            // notice rather than a clip reaction.
+            {
+                gameplay::melee_hit_react::Blow blow;
+                blow.cls = evt.weaponSID ? gameplay::melee_hit_react::kOneHanded
+                                         : gameplay::melee_hit_react::kFist;
+                blow.damage = evt.damage;
+                blow.sharp = false;   // blade rule (MhfxClass) is not ported
+                blow.fistSfx = !evt.weaponSID;
+                blow.weapon = evt.weaponSID;
+                gameplay::melee_hit_react::OnBlowTaken(static_cast<int>(senderSlot), blow,
+                                                       gameplay::melee_hit_react::VictimGates{});
+            }
             break;
         }
 
@@ -1880,6 +1898,13 @@ namespace net::replication {
             if (!ReadPod(data, size, actionSid)) break;
             sender.StopMelee();
             sender.ForceMelee(actionSid);
+            // The swing also opens our dodge window (ext MdgRecvSwing). Use the same frame
+            // clock the bridge uses for its core ticks so the two timestamps compare.
+            if (net::match::melee_bridge::Installed()) {
+                const double ms = ::engine::frame::NowMs();
+                gameplay::melee_dodge::NoteSwing(static_cast<int>(senderSlot),
+                                                 ms > 0.0 ? static_cast<uint64_t>(ms) : 0ull, 0);
+            }
             break;
         }
 
@@ -1923,8 +1948,8 @@ namespace net::replication {
         }
 
         // ---- reserved ext melee opcodes ---------------------------------------------------
-        // One gated bridge fans these out to the ported cores; dormant while its gate is off,
-        // so an ext client on the wire behaves exactly as before (no cutover).
+        // One live bridge fans these out to the ported cores; its still-gated branches (MV3,
+        // PSYNC) no-op, so an ext client on the wire keeps its own behaviour (no cutover).
         case NEVT_HIT_REL:
         case NEVT_ARMOR_HIT:
         case NEVT_DODGE_SWING:

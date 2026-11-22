@@ -338,11 +338,15 @@ while it is the bridge. The two opt-outs are `t2r-no-ingame-friends.txt` and
 [05] ping/pong/message wire, the 800 ms cross-path dedupe ring, direct RTT EWMA gating and
 the send/recv integration (`net::session::SendEventRaw` outgoing, `HandleState` incoming).
 Helper discovery uses `net::transport::RelayEndpoint()` (the mod's `kNetCtx +0/+0x10`). Honest
-gates: the ext's melee-critical opcodes have no mod `NEVT_*` equivalents, so the eligible set
-is the mod's melee / hit events (`NEVT_PLAYER_MELEE_ATTACK`, `NEVT_TAKE_DAMAGE`) with the rest
-of the ext set still on the ext's own path; the RTT baseline is the per-peer `PingMs()` instead
-of `g_psRtt[]`, and the helper's single "ext address" registration means the ext copy must be
-retired before this path is exercised.
+gates: the melee bridge is live (`kEnabled = true`) — its wire / hit / dodge sinks send the
+reserved opcodes over this same `SendEventRaw` channel, apply reliable hits through the normal
+damage path, and mirror local swings / dodge presses from the existing hooks. The ext's
+melee-critical opcodes are pinned in `net-protocol.hpp` and `Eligible()` mirrors the ext's
+`NdTypeOk` (`0x6C`, `0x97..0x9A`, `0x9C`, `0x4B` / `0x9E` minus their PING / PONG) plus the two
+mod-native melee contacts; the RTT baseline is the per-peer `PingMs()` instead of `g_psRtt[]`,
+and the helper's single "ext address" registration means the ext copy must be retired before
+this path is the sole owner. Still gated in the bridge: the private hit-react clip table, QTE,
+the exchange contact replay, MV3 glue and PSYNC's wire core.
 
 `engine/pad.{hpp,cpp}` now ports the whole virtual pad from `padinject.c`: virtual button presses
 and sticks, command-bit learning, bounded delivery, the raw melee / dodge / stick readers and the
@@ -392,13 +396,19 @@ unported.
 `teammate fired near` 0.75, `enemy at close quarters` 3.0, `enemy down near` /
 `teammate down / dead near` / `enemy revived` 4.0, `enemy stunned` 5.0, `we are stunned` 6.0).
 `net/audio/music-sight.*` supplies a **native producer** for both samplers: the frustum/cosine
-gate prefers the final render camera captured by `engine/render-camera.*` (the ext's primary), with
-the camera-through-reticle locator + `camera-get-dir-through-reticle` native as an extra tier, and
-uses the async static-world ray for occlusion, with a peer chest point from the replicated position
-+ 1.1 m. It is **enabled by default** with `t2r-no-music-sight.txt` as an opt-out; the render-camera
-observer is read-only (the write path / track evaluator stay unported), so live A/B is still advised
-(the 500 ms sight dwell / 300 ms break absorb a frame or two of ray latency).
-`t2r-no-render-camera.txt` makes the reticle camera primary. The remaining
+gate uses ext's `CamPosDir()` pair -- the final render camera captured by `engine/render-camera.*`
+(the ext's primary) with the camera-through-reticle locator + `camera-get-dir-through-reticle`
+native as fallback -- and the chest is the peer's **exact puppet locator + 1.1 m** (the same
+`exe+0x133DB30(proc+0x100)` read ext makes through `EntityFromHandle`). "Seen" is gated by a local
+port of the ext's tag body-visibility job (`g_tagHidden`: 12 weighted static-world rays, kicked
+every 6th frame, read back next frame, > 5% clear = visible, stance from the wire's
+`isCrouched` / `isProne` flags = ext's peer+0x85 / +0x86) plus the ext's exact `TagScreen`: the
+signature-checked engine attachable projection, falling back to `world-space-to-screen-space`,
+mapped into the 16:9 HUD box. It is **enabled by default** with `t2r-no-music-sight.txt` as an
+opt-out; the render-camera observer is read-only (the write path / track evaluator stay unported),
+so live A/B is still advised (the 500 ms sight dwell / 300 ms break absorb the one-frame ray latency).
+`t2r-no-render-camera.txt` makes the reticle camera primary; `t2r-no-tag-attach-proj.txt` forces
+the native projection. The remaining
 *event* inputs are wired too: `we hit an enemy` from the outgoing puppet-hit hook,
 `spotted by an enemy (spot call)` from a received enemy mark / spot-call vox line, and
 `we are stunned` from `gameplay/stun-lock.*`. `enemy stunned` (5.0) is fed from the `NEVT_STUNNED`

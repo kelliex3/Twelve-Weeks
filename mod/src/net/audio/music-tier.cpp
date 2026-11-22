@@ -120,13 +120,14 @@ namespace net::audio::music_tier {
         // hook, so the enemy-aware floor below is a real port of the ext's floor_heat rule.
         //
         // HONEST GATE: the ext's `seen` also uses a camera-frustum + line-of-sight ray (its
-        // MusicSlotSeen / TagScreen / g_tagHidden) and a forward cone (MusicSlotCos, 1-8 m).
+        // MusicSlotSeen / TagScreen / g_tagHidden) and a forward cone (MusicSlotCos, 5-8 m: d <= 5 m is
+        // already unconditional close quarters, so the cone only decides the 5-8 m band).
         // Both samplers are injected by net/audio/music-sight.* (enabled by default, with
         // t2r-no-music-sight.txt as an opt-out). With the samplers absent, `seen` falls back to
         // the mark flag (seen at any range) plus the within-5 m close quarters test, so an
         // enemy approaching from outside 5 m without a mark still needs contact. The sight
-        // producer prefers the final render camera (engine/render-camera.*) with the reticle
-        // camera as an extra tier -- see that module.
+        // producer uses the ext's CamPosDir() pair: final render camera (engine/render-camera.*)
+        // with the reticle locator as fallback -- see that module.
         struct WorldScan {
             int   seenNear    = 0;   // alive enemies seen within 30 m
             int   seenClose   = 0;   // ... within 15 m
