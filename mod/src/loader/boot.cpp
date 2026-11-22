@@ -41,6 +41,8 @@
 #include "net/social/rank-badge.hpp"
 #include "net/social/name-rim.hpp"
 #include "net/social/search-rows.hpp"
+#include "net/social/clan-page-data.hpp"
+#include "net/online/clan-state.hpp"
 #include "net/ui/postmatch-screens.hpp"
 #include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
@@ -212,6 +214,8 @@ namespace boot {
 		net::social::search_rows::Tick(); // g_srchTab / g_srchName mirror (read-only, observer on mod text writes)
 		net::rank_badge::Tick(::GetTickCount64());  // async 0xBF rank table poll (only while a screen draws a badge)
 		net::name_rim::Tick(::GetTickCount64());    // lead-dev pink name rim (role 4, 150 ms poll)
+		net::clan::Tick();        // 2013 CLAN state (0xE0/0xE1) + g_pm.pending / g_ev.pending producers
+		net::clan::page::Tick();  // 2013 CLAN page data (0xB6/0xB7 sections 1..6)
 		net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)

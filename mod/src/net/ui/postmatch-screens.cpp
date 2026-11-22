@@ -1,11 +1,15 @@
-// ported from tools/ext/t2r-ext.c (Cl13PostActive / g_pm.pending / g_ev.pending /
-// g_loState / g_mmBack) and tools/ext/requeue.c's post-match screen gate
+// Native home for the post-match / menu latches that hold requeue's settle.
+// Producers ported from tools/ext/t2r-ext.c (g_pm.pending / g_ev.pending via
+// net/online/clan-state.*, GEAR UP g_loState, g_mmBack's party + Steam gates),
+// clan13.c (Cl13PostActive) and tools/ext/requeue.c's post-match screen gate.
 
 #include "postmatch-screens.hpp"
 
 #include "log.hpp"           // TO1_LOG must precede engine/script.hpp (it uses it in a template)
 #include "engine/script.hpp" // MENU2 / MenuStack / DC::Call
 #include "engine/widget.hpp" // PageId
+#include "net/match/match-liveness.hpp"
+#include "net/online/clan-state.hpp"
 
 namespace net::ui::postmatch {
 
@@ -25,10 +29,11 @@ namespace net::ui::postmatch {
             StringId64 cl13x = 0, postmatch = 0, event = 0;
             StringId64 gearup13 = 0, loadoutMenu = 0;
             StringId64 pickers[4]{};
-            StringId64 findMatch = 0;
+            StringId64 findMatch = 0, mainMenu = 0;
 
             // sampled latches
-            bool cl13 = false, post = false, eventUp = false, gear = false;
+            bool cl13 = false, post = false, eventUp = false;
+            LoState lo = LoState::None;
             int  mmBack = 0;
         } g;
 
@@ -46,11 +51,19 @@ namespace net::ui::postmatch {
             g.pickers[2]  = engine::widget::PageId("picker-secondary");
             g.pickers[3]  = engine::widget::PageId("picker-purchase");
             g.findMatch   = engine::widget::PageId("find-match-menu");
+            g.mainMenu    = engine::widget::PageId("main-menu");
         }
 
         bool OnStack(StringId64 page)
         {
             return page && MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, page);
+        }
+
+        bool GearPagesUp()
+        {
+            return OnStack(g.gearup13) || OnStack(g.loadoutMenu)
+                || OnStack(g.pickers[0]) || OnStack(g.pickers[1])
+                || OnStack(g.pickers[2]) || OnStack(g.pickers[3]);
         }
 
     } // namespace
@@ -59,20 +72,23 @@ namespace net::ui::postmatch {
     {
         Init();
 
-        // The ext's latches are bools owned by the page handlers (they stay set from
-        // "page due" until the page closes). Their observable equivalent is the page
-        // being on the HUD menu stack; requeue re-checks every frame and only arms
-        // after a full 1.5 s settled, so a page popping in does not lose an arm.
+        // The page handlers' bools are now backed by the native clan state machine;
+        // the stack sample only covers the widget pages the ext still owns.
         g.cl13    = OnStack(g.cl13x);
         g.post    = OnStack(g.postmatch);
         g.eventUp = OnStack(g.event);
-        // ext g_loState != LO_NONE covers the loadout list / edit views and the
-        // picker pages (LO_LIST / LO_EDIT / LO_CHOOSE / LO_MATCH). With the 2013 page
-        // one page holds both list and edit; the stock flow uses loadout-menu + the
-        // four picker pages. Any of them up means GEAR UP navigation is in progress.
-        g.gear    = OnStack(g.gearup13) || OnStack(g.loadoutMenu)
-                 || OnStack(g.pickers[0]) || OnStack(g.pickers[1])
-                 || OnStack(g.pickers[2]) || OnStack(g.pickers[3]);
+
+        // ext g_loState: GuEnter sets LO_LIST on the menu (never in substate 6);
+        // the mid-match CHANGE LOADOUT sets LO_MATCH, the countdown sets LO_CHOOSE,
+        // the editor sets LO_EDIT. The explicit transitions come from net-gui2;
+        // this fallback only handles a page the engine pushed by itself.
+        const bool gear = GearPagesUp();
+        if (gear && g.lo == LoState::None) {
+            g.lo = net::match::liveness::Live() ? LoState::Match
+                                                : LoState::List;
+        } else if (!gear && (g.lo == LoState::List || g.lo == LoState::Edit)) {
+            g.lo = LoState::None;
+        }
 
         if (g.mmBack && ++g.mmBack > kMmBackFrames) {
             const StringId64 top = MENU2::GET_TOP_PAGE_IN_STACK(MenuStack::hudMenuStack);
@@ -82,29 +98,78 @@ namespace net::ui::postmatch {
             TO1_LOG("postmatch: refused find-match latch cleared, top %llx%s\n",
                 static_cast<unsigned long long>(top), kPopOnMmBack ? "" : " [page pop gated]");
         }
+
+        // ext EvOffer: on the MP menu, with no GEAR UP navigation and no post-match
+        // page due, decide whether the event screen is wanted. The ext still pushes
+        // the widget page; the decision and latch are native.
+        const uint64_t top = MENU2::GET_TOP_PAGE_IN_STACK(MenuStack::hudMenuStack);
+        const bool menuTop = top == g.findMatch || top == g.mainMenu
+            || OnStack(g.mainMenu);
+        net::clan::Offer(menuTop, g.lo != LoState::None, GetTickCount64());
     }
 
     void Reset()
     {
-        g.cl13 = g.post = g.eventUp = g.gear = false;
+        g.cl13 = g.post = g.eventUp = false;
+        g.lo = LoState::None;
         g.mmBack = 0;
     }
 
     bool Cl13PostActive()  { return g.cl13; }
-    bool ClanPostActive()  { return g.post; }
-    bool ClanEventActive() { return g.eventUp; }
-    bool GearUpNavActive() { return g.gear; }
+    bool ClanPostActive()  { return net::clan::PostPending() || g.post; }
+    bool ClanEventActive() { return net::clan::EventPending() || g.eventUp; }
+    bool GearUpNavActive() { return g.lo != LoState::None; }
+    LoState Lo()           { return g.lo; }
     bool MmBackActive()    { return g.mmBack != 0; }
 
     bool ScreensDone()
     {
-        return !g.cl13 && !g.post && !g.eventUp && !g.gear && g.mmBack == 0;
+        return !g.cl13 && !net::clan::PostPending() && !g.post
+            && !net::clan::EventPending() && !g.eventUp
+            && g.lo == LoState::None && g.mmBack == 0;
+    }
+
+    void NoteLoadoutOpen(bool inMatch)
+    {
+        if (g.lo == LoState::None)
+            g.lo = inMatch ? LoState::Match : LoState::List;
+    }
+    void NoteLoadoutEdit()
+    {
+        if (g.lo == LoState::List)
+            g.lo = LoState::Edit;
+    }
+    void NoteLoadoutApplied()
+    {
+        if (g.lo == LoState::Match)
+            g.lo = LoState::None;
+    }
+    void NoteLoadoutClose()
+    {
+        if (g.lo != LoState::Match)      // a mid-match pick stays pending to next spawn
+            g.lo = LoState::None;
+    }
+    void NoteCountdownChoose(int phase, int secondsLeft)
+    {
+        if (phase == 2 && secondsLeft >= 100 && secondsLeft < 130) {
+            if (g.lo == LoState::None || g.lo == LoState::List)
+                g.lo = LoState::Choose;
+        } else if (g.lo == LoState::Choose) {
+            g.lo = LoState::None;
+        }
     }
 
     void NoteMmRefused()
     {
         if (!g.mmBack)
             TO1_LOG("postmatch: find match refused (party gate) - hold requeue's settle for a few frames\n");
+        g.mmBack = 1;
+    }
+
+    void NoteSteamRefused()
+    {
+        if (!g.mmBack)
+            TO1_LOG("postmatch: find match refused (Steam helper not connected) - g_mmBack set\n");
         g.mmBack = 1;
     }
 

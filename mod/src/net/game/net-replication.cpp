@@ -26,6 +26,8 @@
 #include "net/social/rank-badge.hpp"
 #include "net/social/name-rim.hpp"
 #include "net/social/search-rows.hpp"
+#include "net/social/clan-page-data.hpp"
+#include "net/online/clan-state.hpp"
 #include "net/ui/postmatch-screens.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
@@ -2027,6 +2029,8 @@ namespace net::replication {
         net::match::downed_bridge::Reset();
         net::netsmooth::bridge::ResetAll();
         net::match::liveness::Reset();
+        net::clan::Reset();
+        net::clan::page::Reset();
         net::ui::postmatch::Reset();
         net::requeue::Reset();
         net::direct::Reset();

@@ -380,9 +380,13 @@ event channel at `SendEventRaw` and `HandleState`. Both use the same `t2r-*.txt`
 the ext. Requeue's post-match screen gate is native now: `net/ui/postmatch-screens.*` samples
 the menu stack for the clan13x scoreboard, clan-postmatch counter, clan-event screen, GEAR UP
 navigation and the `g_mmBack` refused-search latch, and requeue's `PostMatchScreensDone()` is a
-single call into it. Honest gates: the ext's `g_pm.pending` / `g_ev.pending` are set when the page
-is due (before it is pushed), which the mod cannot observe, and the `g_mmBack` page-pop is
-gated because net-gui2 already pops the page it refuses. Net-direct's `Eligible` now mirrors the ext's
+single call into it. The ext's `g_pm.pending` / `g_ev.pending` decisions and pre-push latches are
+native via `net/online/clan-state.*` (the 0xE0/0xE1/0xE2/0xE4 RPC, `EventWanted` / `PmReady` and
+the report retry); the 2013 CLAN page data (0xB6 ask / 0xB7 reply) is native via
+`net/social/clan-page-*`; GEAR UP's `g_loState` transitions are native via `postmatch::NoteLoadout*`
+and `NoteCountdownChoose`; and both `g_mmBack` producers (party gate and Steam helper not
+connected) are native via `net-gui2.cpp` / `net/online/steam-status.*`. Only the widget page
+push/render stays ext-owned. Net-direct's `Eligible` now mirrors the ext's
 `NdTypeOk` exactly: the reserved melee opcodes (`0x6C`, `0x97..0x9A`, `0x9C`, plus PSYNC `0x4B`
 and MV3 `0x9E` minus their PING / PONG) take the direct path too, so a ported client and an ext
 client stay interoperable. This is a transport decision, independent of the now-live melee bridge.
@@ -417,21 +421,30 @@ the end sequence), so a single value is shared by all consumers.
 native home of the five ext bools that hold requeue's settle after a match:
 
 - **clan13x** — the post-match scoreboard page (`to1/clan13x`; ext `Cl13PostActive` / `g_c13x.post`).
-- **clan-postmatch** — the supply-counter page (`to1/clan-postmatch`; ext `g_pm.pending`).
-- **clan event** — the announcement / result screen (`to1/clan-event`; ext `g_ev.pending`).
+- **clan-postmatch** — the supply-counter page (`to1/clan-postmatch`; ext `g_pm.pending`). The
+  decision and pre-push latch are native via `net/online/clan-state.*` (`PmReady` + the 0xE2
+  report retry); the page itself stays ext-owned.
+- **clan event** — the announcement / result screen (`to1/clan-event`; ext `g_ev.pending`). Native
+  too: `EventWanted` on the 0xE1 state decides the offer (a played result first, then the
+  announcement) and `net/online/clan-state.*` latches it before the ext pushes the page.
 - **GEAR UP nav** — any loadout / picker page (`gearup13`, `loadout-menu`, `picker-skill` /
   `-primary` / `-secondary` / `-purchase`), the observable equivalent of ext `g_loState != LO_NONE`.
+  `NoteLoadoutOpen` / `-Edit` / `-Applied` / `-Close` and `NoteCountdownChoose` now drive the
+  native `g_loState` (phase 2 / countdown 100..130, back to LO_NONE on countdown end or Esc).
 - **g_mmBack** — a refused FIND MATCH holds the settle for three frames (ext `MmreqHook`), then
-  the latch clears. The producer is wired in `net-gui2.cpp`'s party-gate branch; the ext's second
-  producer (Steam helper not connected) has no mod equivalent.
+  the latch clears. Both producers are native: `net-gui2.cpp`'s party-gate branch and the Steam
+  helper-not-connected branch (`net/online/steam-status.*`'s 1 s-cached
+  `%TEMP%\t2r-steam-status.txt` gate). A styled `net::notify` toast replaces the daemon panel the
+  ext relies on.
 
 Each page latch is sampled once per frame from `MENU2::IS_PAGE_ON_STACK`; `ScreensDone()` is the
 single aggregate requeue consumes in `PostMatchScreensDone()`, replacing the old `return true`
-stub. No page is pushed or popped: the ext still owns the page behaviour while it is the bridge
-and `kPopOnMmBack == false` because net-gui2 already pops the page it refuses. Honest gates: the
-ext sets `g_pm.pending` / `g_ev.pending` when the page is *due*, before it is pushed — the mod can
-only observe the page itself, and requeue's 1.5 s settle absorbs that window. The CLAN page data,
-the clan-event decision and GEAR UP's own `g_loState` transitions stay in the ext.
+stub. No page is pushed or popped: the ext still owns the widget page push/render while it is the
+bridge, and `kPopOnMmBack == false` because net-gui2 already pops the page it refuses (the mod
+shows the refusal as a toast and pops immediately instead of queueing a player the helper cannot
+host). The 2013 CLAN page data is native too: `net/social/clan-page-core.hpp` is the pure port of
+`tools/ext/clan13.h` and `net/social/clan-page-data.*` owns the 0xB6 ask / 0xB7 reply (bounded
+64 KB, section versions and snapshot getters), with only the `to1/clan13` widgets left to the ext.
 
 **In-game FRIENDS / PARTY panel (ported with honest gates).** `net/social/friends-state.*` is the
 pure JSON/state core (ext `friends13.h`): bounded 0xD9 reply parser, rows, badge, presence and
@@ -871,7 +884,12 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/tests/audio_core_test.cpp` | **new** — standalone C++17 harness for the stun / music-hold / exec-music / xcam cores and the tier / sight pure helpers (`AUDIO_CORE_TEST_OK`); no game headers |
 | `mod/src/net/match/match-liveness.hpp` + `.cpp` | **new** — shared once-per-frame match-end latch (ext `g_wasLive`): engine substate 6 / end banner via `engine/lobby.*` with a mod-phase fallback; `Live()` / `WasLive()` / `MatchOver()` / `MatchEndHold()` consumed by requeue, friends13, `player_status` + AFK |
 | `mod/src/net/match/kick-state.hpp` + `.cpp` | **new** — shared kick timestamp / text tests (ext `g_kickMs` / `MsgIsKick` / `MsgIsMove`), fed by the notice kind-'p' line, consumed by requeue + notice |
-| `mod/src/net/ui/postmatch-screens.hpp` + `.cpp` | **new** — post-match / menu latches (ext clan13x `Cl13PostActive`, `g_pm.pending`, `g_ev.pending`, GEAR UP `g_loState`, `g_mmBack`): sampled once/frame from the menu stack; `ScreensDone()` is requeue's single gate; `g_mmBack` pop seam gated (`kPopOnMmBack == false`) |
+| `mod/src/net/ui/postmatch-screens.hpp` + `.cpp` | **new** — post-match / menu latches (ext clan13x `Cl13PostActive`, `g_pm.pending`, `g_ev.pending`, GEAR UP `g_loState`, `g_mmBack`): sampled once/frame from the menu stack; `ScreensDone()` is requeue's single gate; native `g_loState` via `NoteLoadout*` / `NoteCountdownChoose`, `g_mmBack` pop seam gated (`kPopOnMmBack == false`) |
+| `mod/src/net/online/clan-state.hpp` + `.cpp` | **new** — native 2013 clan state + post-match decisions (ext `ClanT` / `ClanParse` / `PmReport` / `PmReady` / `EvWanted` / `EvOffer`): exact 0xE0/0xE1 state read, 0xE2 report (with retry) and 0xE4 side choice via `net::daemon::Rpc`, `g_pm.pending` / `g_ev.pending` pre-push latches; pure parse / decision core in the header; widget pages stay ext-owned |
+| `mod/src/net/social/clan-page-core.hpp` | **new** — pure core of the in-game CLAN page (ext `tools/ext/clan13.h`): bounded 0xB7 row parse for sections 1..6, cards / thread / week / day / match-stat views and text clip / wrap; header-only for the standalone test |
+| `mod/src/net/social/clan-page-data.hpp` + `.cpp` | **new** — native CLAN page data producer: 0xB6 asker (token / language / section / seen id / day / cap), bounded 64 KB 0xB7 reply, section versions and snapshot getters; `to1/clan13` widget push/render stays ext-owned |
+| `mod/src/net/online/steam-status.hpp` + `.cpp` | **new** — ext-equivalent Steam-only gate: 1 s-cached `%TEMP%\t2r-steam-status.txt` (`<1|0> <unix time>`, 70 s freshness), `SteamOnly()` / `Connected()` / `RefuseFindMatch()`, wired into net-gui2's FIND MATCH refusal |
+| `mod/tests/clan_core_test.cpp` | **new** — standalone C++17 harness for the clan state / decision and CLAN page pure cores (`CLAN_CORE_TEST_OK`); no game headers |
 | `mod/src/net/match/melee-bridge.hpp` + `.cpp` | **new** — live integration seams: wire / hit / dodge / anim / sound sinks + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == true`, local producers wired from the melee hooks |
 | `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, the dying latches (`g_downDying` / `g_uc4DyingUntil`) + 0/1/2 `LocalState()` / `PuppetDownState()`, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
 | `mod/src/net/online/jip-report.hpp` + `.cpp` | extend — 0xE5 roster-shadow merge + 0xA7 own-team swap parse + ghost-peer reaper cores (observation-only; engine writes / peer drops / 0x10 gated false) |

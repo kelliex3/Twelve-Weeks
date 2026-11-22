@@ -25,6 +25,9 @@
 #include "gameplay/loadout/purchase.hpp"
 #include "net/social/friends13.hpp"
 #include "net/ui/postmatch-screens.hpp"
+#include "net/ui/notify.hpp"
+#include "net/online/steam-status.hpp"
+#include "net/match/match-liveness.hpp"
 
 #define TO1_HUD(name) SID("canvas.hudRoot.hudMenuStack.to1/" name)
 
@@ -81,6 +84,7 @@ namespace {
     const int kSkillSlotCount = int(sizeof(kSkillSlots) / sizeof(kSkillSlots[0]));
 
     int g_editSkillSlot = -1;   // which slot picker-skill is editing
+    bool s_gearWasOpen = false;  // ext g_loState: previous frame's GEAR UP page edge
 
     StringId64 skillSlotNode(int i, const char* leaf = nullptr)
     {
@@ -610,6 +614,11 @@ namespace {
                 sound(SID("sfx-rl-round-timer-tick")); // over budget
                 return;
             }
+
+            // ext GuListSelect: a mid-match pick is applied at the next respawn and
+            // takes g_loState from LO_MATCH back to LO_NONE.
+            if (net::match::liveness::Live())
+                net::ui::postmatch::NoteLoadoutApplied();
 
             sound(SID("sfx-rl-hub-interact-vendor-purchase-complete"));
             if (prev >= 0) setVis(nodef("anim-group.pickerList.Item%d.selectedMark", prev), false);
@@ -1327,6 +1336,7 @@ namespace net::gui2 {
         g_connectDone = false;
         SetPhase(Phase::Idle);
         g_lastPage = StringId64(0);
+        s_gearWasOpen = false;
         resetLobbyHold();
         SetLives(kStartLives, kStartLives);
         TheMatch().matchTimer.Clear();
@@ -1692,6 +1702,21 @@ namespace net::gui2 {
                     net::friends13::MemberReadyPress();
                     DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, SID("to1/find-match-menu"));
                 }
+                else if (net::steam::RefuseFindMatch())
+                {
+                    // ext MmreqHook: `g_steamOnly && !SteamConnected()` -> g_mmBack = 1
+                    // and the refusal is logged; the request still goes out so the
+                    // daemon's native panel can show the reason and the page is popped
+                    // a few frames later by the g_mmBack handler. The mod has no such
+                    // daemon panel and the search page is ours, so show the same text as
+                    // a styled toast and pop the page here instead of queueing a player
+                    // the helper cannot host. The latch still holds requeue's settle.
+                    net::ui::postmatch::NoteSteamRefused();
+                    TO1_LOG("find match refused: Steam not connected\n");
+                    net::notify::Push(net::notify::NTF_WARN,
+                        "Steam is not connected: open Steam, then start the game with Play.bat", 4.0f);
+                    DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, SID("to1/find-match-menu"));
+                }
                 else
                 {
                     net::session::SetLocalName(Username());
@@ -1709,6 +1734,10 @@ namespace net::gui2 {
 
             const int phase = net::matchmaking::LobbyPhase();
             const int cd = net::matchmaking::LobbyCountdown();
+            // ext loadout flow: phase 2 / secs 100..130 (the daemon's 100 + seconds
+            // left) is the CHOOSE LOADOUT stage; leaving it returns g_loState to
+            // LO_NONE. The mod's lobby countdown is that same encoded value.
+            net::ui::postmatch::NoteCountdownChoose(phase, cd);
 
             if (!m && g_lobby != Lobby::Idle)
             {
@@ -1796,10 +1825,23 @@ namespace net::gui2 {
             resetLobbyHold();
         }
 
-        if (top == TO1_HUD("picker-primary"))        picker(gameplay::weapons::Slot::Primary, entered);
-        else if (top == TO1_HUD("picker-secondary")) picker(gameplay::weapons::Slot::Secondary, entered);
-        else if (top == TO1_HUD("picker-purchase"))  picker(gameplay::weapons::Slot::Purchasable, entered);
-        else if (top == TO1_HUD("picker-skill"))     skillPicker(entered);
+        // ext gearup13.c g_loState edges: opening the GEAR UP list is LO_LIST (or
+        // LO_MATCH mid-match), a picker/editor is LO_EDIT, and leaving them is
+        // LO_NONE. postmatch::Tick samples the stack as a fallback; the explicit
+        // open / edit / applied edges cover what a page name alone cannot tell.
+        const bool gearPage = top == TO1_HUD("gearup13") || top == TO1_HUD("loadout-menu")
+            || top == TO1_HUD("picker-skill") || top == TO1_HUD("picker-primary")
+            || top == TO1_HUD("picker-secondary") || top == TO1_HUD("picker-purchase");
+        if (gearPage && !s_gearWasOpen)
+            net::ui::postmatch::NoteLoadoutOpen(net::match::liveness::Live());
+        else if (!gearPage && s_gearWasOpen)
+            net::ui::postmatch::NoteLoadoutClose();
+        s_gearWasOpen = gearPage;
+
+        if (top == TO1_HUD("picker-primary"))        { if (entered) net::ui::postmatch::NoteLoadoutEdit(); picker(gameplay::weapons::Slot::Primary, entered); }
+        else if (top == TO1_HUD("picker-secondary")) { if (entered) net::ui::postmatch::NoteLoadoutEdit(); picker(gameplay::weapons::Slot::Secondary, entered); }
+        else if (top == TO1_HUD("picker-purchase"))  { if (entered) net::ui::postmatch::NoteLoadoutEdit(); picker(gameplay::weapons::Slot::Purchasable, entered); }
+        else if (top == TO1_HUD("picker-skill"))     { if (entered) net::ui::postmatch::NoteLoadoutEdit(); skillPicker(entered); }
         else if (top == TO1_HUD("loadout-menu"))     loadoutMenu(entered);
         else if (top == TO1_HUD("map-select"))       mapSelect(entered);
         else if (top == TO1_HUD("credits"))          creditsPage(entered);

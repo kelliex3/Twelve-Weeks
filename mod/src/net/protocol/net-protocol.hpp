@@ -235,6 +235,15 @@ enum class NetDirectOp : uint8_t {
 enum class NetDaemonOp : uint8_t {
     kAfkTrailer     = 0xAF,   // 4-byte tag inside the 0xE3 report: [0xAF][u16 idle s][flags]
     kJipTeamSwap    = 0xA7,   // trailing [u8 n][n x (slot, team)] block in the 0xE5 reply
+    // 2013 CLAN state / page / post-match report (tools/ext/t2r-ext.c, clan13.c).
+    // Same server socket as every other daemon RPC here; pinned to the ext bytes so an
+    // ext client and a mod client can talk to the same daemon during the cutover.
+    kClanPageReq    = 0xB6,   // [64B token][u8 lang][u8 section][u32 seen id][u16 day][u8 cap=1]
+    kClanPageRep    = 0xB7,   // "<section text>" (tab-separated rows, parsed by clan-page-core.hpp)
+    kClanStateRead  = 0xE0,   // [64B token] -> kClanStateReply
+    kClanStateReply = 0xE1,   // "fac=1 st=1 day=3 ..." (parsed by clan-state.hpp)
+    kClanReport     = 0xE2,   // [64B token][u32 seq][u32 parts][u8 flags][u8 n][n x (u8 label,u16 count)]
+    kClanChooseSide = 0xE4,   // [64B token][u8 side] -> kClanStateReply
     kNoticePoll     = 0xBA,
     kNoticeReply    = 0xBB,
     kRequeuePoll    = 0xBC,

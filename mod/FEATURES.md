@@ -116,7 +116,7 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `mpsnow.c` | snow on the winter map characters (T2R_MP_SNOW=1 builds: snow garment material + tables; t2r-no-mp-snow.txt = off) | Feel & cosmetics | P2 | camera | 4 e.g. `t2r-mp-snow-force.txt` | — | not started |
 | `weather.c` | random winter blizzard: SP's gated blizzard render settings, host-timed (MSG_WEATHER 0xAC; t2r-no-weather.txt / t2r-weather-force.txt) | Feel & cosmetics | P2 | net, camera, hook | 9 e.g. `t2r-no-bed-fade.txt` | net/game/* | not started |
 | `backpack.c` | TAB backpack phase on every client (MSG_BACKPACK, puppet craft clips). **build 191:** no behaviour change in backpack.c itself (3 comment rewrites); `t2r-ext.c` changes the integration hook `bp_look_prop` → `cz_bag_look_sid` so a composed CUSTOMIZE bag resolves to its worn look — ported natively in `LookProp()` as an inert producer seam (register via `SetComposedBagLook`; nothing registers until `customize_compose` is ported) | 2013 gameplay modes | P3 | net | 6 e.g. `t2r-bp-record.txt` | net/match/backpack.cpp, engine/backpack-prop.cpp, engine/armor-rig.cpp | in progress (build 191 look-id hook ported, gated on composer) |
-| `clan13.c` | the in-game CLAN page: roster / journal / raids from daemon op 0xB6 (to1/clan13, tools/features/clan13_widgets.py). **build 191:** No Return frame (`nr_header`, `nr_week`, tabs, 2D grid, post-match day) | 2013 gameplay modes | P3 | widget, pad | 8 e.g. `t2r-clan-ms-old.txt` | net/online/net-session.cpp, net/ui/postmatch-screens.cpp, engine/widget.hpp | not started |
+| `clan13.c` | the in-game CLAN page: roster / journal / raids from daemon op 0xB6 (to1/clan13, tools/features/clan13_widgets.py). **build 191:** No Return frame (`nr_header`, `nr_week`, tabs, 2D grid, post-match day) | 2013 gameplay modes | P3 | widget, pad | 8 e.g. `t2r-clan-ms-old.txt` | net/social/clan-page-core.hpp, net/social/clan-page-data.*, net/online/clan-state.*, net/ui/postmatch-screens.cpp | in progress (0xB6/0xB7 data + 0xE0..0xE4 decisions native; widget push/render ext-owned) |
 | `clancard.c` | generic corner card (clan status updates + perk pops), log clancard:. **build 191:** pause layout | 2013 gameplay modes | P3 | widget | 4 e.g. `t2r-clan-card-scale.txt` | net/online/net-session.cpp | not started |
 | `clanend.c` | the clan end screens (won / lost): key art + roll call, rank page, stats (log clanend:). **build 191:** choose music | 2013 gameplay modes | P3 | audio, widget, camera | 4 e.g. `t2r-ce-menu-music.txt` | net/online/net-session.cpp, engine/pcm.* | not started |
 | `clanperk.c` | clan supply perks: free medkit / clip / crafting set / sprint recovery / bleed-out time from the clan's surplus, card + voice, log clanperk: | 2013 gameplay modes | P3 | audio, widget, hook, data | 2 e.g. `t2r-no-clan-perk-voice.txt` | net/online/net-session.cpp | not started |
@@ -127,7 +127,7 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `flame2013.c` | 2013 Flamethrower (TLOU2's own, purchasable row 10): damage ticks, MSG_FLAME 0x90, puppet fx fallback | 2013 gameplay modes | P3 | net, camera, hook | 4 e.g. `t2r-flame.txt` | — | not started |
 | `flashlight.c` | own flashlight (L / hold the mark button), light sync MSG_FLASH 0xAB, puppet lights (t2r-no-flashlight.txt) | 2013 gameplay modes | P3 | net, camera, pad, hook | 12 e.g. `t2r-flashlight-key-t.txt` | — | not started |
 | `friends13.c` | the in-game FRIENDS / PARTY panel + the P button under the lobby box (daemon op 0xD8, to1/friends13, tools/features/friends13_widgets.py). **build 191:** No Return-style panel redesign + new toast / card kinds (`fr13_toast_line` kind p) — new work on top of the ported panel | 2013 gameplay modes | P3 | widget, pad, hook | 2 e.g. `t2r-no-friend-toast.txt` | net/social/friends13.cpp, net/social/friends-state.cpp, net/match/match-liveness.cpp, net/ui/notice.cpp, net/ui/net-gui2.cpp | ported (gated; build 191 redesign unported) |
-| `gearup13.c` | the 2013 GEAR UP page: list + edit views on the real loadout data (to1/gearup13, tools/features/gearup13_widgets.py). **build 191:** scroll / classes; Flamethrower off sale behind `T2R_SELL_FLAME` (default 0) + stale-loadout row reset (`fb5e6eb`) | 2013 gameplay modes | P3 | widget, pad, hook | 5 e.g. `t2r-gu-noanim.txt` | gameplay/loadout/*, net/ui/postmatch-screens.cpp | not started |
+| `gearup13.c` | the 2013 GEAR UP page: list + edit views on the real loadout data (to1/gearup13, tools/features/gearup13_widgets.py). **build 191:** scroll / classes; Flamethrower off sale behind `T2R_SELL_FLAME` (default 0) + stale-loadout row reset (`fb5e6eb`) | 2013 gameplay modes | P3 | widget, pad, hook | 5 e.g. `t2r-gu-noanim.txt` | gameplay/loadout/*, net/ui/postmatch-screens.cpp, net/ui/net-gui2.cpp | in progress (g_loState transitions + latch native; widget push/render ext-owned) |
 | `gift.c` | Crafter II / III gifts: HUD slot, held box, E to give a teammate (MSG_SK_GIFT 0x53 / GIFTSTOCK 0x56 / GIFTACK 0x57; t2r-no-crafter-gift.txt) | 2013 gameplay modes | P3 | net, pad, hook | 2 e.g. `t2r-no-crafter-gift.txt` | — | not started |
 | `gunlimit.c` | per-team gun limits (1 Tactical Shotgun per team), arbitrated by the daemon (tools/gunlimit.py) | 2013 gameplay modes | P3 | hook | 1 e.g. `t2r-no-gunlimit.txt` | — | not started |
 | `helpcall.c` | ping a downed teammate with the mark button, "call for help" button while downed (MSG_HELPCALL 0x9D; t2r-no-downed-ping.txt, t2r-no-help-call.txt) | 2013 gameplay modes | P3 | net, pad, hook | 2 e.g. `t2r-no-downed-ping.txt` | — | not started |
@@ -295,12 +295,15 @@ match-end byte (`LobbyObj()+0x2ca4`) and `MatchSubstate()==6` are now read direc
 the same engine signal the ext uses. The post-match screen latches that hold requeue's settle
 are now native via `net/ui/postmatch-screens.*`: `clan13x` (scoreboard), `clan-postmatch`
 (supply counter), `clan-event`, GEAR UP nav (any loadout / picker page) and the `g_mmBack`
-refused-search latch (produced by net-gui2's party gate). They are sampled from the menu stack
-once per frame; requeue's `PostMatchScreensDone()` is their single consumer. Honest gates: the
-ext sets its `g_pm.pending` / `g_ev.pending` when the page is *due*, before it is pushed, which
-the mod cannot observe (the 1.5 s settle absorbs that window); the CLAN page data, clan-event
-decision and GEAR UP's own `g_loState` transitions stay in the ext, and the `g_mmBack` page-pop
-seam is gated because net-gui2 already pops the page it refuses.
+refused-search latch. They are sampled from the menu stack once per frame; requeue's
+`PostMatchScreensDone()` is their single consumer. The ext's `g_pm.pending` / `g_ev.pending`
+decisions and pre-push latches are native via `net/online/clan-state.*` (the 0xE0/0xE1/0xE2/0xE4
+RPC, `EventWanted` / `PmReady` and the report retry), the 2013 CLAN page data (0xB6 ask / 0xB7
+reply) via `net/social/clan-page-*`, and GEAR UP's own `g_loState` via `postmatch::NoteLoadout*`
+and `NoteCountdownChoose`. Both `g_mmBack` producers (the party gate and the Steam-helper-not-
+connected `net/online/steam-status.*` gate) are native; net-gui2 pops the refused page itself and
+a styled `net::notify` toast stands in for the daemon panel. Only the widget page push/render
+stays ext-owned.
 
 `net/match/kick-state.*` ports the ext's `g_kickMs` / `MsgIsKick` / `MsgIsMove` (the timestamp
 set in `MsgHook` when the daemon's op 0x11 kick text arrives). The mod has no winmm message
