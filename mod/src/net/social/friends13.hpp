@@ -18,12 +18,19 @@
 // Opt-outs: t2r-no-ingame-friends.txt (no button / page / poll), and
 // t2r-no-friend-toast.txt (plain one-line toasts instead of the cards).
 //
-// Honest gates (TODO): the rank table (0xBF / rankbadge.c), the raw lobby object /
-// kPartyStatus / g_srchTab / g_srchName producers, exact menu-* pad bindings and the
-// card's per-widget keyframes are not ported. The panel, badge and cards resolve their
-// widget paths through engine::widget and stay inert when the widget defs are absent;
-// the ext still owns those producers while it is the bridge. The party / search state
-// itself is fully native (parsed from the daemon) and drives requeue + the search gate.
+// Ported here: the exact menu-* pad bindings (edge / repeat split), the frToast card's
+// per-widget keyframes (260 ms slide-in from +170, 220 ms slide-out to +70, alpha in
+// 1/32 steps, root pivot at FT_X + qx*0.5), the rank badge's build-191 role path via
+// rank-badge.*, and the MATCH FOUND lobby rows / SEARCHING tabs via engine.lobby.* and
+// net::social::search_rows.* (g_srchTab / g_srchName mirror, raw kPartyStatus read).
+//
+// Honest gates: engine / winmm text writes for the SEARCHING rows still pass through
+// the ext's pinned settext hook (no second hook); the mirror only observes writes made
+// through engine::widget::SetText plus the read-only roster. Lobby object writes, the
+// scoreboard's pink rim (no scoreboard settext note) and the own-badge clan 0xE1 role
+// stay ext-owned. Every widget path resolves through engine::widget and is inert when
+// the widget defs are absent. The party / search state itself is fully native (parsed
+// from the daemon) and drives requeue + the search gate.
 
 namespace net::friends13 {
 

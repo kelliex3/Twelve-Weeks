@@ -32,4 +32,17 @@ namespace net::rank_badge {
     bool DrawBadge(const char* iconPath, const char* numPath, const char* name,
         bool playerRow);
 
+    // ext rkb_role_of: the 0xBF table's role for the shown name (0 none / unknown).
+    // Used by the pink name rim (net::name_rim). A lookup also re-arms the poll.
+    int  RoleOf(const char* name);
+
+    // ext rank_ui_role / rkb_draw_me: the role-tinted badge. DrawBadgeRole is the
+    // full rkb_draw with an explicit role override (ext takes it from the 0xBF row);
+    // DrawMe draws OUR badge from supplied rank / weeks / role. Honest gate: the mod
+    // has no clan 0xE1 reader and draws no own-row badge, so DrawMe is the gate for a
+    // future consumer -- today every caller uses DrawBadge and role comes from 0xBF.
+    bool DrawBadgeRole(const char* iconPath, const char* numPath, const char* name,
+        bool playerRow, int role);
+    bool DrawMe(const char* iconPath, const char* numPath, int rk, int wk, int ownRole);
+
 }

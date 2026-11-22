@@ -8,6 +8,8 @@
 // (kFnNetPlayersCtx) and the lobby offsets used by FeatureJoinInProgress / requeue:
 //
 //   kNetCtx +0x2b80        match substate; 6 = in a running match
+//   kPartyStatus           raw engine session state (exe 0x180167968): 0 idle,
+//                          1 connecting, 2 connected, 3 searching, 4 in a match
 //   LobbyObj +0x1a         roster count (clamped to 8 here)
 //            +0x1c         our team
 //            +0x1d         8 x 0x32-byte roster entries; entry +0x31 = team
@@ -31,6 +33,11 @@ namespace engine::lobby {
     // MatchSubstate(): 0 when the data is not readable, otherwise the engine's byte.
     uint8_t  Substate();
     bool     InMatch();               // Substate() == 6
+
+    // ext T2R_SYM(kPartyStatus) -- the raw int the ext reads for the lobby / party
+    // rows (3 = searching / match found, 4 = in a match). -1 if not readable.
+    int      PartyStatus();
+    uint8_t* RawObject();             // the same read-only LobbyObj() as Object()
 
     bool     MatchOver();             // Object()[0x2ca4] != 0
     bool     Clock(float& duration, float& remaining);

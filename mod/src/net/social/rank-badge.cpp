@@ -168,14 +168,57 @@ namespace net::rank_badge {
         g_dead = 0;
     }
 
-    bool DrawBadge(const char* iconPath, const char* numPath, const char* name,
-        bool playerRow)
+    // ext rank13.h rank_ui_role: the image shows the role-tinted symbol, the text
+    // the weeks in the same colour (a <font color=...> span). rk < 0 hides both.
+    static bool RankUiRole(const char* iconPath, const char* numPath,
+        int rk, int wk, int role)
+    {
+        const uint64_t icon = engine::widget::Page(iconPath);
+        const uint64_t num  = engine::widget::Page(numPath);
+        if (social::RankSym(rk) < 0) {
+            engine::widget::Visible(icon, false);
+            engine::widget::SetText(num, "");
+            engine::widget::Visible(num, false);
+            return false;
+        }
+        char p[64], t[64];
+        social::RankRolePath(p, sizeof p, rk, role);
+        engine::widget::SetImage(icon, p);
+        engine::widget::Visible(icon, true);
+        const char* hx = social::RankRoleHex(role);
+        if (hx)
+            std::snprintf(t, sizeof t, "<font color=%c%s%c>%d</font>",
+                34, hx, 34, social::RankWeeks(wk));
+        else
+            std::snprintf(t, sizeof t, "%d", social::RankWeeks(wk));
+        engine::widget::SetText(num, t);
+        engine::widget::Visible(num, true);
+        return true;
+    }
+
+    int RoleOf(const char* name)
+    {
+        g_wantAt = ::GetTickCount64();
+        int rk = 0, wk = 0, ro = 0;
+        if (!social::RankLookupRole(&g_table, name, &rk, &wk, &ro)) {
+            g_miss = true;
+            return 0;
+        }
+        return ro;
+    }
+
+    bool DrawBadgeRole(const char* iconPath, const char* numPath, const char* name,
+        bool playerRow, int role)
     {
         int rk = -1, wk = 0;
         bool has = false;
-        if (name && name[0]) {
+        if (name && name[0] && !social::RankPlaceholder(name)) {
             g_wantAt = ::GetTickCount64();
-            if (social::RankLookup(&g_table, name, &rk, &wk)) {
+            int foundRk = 0, foundWk = 0, foundRo = 0;
+            if (social::RankLookupRole(&g_table, name, &foundRk, &foundWk, &foundRo)) {
+                rk = foundRk;
+                wk = foundWk;
+                if (role == 0) role = foundRo;   // 0 = "use the 0xBF row's role"
                 has = true;
             } else {
                 g_miss = true;
@@ -187,25 +230,22 @@ namespace net::rank_badge {
                 }
             }
         }
+        if (!has)
+            return RankUiRole(iconPath, numPath, -1, 0, 0);
+        return RankUiRole(iconPath, numPath, rk, wk, role);
+    }
 
-        // RankUi (rank13.h): icon shows the symbol image, num the weeks text;
-        // an unknown rank (no badge) hides both widgets. A missing widget (older
-        // GUI pak) resolves to 0 -- every write is then inert (honest gate).
-        if (!has || social::RankSym(rk) < 0) {
-            engine::widget::Visible(engine::widget::Page(iconPath), false);
-            engine::widget::SetText(engine::widget::Page(numPath), "");
-            engine::widget::Visible(engine::widget::Page(numPath), false);
-            return false;
-        }
+    bool DrawBadge(const char* iconPath, const char* numPath, const char* name,
+        bool playerRow)
+    {
+        return DrawBadgeRole(iconPath, numPath, name, playerRow, 0);
+    }
 
-        char p[64], t[16];
-        social::RankIconPath(p, sizeof p, rk);
-        engine::widget::SetImage(engine::widget::Page(iconPath), p);
-        engine::widget::Visible(engine::widget::Page(iconPath), true);
-        std::snprintf(t, sizeof t, "%d", social::RankWeeks(wk));
-        engine::widget::SetText(engine::widget::Page(numPath), t);
-        engine::widget::Visible(engine::widget::Page(numPath), true);
-        return true;
+    bool DrawMe(const char* iconPath, const char* numPath, int rk, int wk, int ownRole)
+    {
+        // ext rkb_draw_me: no name needed; no clan state yet = the lowest rank.
+        g_wantAt = ::GetTickCount64();
+        return RankUiRole(iconPath, numPath, rk < 0 ? 0 : rk, wk, ownRole);
     }
 
 }   // namespace net::rank_badge

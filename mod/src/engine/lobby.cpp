@@ -15,6 +15,7 @@ namespace engine::lobby {
         constexpr uintptr_t kRvaBySlot      = 0x50FD0;        // kFnBySlot
         constexpr uintptr_t kRvaTeamOf      = 0x4C030;        // kFnTeamOf
         constexpr uintptr_t kRvaNetCtx      = 0x135388;       // kNetCtx 0x180135388
+        constexpr uintptr_t kRvaPartyStatus = 0x167968;       // kPartyStatus 0x180167968
 
         constexpr size_t kObjBytes   = 0x2CA8;       // ext's IsBadReadPtr(lo, 0x2ca8)
         constexpr size_t kRecordBytes = 0x4C;        // ext's IsBadWritePtr(rec, 0x4c)
@@ -54,6 +55,18 @@ namespace engine::lobby {
     bool InMatch()
     {
         return Substate() == kSubstateInMatch;
+    }
+
+    int PartyStatus()
+    {
+        const uintptr_t p = Base() + kRvaPartyStatus;
+        return engine::ptr::Readable(p, sizeof(int))
+            ? static_cast<int>(*reinterpret_cast<volatile int*>(p)) : -1;
+    }
+
+    uint8_t* RawObject()
+    {
+        return Object();
     }
 
     bool MatchOver()

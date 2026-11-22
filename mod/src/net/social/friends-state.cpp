@@ -497,8 +497,15 @@ namespace net::social {
                 tmp[n].h  = h;
                 tmp[n].rk = r < 0 ? 0 : (r >= kRankSymbols ? kRankSymbols - 1 : r);
                 tmp[n].wk = w < 0 ? 0 : (w > kRankMaxWeeks ? kRankMaxWeeks : w);
-                n++;
+                tmp[n].ro = 0;
                 p += used;
+                int ro = 0, usedRole = 0;
+                if (*p == ':' && std::sscanf(p, ":%d%n", &ro, &usedRole) == 1
+                    && usedRole > 0) {
+                    tmp[n].ro = ro < 0 || ro > kRankMaxRole ? 0 : ro;
+                    p += usedRole;
+                }
+                n++;
             } else {                               // "n=<k>" or junk: skip the word
                 const char* sp = std::strchr(p, ' ');
                 if (!sp) break;
@@ -511,7 +518,8 @@ namespace net::social {
         return n;
     }
 
-    bool RankLookup(const RankTable* t, const char* name, int* rk, int* wk)
+    bool RankLookupRole(const RankTable* t, const char* name,
+                        int* rk, int* wk, int* ro)
     {
         if (!t) return false;
         const uint32_t h = RankHash(name);
@@ -520,9 +528,21 @@ namespace net::social {
             if (t->entries[i].h == h) {
                 if (rk) *rk = t->entries[i].rk;
                 if (wk) *wk = t->entries[i].wk;
+                if (ro) *ro = t->entries[i].ro;
                 return true;
             }
         return false;                              // the caller notes the miss (ext g_rkbMiss)
+    }
+
+    bool RankLookup(const RankTable* t, const char* name, int* rk, int* wk)
+    {
+        return RankLookupRole(t, name, rk, wk, nullptr);
+    }
+
+    int RankRole(const RankTable* t, const char* name)
+    {
+        int rk = 0, wk = 0, ro = 0;
+        return RankLookupRole(t, name, &rk, &wk, &ro) ? ro : 0;
     }
 
     bool RankPlaceholder(const char* name)
@@ -548,6 +568,33 @@ namespace net::social {
     {
         const int s = RankSym(rk);
         std::snprintf(out, n, "streaming/t2r/icons/rank-%d.png", s < 0 ? 0 : s);
+    }
+
+    int RankRoleTint(int role)
+    {
+        return role >= 1 && role <= kRankMaxRole ? role : 0;
+    }
+
+    const char* RankRoleHex(int role)
+    {
+        // ext rank13.h rank13_role_hex; 4 = the lead dev's hot pink (#ff3d8b).
+        switch (RankRoleTint(role)) {
+        case 1: return "#f2c14e";
+        case 2: return "#ff5a4f";
+        case 3: return "#3fd6c0";
+        case 4: return "#ff3d8b";
+        default: return nullptr;
+        }
+    }
+
+    void RankRolePath(char* out, size_t n, int rk, int role)
+    {
+        const int s = RankSym(rk) < 0 ? 0 : RankSym(rk);
+        const int t = RankRoleTint(role);
+        if (t)
+            std::snprintf(out, n, "streaming/t2r/icons/rank-%d-r%d.png", s, t);
+        else
+            RankIconPath(out, n, rk);
     }
 
 }

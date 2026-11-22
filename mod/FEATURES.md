@@ -142,7 +142,7 @@ Counts include the 19 direct modules added by build 191; the 3 nested `customize
 | `overtime.c` | overtime: the clock does not end a round while a team is out of lives - it goes on until elimination, cap 60 s (re/overtime-1028.md; t2r-no-overtime.txt) | 2013 gameplay modes | P3 | net | 4 e.g. `t2r-dev-match-minutes.txt` | — | not started |
 | `placedbomb2013.c` | 2013 placed (proximity) nail bomb: pb_* | 2013 gameplay modes | P3 | net, audio, camera, hook, data | 13 e.g. `t2r-dev-plant.txt` | — | not started |
 | `privlobby.c` | build 191: PRIVATE MATCH — lobby page `to1/private13` + settings `to1/private13s`, ops `0xF8`/`0xF9`, the `pm_*` match rules (`tools/private_lobby.py`) | 2013 gameplay modes | P3 | widget, net, pad | 1 e.g. `t2r-no-private.txt` | net/online/net-session.cpp, net/ui/net-gui2.cpp, servers/ | not started |
-| `rankbadge.c` | the rank badge in front of EVERY player name (daemon op 0xBF rank table; lobby rows, vote roster, friends panel, scoreboard): rkb_draw / rkb_tick. **build 191:** role field / `:role` / `rkb_role_of` / `rank_ui_role`, `rkb_tick` → `nrim_tick`, role colours / icons in `rank13.h` — new work on top of the ported table + poll | 2013 gameplay modes | P3 | widget | 0 | net/social/friends-state.cpp (pure table), net/social/rank-badge.cpp, net/social/friends13.cpp (panel rows) | in progress (build 191: role / nrim work unported) |
+| `rankbadge.c` | the rank badge in front of EVERY player name (daemon op 0xBF rank table; lobby rows, vote roster, friends panel, scoreboard): rkb_draw / rkb_tick. **build 191:** role field / `:role` / `rkb_role_of` / `rank_ui_role`, `rkb_tick` → `nrim_tick`, role colours / icons in `rank13.h` | 2013 gameplay modes | P3 | widget | 0 | net/social/friends-state.cpp (pure table + role helpers), net/social/rank-badge.cpp (poll + role draw), net/social/name-rim.cpp (nrim_tick), net/social/friends13.cpp (panel rows) | in progress (scoreboard rim + own-badge clan 0xE1 role still gated) |
 | `revive2013.c` | the 2013 revive as a psync pair: ENTER -> LOOP -> FINISH of both bodies (re/factions2013/revive-2013.md). **build 191:** kneel help-up + `t2r-revive-2013.txt` | 2013 gameplay modes | P3 | net, audio, camera, pad | 3 e.g. `t2r-no-engine-sfx.txt` | net/match/downed-state.cpp | not started |
 | `scopeglint.c` | scope glint: TLOU2's own sniper-scope-flare on anyone scoped in (MSG_GLINT 0x91) | 2013 gameplay modes | P3 | net, camera, hook | 3 e.g. `t2r-dev-glint.txt` | net/ui/scopeglint.hpp, net/ui/scopeglint.cpp | ported |
 | `skills.c` | 2013 survival skills | 2013 gameplay modes | P3 | net, audio, widget, camera, pad, hook, data | 17 e.g. `t2r-2013-revive-off.txt` | gameplay/perks/* | not started |
@@ -275,8 +275,12 @@ rules (listed-mask age, accepted-anim silence, non-host exclusion, `t2r-ghost-pe
 opt-out). Those cores are observation / decision only: engine lobby writes, the winmm peer
 drop and the 0x10 "ask for swap block" flag are behind `kWriteLobby` / `kApplyGhostPeers` /
 `kRequestTeamSwap` (all false), so the ext still owns that engine state while it is the bridge.
-The exact substate 6 / `LobbyObj()+0x2ca4` reads live in `engine/lobby.*`. The late-join query
-(flags 0x04, kit carry) stays in the ext. The requeue flag (0x20) is now sent while
+The exact substate 6 / `LobbyObj()+0x2ca4` reads live in `engine/lobby.*`. The flag-0x04 late-join
+query is now native too: `JipLateQuery`'s four tries 1.5 s apart in substates 4/5/6, the neutral
+`JipAsk(4,0,0,0xFF,0xFF,0xFF)` fields, and the 0xE5 trailing wave byte's bit 1 / bit 2 answers
+(`net::jip::LateAnswer()` / `BackAnswer()` / `KitCarryDecision()`); the upgrades / armour /
+purchasable / utilities / parts restoration is still ext-owned (no mod state reader for it).
+The requeue flag (0x20) is now sent while
 `t2r-no-requeue.txt` is absent; the ticket check / auto-search / WAITING FOR PLAYERS... label
 live in `net/online/requeue.*`.
 
@@ -327,12 +331,21 @@ reservation in `SetRow`; MATCH FOUND team tabs / names come from `engine::lobby:
 `RosterName`. Click-to-nav is native too: the ext's `FrScan` canvas hit test drives the row hover
 highlight, the left-button edge moves the focus to the hovered row (a row click only *selects*; the
 engine's menu-select that rides on a click is dropped for 8 frames) and the footer prompts / keys /
-pad perform the action. Honest gates: the exact raw `kPartyStatus` session byte, the searchers'
-table (`g_srchTab` / `g_srchName` -- mod has no producer for the daemon's relative [T1]/[T2]
-markers), lobby object writes, exact `menu-*` pad bindings and the card's per-widget keyframes are
-not ported; widget writes are inert when the defs are absent and the ext still owns those producers
-while it is the bridge. The two opt-outs are `t2r-no-ingame-friends.txt` and
-`t2r-no-friend-toast.txt`; mouse navigation additionally honours `t2r-no-mouse-nav.txt`.
+pad perform the action. The exact `menu-*` pad bindings (`menu-back` / `menu-select` /
+`menu-left` / `menu-up` / `menu-right` / `menu-down` / `menu-prev` / `menu-next` / `menu-action`,
+with the ext's edge / 400 ms-then-110 ms repeat split) and the card's per-widget keyframes are now
+native: the `frToast` leaves `tKick` / `tName` / `tSub` / `tInfo` / `tAc0..4` / `tIc` /
+`tKe[YN]` / `tKt[YN]` / `tLb[YN]` / `tMore` / `tBar` / `tFill[YN]`, the 260 ms ease-out slide-in
+from +170 and 220 ms ease-in slide-out to +70 (alpha in 1/32, slide in 0.5-unit steps), root
+pivot at `FT_X + qx*0.5, FT_Y` and no root scale. `engine::lobby::PartyStatus()` reads the raw
+`kPartyStatus` session byte, and the `g_srchTab` / `g_srchName` mirror
+(`net/social/search-rows.*`) parses ` [T1]` / ` [T2]` / `not searching` from a native
+text-write observer plus the read-only match-found roster. Honest gates: the engine / winmm
+text writes for the SEARCHING rows still pass through the ext's pinned settext hook (no second
+hook is installed), lobby object writes and the scoreboard's pink name rim (no scoreboard
+settext note in the mod) stay ext-owned; widget writes are inert when the defs are absent. The
+two opt-outs are `t2r-no-ingame-friends.txt` and `t2r-no-friend-toast.txt`; mouse navigation
+additionally honours `t2r-no-mouse-nav.txt`, the rim `t2r-no-namerim.txt`.
 
 `net/game/net-direct.*` ports the Steam-helper loopback socket, [06]/[07] hello/ack, the
 [05] ping/pong/message wire, the 800 ms cross-path dedupe ring, direct RTT EWMA gating and

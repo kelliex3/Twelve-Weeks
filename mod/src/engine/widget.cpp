@@ -181,10 +181,55 @@ namespace engine::widget {
         DC::Call<"gui2-rxfm-set-pivot-as">(xf, reinterpret_cast<uint64_t>(v));
     }
 
+    bool PivotGet(uint64_t w, float* x, float* y)
+    {
+        if (!w)
+            return false;
+        const uint64_t xf = DC::Call<"gui2-get-widget-transform">(w);
+        if (!xf || xf == kInvalid || !::engine::ptr::Readable(xf, 0x28))
+            return false;
+        const float* p = reinterpret_cast<const float*>(xf + 0x20);
+        if (!std::isfinite(p[0]) || !std::isfinite(p[1]))
+            return false;
+        if (x) *x = p[0];
+        if (y) *y = p[1];
+        return true;
+    }
+
+    bool ScaleGet(uint64_t w, float* sx, float* sy)
+    {
+        if (!w)
+            return false;
+        const uint64_t xf = DC::Call<"gui2-get-widget-transform">(w);
+        if (!xf || xf == kInvalid || !::engine::ptr::Readable(xf, 0x40))
+            return false;
+        const float* p = reinterpret_cast<const float*>(xf + 0x30);
+        if (!std::isfinite(p[0]) || !std::isfinite(p[1]))
+            return false;
+        if (p[0] <= 0.05f || p[0] >= 20.0f || p[1] <= 0.05f || p[1] >= 20.0f)
+            return false;
+        if (sx) *sx = p[0];
+        if (sy) *sy = p[1];
+        return true;
+    }
+
+    namespace {
+        TextWriteObserver g_textObserver = nullptr;
+        void*             g_textObserverUser = nullptr;
+    }
+
+    void SetTextObserver(TextWriteObserver fn, void* user)
+    {
+        g_textObserver = fn;
+        g_textObserverUser = user;
+    }
+
     void SetText(uint64_t w, const char* text)
     {
         if (!w)
             return;
+        if (g_textObserver)
+            g_textObserver(w, text ? text : "", g_textObserverUser);
         GUI2::SET_WIDGET_TEXT(w, text ? text : "");
     }
 

@@ -38,8 +38,11 @@ namespace net::jip {
 
         constexpr uint8_t  kClockValid = 0x01;   // rem / dur fields are usable
         constexpr uint8_t  kMatchOver  = 0x02;   // end banner / fade hold
+        constexpr uint8_t  kLateQuery  = 0x04;   // ext JipAsk(4, ...): "did we join a running match?"
         constexpr uint8_t  kTeamSwap   = 0x10;   // server sends the trailing [0xA7] block
         constexpr uint8_t  kRequeue    = 0x20;   // net::requeue is ported: keep our ticket
+        constexpr int      kLateTries  = 4;      // ext JipLateQuery
+        constexpr uint64_t kLateMs     = 1500;   // ext: 4 tries, 1.5 s apart
 
         // Cutover gates. The roster merge / swap / reaper cores are native and observable,
         // but the ext still owns the engine lobby and the winmm peer table while it is the
@@ -72,6 +75,17 @@ namespace net::jip {
         int                   g_off = 0;         // server answered enabled = 0: stop for this match
         int                   g_inMatch = 0;
         uint8_t               g_lastTestFlags = 0xFF;
+
+        // ext g_jipLateAns / g_jip_back_ans: the answer to the flag-0x04 query. late is
+        // 0 = no answer yet, 1 = no, 2 = yes (the server put us into a running match);
+        // back is 1 when the wave byte also has bit 2 (we returned to the match we left,
+        // the kit-carry condition). These are WIRE answers only -- the inventory / upgrade
+        // / armour / parts restoration in ext KitCarryGive is still ext-owned.
+        std::atomic<int>      g_lateAns{ 0 };
+        std::atomic<int>      g_backAns{ 0 };
+        int                   g_lateTries = 0;
+        bool                  g_lateAnswered = false;
+        uint64_t              g_lateNext = 0;
 
         // Native roster shadow. The ext merges 0xE5 straight into LobbyObj(); we seed a
         // local copy from the read-only engine view each reply and merge there, so no
@@ -126,20 +140,32 @@ namespace net::jip {
                     g_repN = want - 3;
                     res = 1;
                     net::daemon::MarkAlive();
+
+                    // ext JipWorker's flag-0x04 branch: bit 1 of the trailing wave byte
+                    // answers "joined a running match", bit 2 "back into the match we
+                    // left" (kit carry). Older servers send no wave byte -> late = 1.
+                    if (req[64] & kLateQuery) {
+                        const int rn = g_rep[1] > 8 ? 8 : static_cast<int>(g_rep[1]);
+                        const int at = 2 + rn * 0x32;
+                        const uint8_t wave = g_repN > at ? g_rep[at] : 0;
+                        g_lateAns.store((wave & 0x80) && (wave & 0x02) ? 2 : 1);
+                        g_backAns.store((wave & 0x80) && (wave & 0x04) ? 1 : 0);
+                    }
                 }
             }
 
             // ext publishes the generation for every finished request, successful or
             // not: a failure from the previous match must not be mistaken for this
-            // match's answer when the tick consumes g_have.
+            // match's answer when the tick consumes g_have. A query's reply is NOT a
+            // roster poll's reply, so it is never published to g_have.
             g_repGen.store(gen);
-            g_have.store(res);
+            g_have.store((req[64] & kLateQuery) ? 0 : res);
             g_busy.store(0);
             return 0;
         }
 
         void Ask(uint64_t now, uint8_t flags, float rem, float dur,
-                 int myTeam, int ally, int enemy)
+                 int myTeam, int ally, int enemy, bool cadence = true)
         {
             if (!g_tok[0]) {
                 const char* tok = net::account::Token();
@@ -158,10 +184,13 @@ namespace net::jip {
             g_req[75] = enemy  >= 0 && enemy  < 250 ? static_cast<uint8_t>(enemy)  : 0xFF;
             net::afk::ReqTail(g_req + 76);       // [0xAF][u16 idle s][flags]
 
-            const uint64_t cadence = net::session::IsHost() ? kHostMs : kClientMs;
-            g_nextAsk = now + cadence;
-            if (g_fails >= 3)
-                g_nextAsk = now + kRetryMs;
+            if (cadence) {
+                // The periodic clock report owns the poll cadence; the flag-0x04 late
+                // query (ext JipAsk) is driven by its own 1.5 s tries instead.
+                g_nextAsk = now + (net::session::IsHost() ? kHostMs : kClientMs);
+                if (g_fails >= 3)
+                    g_nextAsk = now + kRetryMs;
+            }
 
             g_busy.store(1);
             HANDLE h = CreateThread(nullptr, 0, Worker,
@@ -171,6 +200,43 @@ namespace net::jip {
                 return;
             }
             CloseHandle(h);
+        }
+
+        // ---- late-join query (ext JipLateQuery, flags 0x04) -------------------------
+        // ext asks once per match load while the engine substate is 4 / 5 / 6: up to four
+        // tries 1.5 s apart, op 0xE3 with flags 0x04 | 0x10 | (requeue ? 0x20 : 0) and
+        // neutral clock / team fields. JipAsk's reply is not a roster poll (g_have stays 0).
+        void LateReset()
+        {
+            g_lateAns.store(0);
+            g_backAns.store(0);
+        }
+
+        void LateQuery(uint64_t now)
+        {
+            const uint8_t st = engine::lobby::Substate();
+            if (st != 4 && st != 5 && st != 6) {
+                // ext also calls this BETWEEN matches: a "yes" from a JIP match must not
+                // leak into the next, normal match.
+                g_lateTries = 0;
+                g_lateAnswered = false;
+                g_lateNext = 0;
+                LateReset();
+                return;
+            }
+            if (g_lateAns.load()) {
+                g_lateAnswered = true;
+                return;                          // answered: 1 = no, 2 = yes
+            }
+            if (g_lateAnswered || g_lateTries >= kLateTries
+                || g_busy.load() || now < g_lateNext)
+                return;                          // -1 in ext: still asking / waiting
+            ++g_lateTries;
+            g_lateNext = now + kLateMs;
+            uint8_t flags = kLateQuery | kTeamSwap;
+            if (engine::flag::Absent("t2r-no-requeue.txt"))
+                flags |= kRequeue;
+            Ask(now, flags, 0.0f, 0.0f, 0xFF, 0xFF, 0xFF, false);
         }
 
         // ---- 0xE5 roster shadow (ext merge / TeamSwapSeen / TeamSwapApply) -----------
@@ -494,10 +560,15 @@ namespace net::jip {
 
     void Tick()
     {
+        const uint64_t now = GetTickCount64();
+        // ext calls JipLateQuery() independently of the report sidecar (only its own
+        // g_noJipSafe gate disables it). Outside states 4..6 it clears a stale "yes" so
+        // the next, normal match does not inherit a JIP answer.
+        LateQuery(now);
+
         if (Off())
             return;
 
-        const uint64_t now = GetTickCount64();
         const bool live = net::session::Role() != NetRole::None && net::gui2::InMatch();
         if (!live) {
             if (g_inMatch)
@@ -578,6 +649,10 @@ namespace net::jip {
         g_listedAt = 0;
         g_swapOwnTeam = -1;
         g_ghostLogged = 0;
+        g_lateTries = 0;
+        g_lateAnswered = false;
+        g_lateNext = 0;
+        LateReset();
         // g_busy is owned by the worker; it clears itself when the request finishes.
     }
 
@@ -611,6 +686,29 @@ namespace net::jip {
     uint64_t ListedMs()
     {
         return g_listedAt;
+    }
+
+    // ---- flag-0x04 late-join answers (read-only) ------------------------------------
+    int LateAnswer()
+    {
+        return g_lateAns.load();
+    }
+
+    int BackAnswer()
+    {
+        return g_backAns.load();
+    }
+
+    int KitCarryDecision()
+    {
+        // ext KitCarryGive's wire half only: 0 = wait for the answer, 1 = restore the
+        // carried kit, 2 = drop it (a different match). The state restoration itself is
+        // NOT ported: upgrades / armour / purchasable / utilities / parts have no mod
+        // equivalent yet, so no code consumes this to write inventory state.
+        const int late = g_lateAns.load();
+        if (!late)
+            return 0;
+        return (late == 2 && g_backAns.load()) ? 1 : 2;
     }
 
 }

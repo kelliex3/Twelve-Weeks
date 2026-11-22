@@ -31,7 +31,12 @@
 // in net/online/requeue.* now. `t2r-no-jip.txt` turns the report off (the ext honours the
 // same file). Logs "jip: ..." / "ghost peer: ...".
 //
-// Honest gates (TODO): the late-join query (flags 0x04, kit carry) is still ext-owned.
+// Ported too: the flag-0x04 late-join query (ext JipLateQuery / JipAsk(4, ...)): four
+// tries 1.5 s apart in substates 4 / 5 / 6, neutral clock / team fields, and the 0xE5
+// trailing wave byte's bit 1 (joined a running match) / bit 2 (back into the match we
+// left). A query's reply is not published as a roster poll. Honest gate: kit carry's
+// take / give half (upgrades, armour, purchasable, utilities, parts) is still ext-owned
+// because those state readers are not ported; only the read-only wire decision is here.
 
 namespace net::jip {
 
@@ -52,5 +57,10 @@ namespace net::jip {
     int         OwnTeam();              // from the 0xA7 apply, or -1 when not swapped
     uint32_t    ListedSlots();          // mask of slots in the newest server roster
     uint64_t    ListedMs();             // when that roster arrived (0 = none)
+
+    // ---- flag-0x04 late-join answers (read-only) ---------------------------------------
+    int         LateAnswer();           // 0 none yet, 1 no, 2 yes (joined a running match)
+    int         BackAnswer();           // 1 = wave byte bit 2 (back into the match we left)
+    int         KitCarryDecision();     // 0 wait, 1 restore, 2 drop -- wire half only
 
 }

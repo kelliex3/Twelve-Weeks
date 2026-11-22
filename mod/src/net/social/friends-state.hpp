@@ -89,16 +89,18 @@ namespace net::social {
     const char* OkText(Action a, bool becameFriends); // successful write -> local text
 
     // ---- rank table (ext rankbadge.c / rank13.h, daemon op 0xBF) -----------------------
-    // The daemon's 0xBF reply is "n=<k> <HHHHHHHH:r:w> ...": one row per known player,
-    // keyed by a hash of the SHOWN name (ext RkbHash = tools/rankbadge.py key()). r is
-    // the chalk rank symbol 0..9, w the weeks survived 0..999. A name the table does not
-    // list is drawn as rank 0 / 0 weeks once the daemon has answered at least once, so a
-    // new player still has a badge.
-    inline constexpr int kRankMax     = 400;   // ext RKB_MAX
-    inline constexpr int kRankSymbols = 10;    // ext RANK13_SYMBOLS (icons rank-0..9.png)
-    inline constexpr int kRankMaxWeeks = 999;  // ext RANK13_MAX_WEEKS
+    // The daemon's 0xBF reply is "n=<k> <HHHHHHHH:r:w[:role]> ...": one row per known
+    // player, keyed by a hash of the SHOWN name (ext RkbHash = tools/rankbadge.py key()).
+    // r is the chalk rank symbol 0..9, w the weeks survived 0..999, and the optional
+    // 4th field is tools/roles.py's role (0 none, 1 OG, 2 admin, 3 dev, 4 lead dev).
+    // A name the table does not list is drawn as rank 0 / 0 weeks once the daemon has
+    // answered at least once, so a new player still has a badge.
+    inline constexpr int kRankMax      = 400;   // ext RKB_MAX
+    inline constexpr int kRankSymbols  = 10;    // ext RANK13_SYMBOLS (icons rank-0..9.png)
+    inline constexpr int kRankMaxWeeks = 999;   // ext RANK13_MAX_WEEKS
+    inline constexpr int kRankMaxRole  = 4;     // ext tools/roles.py: lead dev
 
-    struct RankEntry { uint32_t h = 0; int rk = 0; int wk = 0; };
+    struct RankEntry { uint32_t h = 0; int rk = 0; int wk = 0; int ro = 0; };
     struct RankTable {
         RankEntry entries[kRankMax]{};
         int      n = 0;
@@ -108,10 +110,20 @@ namespace net::social {
     uint32_t RankHash(const char* name);                        // ext RkbHash / py key()
     int      RankParse(RankTable* t, const char* text, size_t len); // returns rows, bumps ver
     bool     RankLookup(const RankTable* t, const char* name, int* rk, int* wk);
+    bool     RankLookupRole(const RankTable* t, const char* name,
+                            int* rk, int* wk, int* ro);  // ext rkb_lookup_ro
+    int      RankRole(const RankTable* t, const char* name); // ext rkb_role_of
     bool     RankPlaceholder(const char* name);  // empty / "PLAYER n" / "SEARCHING" => no badge
 
     int      RankSym(int rk);                     // -1 unknown, else clamp to 0..9
     int      RankWeeks(int wk);                   // clamp to 0..999
     void     RankIconPath(char* out, size_t n, int rk); // "streaming/t2r/icons/rank-<s>.png"
+
+    // ext rank13.h role tint helpers (tools/roles.py role 1..4): the badge is drawn in
+    // the role's colour -- rank-<s>-r<role>.png + the weeks number in the same colour.
+    // role 0 / unknown = the plain chalk badge.
+    int         RankRoleTint(int role);                       // 1..4, else 0
+    const char* RankRoleHex(int role);                        // "#f2c14e" etc., null if plain
+    void        RankRolePath(char* out, size_t n, int rk, int role);
 
 }

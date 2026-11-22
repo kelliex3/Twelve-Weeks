@@ -365,8 +365,11 @@ read-only `engine/lobby.*` view:
 All three are observation / decision only. Engine lobby writes, the winmm peer drop (through
 `net::session::DropPeerForReaper`) and the 0x10 "send the swap block" flag are behind the
 `kWriteLobby` / `kApplyGhostPeers` / `kRequestTeamSwap` constants (all false), so the ext stays
-the behaviour owner and no toggle is flipped. The late-join query (`0x04`, kit carry) stays in
-the ext. Requeue (`0x20`) is ported (`net/online/requeue.*`), so the report sends that flag
+the behaviour owner and no toggle is flipped. The flag-0x04 late-join query is ported: four
+tries 1.5 s apart in substates 4/5/6, the neutral `JipAsk(4, ...)` fields and the wave-byte
+bit 1 / bit 2 answers (`net::jip::LateAnswer()` / `BackAnswer()` / `KitCarryDecision()`); the
+kit-carry take / give half (upgrades, armour, purchasable, utilities, parts) stays in the ext.
+Requeue (`0x20`) is ported (`net/online/requeue.*`), so the report sends that flag
 while `t2r-no-requeue.txt` is absent.
 
 **Requeue and the direct melee path (ported with honest gates).** `net/online/requeue.*` owns
@@ -442,12 +445,17 @@ holds the pure 0xBF table (name key / reply parser / lookup / rank13 helpers), `
 the async 0xBF poll and `RankUi` widget drawing (2.5 s after a miss, 12 s otherwise, only while a
 screen drew a badge in the last 15 s, 20 s retry after two unanswered tries) and `SetRow` reserves
 the 120-unit badge width; MATCH FOUND team tabs / names use `engine::lobby::RosterSorted` /
-`RosterName`. Click-to-nav is native as well: the ext's `FrScan` canvas boxes hit-test the rows and
-footer prompts through the native cursor canvas; a row click only moves the focus (the engine's
-mouse-sourced menu-select is dropped for 8 frames, as in the ext), and the hovered row gets the
-`Fill`/`SetRow` highlight. Honest gates: the exact raw `kPartyStatus` byte, the searchers' table
-(`g_srchTab` / `g_srchName` -- no mod producer for the daemon's relative [T1]/[T2] markers), lobby
-object writes, exact `menu-*` pad bindings and the card's per-widget keyframes stay in the ext;
+`RosterName`. Build 191's role half is native too: the `:role` column / role-clamped table,
+`rkb_role_of` / role-tinted icon + `<font color=...>` weeks text, and a scoped `nrim_tick`
+(`net/social/name-rim.*`) for the lead-dev pink lobby-row rim. Click-to-nav is native as well:
+the ext's `FrScan` canvas boxes hit-test the rows and footer prompts through the native cursor
+canvas; a row click only moves the focus (the engine's mouse-sourced menu-select is dropped for
+8 frames, as in the ext), and the hovered row gets the `Fill`/`SetRow` highlight. The exact
+`menu-*` pad bindings and the card's per-widget keyframes (`frToast` leaves, 260/220 ms slide +
+fade, root pivot) are native. Honest gates: the engine / winmm text writes for the SEARCHING
+rows still go through the ext's pinned settext hook (the `g_srchTab` / `g_srchName` mirror only
+observes the mod's own writes plus the read-only roster), lobby object writes, the scoreboard's
+pink rim (no scoreboard settext note in the mod) and the own-badge clan 0xE1 role stay in the ext;
 widget writes are inert when the defs are absent.
 
 **Gap.** No binary / RE notes are available locally to verify the call-site scan or the pinned
@@ -455,8 +463,8 @@ RVA prologues against the actual `tlou-ii.exe`; this needs a live build to confi
 and melee-pace / QTE consumers that *use* the virtual pad (`bot`, `melee_dodge`, the test
 harnesses) are not ported — the pad API they would call is present and ready. JIP's roster /
 team-swap / ghost-reap **cores** are native now but their engine writes / peer drops are gated
-off; the late-join query (`0x04`) is still in the ext. The pinned lobby / peer-record RVA calls
-need a live exe to verify.
+off; the late-join query's wire answers (`0x04`) are native now (kit-carry restoration is still
+in the ext). The pinned lobby / peer-record RVA calls need a live exe to verify.
 
 **Deliverable (done).** `src/engine/pad.hpp/.cpp` exposes the full virtual pad; call sites are
 resolved by rel32 scan and hooked with safetyhook mid-hooks, not the ext's hardcoded RVAs / thunks.

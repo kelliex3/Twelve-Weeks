@@ -25,6 +25,7 @@
 #include "notice.hpp"
 #include "friends-state.hpp"
 #include "rank-badge.hpp"
+#include "search-rows.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -103,7 +104,17 @@ namespace net::friends13 {
             float leftMs = 0.0f, totalMs = 0.0f;
             uint64_t last = 0;
             int off = -1, missing = 0;
+            uint64_t gw = 0;               // ext T13.gw: the card group's handle
+            int qa = -1, qx = -1, qb = -1; // ext T13.qa/qx/qb: quantised write dedup
+            float fy = 0.0f, fn = 0.0f;    // ext GuFade's tFillY / tFillN alpha
+            int   qfy = -1, qfn = -1;      // ext GuFade's quantised write dedup
+            uint64_t gfMs = 0;             // ext g_gfMs: GuFade's last tick
         };
+
+        // ext friends13.c FT_* (the bottom-right toast card's keyframes).
+        constexpr float kFtX = 2480.0f, kFtY = 1760.0f;
+        constexpr float kFtW = 1240.0f, kFtH = 180.0f;
+        constexpr float kFtInMs = 260.0f, kFtOutMs = 220.0f;
 
         struct MenuHeld {
             bool sel = false, up = false, down = false, left = false, right = false;
@@ -336,36 +347,89 @@ namespace net::friends13 {
             return false;
         }
 
-        bool FtHover()
+        // ext FtP: "anim-group.frToast.<leaf>" (a rotating static buffer like the
+        // ext's 4-slot one; every caller consumes the returned pointer immediately).
+        const char* FtP(const char* leaf)
         {
-            float x = 0.0f, y = 0.0f;
-            if (!engine::window::CursorCanvas(&x, &y)) return false;
-            return x >= 2480.0f && x <= 3720.0f && y >= 1760.0f && y <= 1940.0f;
+            static char b[4][64];
+            static int n = 0;
+            char* o = b[n++ & 3];
+            std::snprintf(o, 64, "anim-group.frToast.%s", leaf);
+            return o;
         }
 
-        void FtCardText()
+        float FtEase(float k)
+        {
+            if (k < 0.0f) k = 0.0f;
+            if (k > 1.0f) k = 1.0f;
+            return 1.0f - (1.0f - k) * (1.0f - k) * (1.0f - k);
+        }
+
+        // ext FtCursor: the cursor relative to the card's RESTING place (its pivot
+        // slides during the tween, but hover is measured against the final spot).
+        bool FtCursor(float& rx, float& ry)
+        {
+            float cx = 0.0f, cy = 0.0f;
+            if (!engine::window::CursorCanvas(&cx, &cy)) return false;
+            rx = cx - kFtX;
+            ry = cy - kFtY;
+            return true;
+        }
+
+        // ext FtFill: fill every leaf of the card once (on show / page rebuild).
+        // The widget leaves are tKick / tName / tSub / tInfo / tAc0..4 / tIc /
+        // tKe[YN] / tKt[YN] / tLb[YN] / tMore / tBar (friends13_widgets.py).
+        void FtCardFill()
         {
             if (!g_toast.st) return;
             const ToastItem& it = g_toast.it;
-            const char* head = it.kind == kToastRequest ? Tr("FRIEND REQUEST", "ZAPROSZENIE DO ZNAJOMYCH")
+            const bool act = FtActionable(it.kind);
+            for (int k = 0; k < 5; k++) {
+                char l[8];
+                std::snprintf(l, sizeof l, "tAc%d", k);
+                UiVisible(FtP(l), k == it.kind);
+            }
+            const char* icon = it.kind == kToastRequest
+                ? "streaming/t2r/icons/notify-revive.png"
+                : it.kind == kToastBad ? "streaming/t2r/icons/notify-warn.png"
+                : "streaming/t2r/icons/notify-info.png";
+            engine::widget::SetImage(engine::widget::Page(FtP("tIc")), icon);
+            UiText(FtP("tKick"), it.kind == kToastRequest
+                ? Tr("FRIEND REQUEST", "ZAPROSZENIE DO ZNAJOMYCH")
                 : it.kind == kToastInvite ? Tr("PARTY INVITE", "ZAPROSZENIE DO GRUPY")
-                : it.kind == kToastGood ? Tr("DONE", "GOTOWE")
-                : it.kind == kToastBad ? Tr("COULD NOT", "NIE UDAŁO SIĘ") : Tr("FRIENDS", "ZNAJOMI");
-            char body[220];
-            if (it.name[0] && it.text[0])
-                std::snprintf(body, sizeof body, "%s\n%s", it.name, it.text);
-            else
-                std::snprintf(body, sizeof body, "%s", it.name[0] ? it.name : it.text);
-            Fit("anim-group.frToast.tHead", head, 1100.0f, 42.0f);
-            Fit("anim-group.frToast.tName", body, 1100.0f, 38.0f);
-            Fit("anim-group.frToast.tYes", FtActionable(it.kind)
-                ? (it.kind == kToastRequest ? Tr("ACCEPT", "PRZYJMIJ") : Tr("JOIN", "DOŁĄCZ")) : "",
-                232.0f, 38.0f);
-            Fit("anim-group.frToast.tNo", FtActionable(it.kind) ? Tr("DECLINE", "ODRZUĆ") : "",
-                232.0f, 38.0f);
-            char more[16];
-            std::snprintf(more, sizeof more, "+%d", g_queueN);
-            UiText("anim-group.frToast.tMore", g_queueN > 0 ? more : "");
+                : Tr("FRIENDS", "ZNAJOMI"));
+            UiVisible(FtP("tName"), act);
+            UiVisible(FtP("tSub"), act);
+            UiVisible(FtP("tInfo"), !act);
+            if (act) {
+                Fit(FtP("tName"), it.name, 640.0f, 54.0f);
+                Fit(FtP("tSub"), it.kind == kToastRequest
+                    ? Tr("WANTS TO BE YOUR FRIEND", "CHCE ZOSTAĆ TWOIM ZNAJOMYM")
+                    : Tr("INVITES YOU TO A PARTY", "ZAPRASZA CIĘ DO GRUPY"), 650.0f, 33.0f);
+                UiText(FtP("tInfo"), "");
+            } else {
+                UiText(FtP("tName"), "");
+                UiText(FtP("tSub"), "");
+                UiText(FtP("tInfo"), it.text);
+            }
+            for (int c = 0; c < 2; c++) {
+                const char key = c ? 'N' : 'Y';
+                char l[8];
+                std::snprintf(l, sizeof l, "tKe%c", key); UiVisible(FtP(l), act);
+                std::snprintf(l, sizeof l, "tKt%c", key); UiVisible(FtP(l), act);
+                std::snprintf(l, sizeof l, "tLb%c", key); UiVisible(FtP(l), act);
+                const char* lab = !act ? "" : c == 0
+                    ? (it.kind == kToastRequest ? Tr("ACCEPT", "PRZYJMIJ") : Tr("JOIN", "DOŁĄCZ"))
+                    : Tr("DECLINE", "ODRZUĆ");
+                Fit(FtP(l), lab, 232.0f, 38.0f);
+            }
+            char m[16];
+            std::snprintf(m, sizeof m, "+%d", g_queueN);
+            UiText(FtP("tMore"), g_queueN > 0 ? m : "");
+            engine::widget::Scale(engine::widget::Page(FtP("tBar")), 1.0f, 1.0f);
+            g_toast.qa = g_toast.qx = g_toast.qb = -1;
+            g_toast.qfy = g_toast.qfn = -1;
+            g_toast.gfMs = 0;
         }
 
         void FtTick(uint64_t now, bool panelUp, bool menuVisible)
@@ -374,58 +438,150 @@ namespace net::friends13 {
             g_toast.last = now;
             if (dt > 100.0f) dt = 100.0f;
 
-            if (!g_toast.st && g_queueN && menuVisible && !panelUp && now >= g_queue[0].readyAt
-                && now >= g_toast.cool) {
-                g_toast.it = g_queue[0];
-                std::memmove(g_queue, g_queue + 1,
-                    static_cast<size_t>(g_queueN - 1) * sizeof(g_queue[0]));
+            // ext FtTick's FRIENDS-page branch: the page shows everything, so the
+            // pending actionable cards are dropped and a showing one is ended.
+            if (panelUp) {
+                int k = 0;
+                for (int i = 0; i < g_queueN; i++)
+                    if (!FtActionable(g_queue[i].kind))
+                        g_queue[k++] = g_queue[i];
+                g_queueN = k;
+                if (g_toast.st && FtActionable(g_toast.it.kind)) {
+                    g_toast.st = 3;
+                    g_toast.tOut = now;
+                }
+            }
+            const bool ok = !panelUp && menuVisible;
+            if (g_toast.st && !ok) {
+                // the menu stopped showing: the card leaves at once (its remaining
+                // time stays with the queued item), as in the ext.
+                g_toast.st = 0;
+                g_toast.cool = now + 350;
+                UiVisible("anim-group.frToast", false);
+                return;
+            }
+            const uint64_t gw = engine::widget::Page("anim-group.frToast");
+            if (!g_toast.st) {
+                if (!ok || now < g_toast.cool || !gw) return;
+                int pick = -1;
+                for (int i = 0; i < g_queueN && pick < 0; i++)
+                    if (now >= g_queue[i].readyAt && FtPending(g_queue[i])) pick = i;
+                if (pick < 0) return;
+                g_toast.it = g_queue[pick];
+                std::memmove(g_queue + pick, g_queue + pick + 1,
+                    static_cast<size_t>(g_queueN - pick - 1) * sizeof(g_queue[0]));
                 g_queueN--;
                 g_toast.st = 1;
+                g_toast.gw = gw;
                 g_toast.t0 = now;
+                g_toast.tOut = 0;
                 g_toast.leftMs = g_toast.totalMs = itMs(g_toast.it.secs);
+                g_toast.fy = g_toast.fn = 0.0f;
+                FtCardFill();
+                UiAlpha("anim-group.frToast", 0.0f);
+                UiVisible("anim-group.frToast", true);
+                return;
             }
-            if (g_toast.st == 1 && now - g_toast.t0 >= 260) { g_toast.st = 2; g_toast.tOut = now; }
-            if (g_toast.st == 2) {
-                if (!FtPending(g_toast.it)) { g_toast.st = 3; g_toast.tOut = now; }
-                else if (!FtHover()) {
-                    g_toast.leftMs -= dt;
-                    if (g_toast.leftMs <= 0.0f) { g_toast.st = 3; g_toast.tOut = now; }
+            if (!gw) { g_toast.st = 0; return; }
+            if (gw != g_toast.gw) {          // the page was rebuilt under us
+                g_toast.gw = gw;
+                FtCardFill();
+                UiVisible("anim-group.frToast", true);
+            }
+
+            const bool act = FtActionable(g_toast.it.kind);
+            float cx = 0.0f, cy = 0.0f;
+            const bool cur = FtCursor(cx, cy);
+            const bool hov = cur && cx >= 0.0f && cx <= kFtW && cy >= 0.0f && cy <= kFtH;
+            const bool hy = act && hov && cx >= 852.0f && cx <= 852.0f + 340.0f
+                && cy >= 26.0f && cy <= 88.0f;
+            const bool hn = act && hov && cx >= 852.0f && cx <= 852.0f + 340.0f
+                && cy >= 98.0f && cy <= 160.0f;
+            // ext GuFade: exponential smoothing (tau 45 ms, dt capped 50), target
+            // 0/1, quantised to 1/24, topped out at the widget's baked Fill alpha
+            // (14/255, GuFadeMax): a hover only brightens the chip slightly.
+            const float gfdt = g_toast.gfMs ? static_cast<float>(now - g_toast.gfMs) : 16.0f;
+            g_toast.gfMs = now;
+            const float gfk = 1.0f - std::exp(-(gfdt > 50.0f ? 50.0f : gfdt) / 45.0f);
+            g_toast.fy += ((hy ? 1.0f : 0.0f) - g_toast.fy) * gfk;
+            g_toast.fn += ((hn ? 1.0f : 0.0f) - g_toast.fn) * gfk;
+            constexpr float kFillMax = 14.0f / 255.0f;
+            const int qfy = static_cast<int>(g_toast.fy * 24.0f + 0.5f);
+            const int qfn = static_cast<int>(g_toast.fn * 24.0f + 0.5f);
+            if (qfy != g_toast.qfy) {
+                g_toast.qfy = qfy;
+                UiAlpha(FtP("tFillY"), static_cast<float>(qfy) / 24.0f * kFillMax);
+            }
+            if (qfn != g_toast.qfn) {
+                g_toast.qfn = qfn;
+                UiAlpha(FtP("tFillN"), static_cast<float>(qfn) / 24.0f * kFillMax);
+            }
+
+            if (g_toast.st != 3) {
+                if (!hov)
+                    g_toast.leftMs -= dt;     // the cursor on the card stops the clock
+                if (g_toast.st == 1 && static_cast<float>(now - g_toast.t0) >= kFtInMs) {
+                    g_toast.st = 2;
+                    g_toast.tOut = now;
+                }
+                bool ky = KeyEdge('Y'), kn = KeyEdge('N');
+                if (g_click && act && (hy || hn)) { ky = hy; kn = hn; }
+                if (act && (ky || kn)) {
+                    Action a = ky
+                        ? (g_toast.it.kind == kToastRequest ? Action::Accept : Action::Join)
+                        : (g_toast.it.kind == kToastRequest ? Action::DeclineRequest
+                            : Action::DeclineParty);
+                    const int sub = ky ? (g_toast.it.kind == kToastRequest ? 4 : 7)
+                        : (g_toast.it.kind == kToastRequest ? 5 : 8);
+                    QueueAction(a, sub, g_toast.it.id);
+                    g_toast.st = 3;
+                    g_toast.tOut = now;
+                } else if (g_toast.leftMs <= 0.0f || (act && !FtPending(g_toast.it))) {
+                    g_toast.st = 3;
+                    g_toast.tOut = now;
                 }
             }
-            if (g_toast.st == 3 && now - g_toast.tOut >= 220) {
-                g_toast.st = 0;
-                g_toast.cool = now + 180;
-            }
-            const bool visible = g_toast.st != 0 && menuVisible && !panelUp;
-            UiVisible("anim-group.frToast", visible);
-            if (!visible) return;
 
-            FtCardText();
-            float p = g_toast.st == 1
-                ? static_cast<float>(now - g_toast.t0) / 260.0f
-                : g_toast.st == 3 ? 1.0f - static_cast<float>(now - g_toast.tOut) / 220.0f : 1.0f;
-            if (p < 0.0f) p = 0.0f;
-            if (p > 1.0f) p = 1.0f;
-            const float ease = 1.0f - (1.0f - p) * (1.0f - p) * (1.0f - p);
-            UiAlpha("anim-group.frToast", ease);
-            engine::widget::Scale(engine::widget::Page("anim-group.frToast"),
-                1.0f - (1.0f - ease) * 0.06f, 1.0f);
-            const float line = g_toast.totalMs > 0.0f ? g_toast.leftMs / g_toast.totalMs : 0.0f;
-            engine::widget::Scale(engine::widget::Page("anim-group.frToast.tBar"),
-                line < 0.0f ? 0.0f : line > 1.0f ? 1.0f : line, 1.0f);
-
-            // Y accepts / joins, N declines (a click on the chip is the pad/menu path).
-            if (g_toast.st == 2 && FtActionable(g_toast.it.kind)) {
-                if (KeyEdge('Y')) {
-                    Action a = g_toast.it.kind == kToastRequest ? Action::Accept : Action::Join;
-                    QueueAction(a, a == Action::Accept ? 4 : 7, g_toast.it.id);
-                    g_toast.st = 3; g_toast.tOut = now;
-                } else if (KeyEdge('N')) {
-                    QueueAction(g_toast.it.kind == kToastRequest ? Action::DeclineRequest
-                        : Action::DeclineParty, 5, g_toast.it.id);
-                    g_toast.st = 3; g_toast.tOut = now;
+            // ext FtTick's keyframes: slide in from +170 (ease-out cubic) + fade
+            // over 260 ms, hold, then slide +70 (ease-in, p*p) + fade over 220 ms.
+            // Alpha is quantised to 1/32 and the slide to 0.5 canvas units, so a
+            // rebuilt page's re-assert only writes when the value actually changed.
+            float a = 1.0f, dx = 0.0f;
+            if (g_toast.st == 1) {
+                const float e = FtEase(static_cast<float>(now - g_toast.t0) / kFtInMs);
+                a = e;
+                dx = (1.0f - e) * 170.0f;
+            } else if (g_toast.st == 3) {
+                const float p = static_cast<float>(now - g_toast.tOut) / kFtOutMs;
+                if (p >= 1.0f) {
+                    g_toast.st = 0;
+                    g_toast.cool = now + 350;
+                    UiVisible("anim-group.frToast", false);
+                    return;
                 }
+                a = 1.0f - p;
+                dx = p * p * 70.0f;
             }
+            const int qa = static_cast<int>(a * 32.0f + 0.5f);
+            const int qx = static_cast<int>(dx * 2.0f + 0.5f);
+            if (qa != g_toast.qa) {
+                g_toast.qa = qa;
+                UiAlpha("anim-group.frToast", static_cast<float>(qa) / 32.0f);
+            }
+            if (qx != g_toast.qx) {
+                g_toast.qx = qx;
+                engine::widget::Pivot(gw, kFtX + static_cast<float>(qx) * 0.5f, kFtY);
+            }
+            const float frac = g_toast.totalMs > 0.0f ? g_toast.leftMs / g_toast.totalMs : 0.0f;
+            const int qb = static_cast<int>((frac < 0.0f ? 0.0f : frac) * 200.0f + 0.5f);
+            if (qb != g_toast.qb) {
+                g_toast.qb = qb;
+                const float f = static_cast<float>(qb) / 200.0f;
+                engine::widget::Scale(engine::widget::Page(FtP("tBar")),
+                    f > 0.002f ? f : 0.002f, 1.0f);
+            }
+            if (!(engine::frame::Count() % 90))
+                g_toast.qa = g_toast.qx = -1;  // re-asserted twice a second (ext FtTick)
         }
 
         uint64_t Hash(const char* kind, const char* id)
@@ -1227,12 +1383,11 @@ namespace net::friends13 {
         void LobbyDecorations(uint64_t top)
         {
             // ext FrLobbyTabs / FrLobbyNames / FrLobbyPartyRows. The MATCH FOUND
-            // roster is now derivable from engine::lobby (RosterSorted / RosterName):
+            // roster is derivable from engine::lobby (RosterSorted / RosterName):
             // row 0 = us (blue), rows 1.. = our team first (blue), the enemy after
-            // (red), each in slot order. The friendly READY badges stay for the
-            // pre-match party. The SEARCHERS' table (ext g_srchTab / g_srchName) is
-            // still gated: mod has no producer for the daemon's relative [T1]/[T2]
-            // markers, so a searching lobby keeps the engine's own row order.
+            // (red). The SEARCHING rows' [T1]/[T2] / "not searching" markers come
+            // from the read-only g_srchTab / g_srchName mirror (search-rows.*),
+            // observed on the mod's own text writes -- no competing settext hook.
             static const char* const kTab[5] =
                 { "", "tabGrey", "tabGreen", "tabBlue", "tabRed" };
             int idx[engine::lobby::kRosterMax], en[engine::lobby::kRosterMax];
@@ -1262,6 +1417,36 @@ namespace net::friends13 {
                     }
                 }
                 return;
+            }
+            bool haveSearch = false;
+            for (int r = 0; r < 8; r++)
+                if (net::social::search_rows::Tab(r) || net::social::search_rows::Name(r)[0])
+                    haveSearch = true;
+            if (haveSearch && found < 0
+                && (top == PageId("main-menu") || top == PageId("find-match-menu"))) {
+                // SEARCHING rows (ext fr_lobby_tabs / fr_lobby_names): 1 = [T1]
+                // our team (blue), 2 = [T2] enemy (red), 3 = party mate not
+                // searching (grey). Row names are the captured shown names.
+                // With no captured write (the engine owns those text writes while
+                // the ext's pinned settext hook is the bridge) the engine's own
+                // rows are left untouched -- an honest gate, not a wrong tab.
+                for (int r = 0; r < 8; r++) {
+                    const int s = net::social::search_rows::Tab(r);
+                    const int tab = s == 1 ? 3 : s == 2 ? 4 : s == 3 ? 1 : 0;
+                    for (int k = 1; k <= 4; k++) {
+                        char p[112];
+                        std::snprintf(p, sizeof p,
+                            "anim-group.lobbyPanel.lobbyList.Player%d.%s", r, kTab[k]);
+                        UiVisible(p, tab == k);
+                    }
+                    const char* nm = net::social::search_rows::Name(r);
+                    if (nm && nm[0]) {
+                        char p[112];
+                        std::snprintf(p, sizeof p,
+                            "anim-group.lobbyPanel.lobbyList.Player%d.nameLabel", r);
+                        UiText(p, nm);
+                    }
+                }
             }
             if (top == PageId("main-menu") || top == PageId("find-match-menu")) {
                 if (g_net.have && g_state.hasParty) {

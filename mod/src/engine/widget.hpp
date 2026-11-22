@@ -32,8 +32,21 @@ namespace engine::widget {
     void Scale(uint64_t w, float sx, float sy);
     void Pivot(uint64_t w, float x, float y);
 
+    // Read-back of the rect transform (ext w_pivot_get / w_scale_get): pivot at
+    // transform +0x20, scale at +0x30. false when the widget has no readable
+    // transform or a non-finite / out-of-range value, so a caller never chases a
+    // stale transform (e.g. the name rim following a moving scoreboard name).
+    bool PivotGet(uint64_t w, float* x, float* y);
+    bool ScaleGet(uint64_t w, float* sx, float* sy);
+
     void SetText(uint64_t w, const char* text);
     void SetImage(uint64_t w, const char* path);
+
+    // A read-only observer for text writes made through this module (the mod's own
+    // writes; engine / winmm writes still go through the ext's settext hook while it
+    // is the bridge). One observer at a time; nullptr unregisters.
+    using TextWriteObserver = void (*)(uint64_t widget, const char* text, void* user);
+    void SetTextObserver(TextWriteObserver fn, void* user);
 
     // ---- mouse navigation (ext UiRectSs / UiMouseOver / UiOverViewport) ---------------
     // The ext's "widget escape bounds": the engine's own hover answer is often too

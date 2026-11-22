@@ -16,6 +16,7 @@
 #include "engine/clipfx.hpp"
 #include "engine/exe_side.hpp"
 #include "engine/frame.hpp"
+#include "engine/lobby.hpp"
 #include "engine/local-player.hpp"
 #include "engine/object.hpp"
 #include "engine/ptr.hpp"
@@ -762,8 +763,8 @@ namespace net::match::bloodbuild {
             int lethal = (ps.flags & ::net::anim::paired::kFLethal) != 0;
             {
                 // a blade finisher (ctxdown one-shot) kills its victim at the kill frame now:
-                // lethal blood masks, as on the victim's screen. TODO: MeleeBladeKills (the
-                // melee_hitfx weapon-class rule + IntLive()) is not ported -> always false.
+                // lethal blood masks, as on the victim's screen. MeleeBladeKills is the exact
+                // melee_hitfx blade rule (IntLive() is gated: no server 0xDD mode in the mod).
                 if (!lethal && ps.kind == ::net::anim::paired::kCtxdown && ps.weapon
                     && ps.weapon != ~0ULL && MeleeBladeKills(ps.weapon)
                     && !engine::exe_side::Exists("t2r-melee-down-revivable.txt"))
@@ -1028,12 +1029,90 @@ namespace net::match::bloodbuild {
             }
         }
 
-        // ext MeleeBladeKills: MeleeRuleBlade(w) && !IntLive(). The melee_hitfx weapon-class
-        // rule (MhfxClass) and the interrogation-live gate are not ported, so this is false.
+        // ---- ext MeleeBladeKills (t2r-ext.c) ---------------------------------------------
+        // The exact melee_hitfx weapon-class table (tools/ext/melee_hitfx.c MHFX_TAB; FNV64
+        // is the mod's SID()). A blade is class 2; the two-hand flag / name are kept so the
+        // table stays faithful even though the kill rule only asks for the class.
+        enum MhfxClassId { kMhfxNone = 0, kMhfxBlunt = 1, kMhfxBlade = 2 };
+        struct MhfxRow {
+            uint64_t    sid;
+            int         cls;
+            int         twoHands;
+            const char* name;
+        };
+        constexpr MhfxRow kMhfxTab[] = {
+            { SID("crowbar"),                    kMhfxBlunt, 0, "crowbar" },
+            { SID("lead-pipe"),                  kMhfxBlunt, 0, "lead-pipe" },
+            { SID("short-pipe"),                 kMhfxBlunt, 0, "short-pipe" },
+            { SID("pipe-wrench"),                kMhfxBlunt, 0, "pipe-wrench" },
+            { SID("hammer-modern"),              kMhfxBlunt, 0, "hammer-modern" },
+            { SID("hammer-scar"),                kMhfxBlunt, 0, "hammer-scar" },
+            { SID("club-1h-police"),             kMhfxBlunt, 0, "club-1h-police" },
+            { SID("club-1h-scar"),               kMhfxBlunt, 0, "club-1h-scar" },
+            { SID("baseball-bat"),               kMhfxBlunt, 1, "baseball-bat" },
+            { SID("two-by-four"),                kMhfxBlunt, 1, "two-by-four" },
+            { SID("club-2h-scar"),               kMhfxBlunt, 1, "club-2h-scar" },
+            { SID("sledgehammer"),               kMhfxBlunt, 1, "sledgehammer" },
+            { SID("pickaxe"),                    kMhfxBlunt, 1, "pickaxe" },
+            { SID("machete"),                    kMhfxBlade, 0, "machete" },
+            { SID("machete-scar"),               kMhfxBlade, 0, "machete-scar" },
+            { SID("tomahawk"),                   kMhfxBlade, 0, "tomahawk" },
+            { SID("hatchet-modern"),             kMhfxBlade, 0, "hatchet-modern" },
+            { SID("hatchet"),                    kMhfxBlade, 0, "hatchet" },
+            { SID("fireman-axe"),                kMhfxBlade, 1, "fireman-axe" },
+            { SID("knife"),                      kMhfxBlade, 0, "knife" },
+            { SID("switchblade"),                kMhfxBlade, 0, "switchblade" },
+            { SID("shiv"),                       kMhfxBlade, 0, "shiv" },
+            { SID("knife-survival-mel-player"),  kMhfxBlade, 0, "knife-survival-mel-player" },
+            { SID("dagger-scar-lev-player"),     kMhfxBlade, 0, "dagger-scar-lev-player" },
+            { SID("abby-unarmed"),               kMhfxBlunt, 0, "abby-unarmed" },
+        };
+
+        int MhfxClass(uint64_t weapon, int* twoHands, const char** name)
+        {
+            for (const MhfxRow& r : kMhfxTab)
+                if (r.sid == weapon) {
+                    if (twoHands) *twoHands = r.twoHands;
+                    if (name) *name = r.name;
+                    return r.cls;
+                }
+            return kMhfxNone;
+        }
+
+        // ext FemUnarmedId: a female life's empty hands are a knife id. Its look / sound
+        // stays the knife's, but every RULE is the fists' (no blade kill).
+        bool FemUnarmedId(uint64_t weapon)
+        {
+            return weapon == SID("dagger-scar-lev-player")
+                || weapon == SID("knife-survival-mel-player")
+                || weapon == SID("switchblade")
+                || weapon == SID("switchblade-dina-player");
+        }
+
+        // ext MeleeRuleBlade: a real blade for the kill rules (not fists / not a female's
+        // unarmed knife id / not the invalid weapon id).
+        bool MeleeRuleBlade(uint64_t weapon)
+        {
+            return weapon && weapon != ~0ULL && !FemUnarmedId(weapon)
+                && MhfxClass(weapon, nullptr, nullptr) == kMhfxBlade;
+        }
+
+        // ext IntLive(): !g_noInt && g_int.ok && g_int.on && MatchSubstate() == 6. g_int.on
+        // comes from the server's 0xDD mode answer; the mod has no port of that query (nor
+        // an interrogation mode state), so this stays an explicit honest gate. Treating it
+        // as "off" is the ext's own old-server answer (interrogation.c: g_int.ok = 1,
+        // g_int.on = 0 after 3 unanswered 0xDD asks). Only a 0xDD port may flip this.
+        constexpr bool kIntModeAnswerPorted = false;
+        bool IntLive()
+        {
+            if (!kIntModeAnswerPorted)
+                return false;                    // Supply Raid / no interrogation mode
+            return engine::lobby::InMatch();     // the remaining ext gate
+        }
+
         bool MeleeBladeKills(uint64_t weapon)
         {
-            (void)weapon;
-            return false;
+            return MeleeRuleBlade(weapon) && !IntLive();
         }
 
     }   // namespace

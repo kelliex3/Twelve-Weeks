@@ -39,6 +39,8 @@
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "net/social/rank-badge.hpp"
+#include "net/social/name-rim.hpp"
+#include "net/social/search-rows.hpp"
 #include "net/ui/postmatch-screens.hpp"
 #include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
@@ -207,7 +209,9 @@ namespace boot {
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
 		net::friends13::Tick();   // in-game FRIENDS / PARTY panel + party gate (after liveness, before requeue)
+		net::social::search_rows::Tick(); // g_srchTab / g_srchName mirror (read-only, observer on mod text writes)
 		net::rank_badge::Tick(::GetTickCount64());  // async 0xBF rank table poll (only while a screen draws a badge)
+		net::name_rim::Tick(::GetTickCount64());    // lead-dev pink name rim (role 4, 150 ms poll)
 		net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)

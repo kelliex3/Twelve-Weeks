@@ -24,6 +24,8 @@
 #include "net/game/net-smooth-bridge.hpp"
 #include "net/social/friends13.hpp"
 #include "net/social/rank-badge.hpp"
+#include "net/social/name-rim.hpp"
+#include "net/social/search-rows.hpp"
 #include "net/ui/postmatch-screens.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
@@ -2017,7 +2019,9 @@ namespace net::replication {
         net::afk::Reset();
         net::jip::Reset();
         net::friends13::Reset();
+        net::social::search_rows::Reset();
         net::rank_badge::Reset();
+        net::name_rim::Reset();
         net::match::kick::Reset();
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();

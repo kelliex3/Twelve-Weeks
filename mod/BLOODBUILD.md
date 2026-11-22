@@ -57,11 +57,13 @@ Without it the port compiles and behaves exactly as the ext does with an empty t
   (victim puppet destroyed, target gone, timeout). The ext's `PS_CTXDOWN` guard is not
   reproduced (the mod's execution is `kMeleeExec`), a faithful-approximation deviation.
 * **Private tables.** `CTX_FX` / `KNIFE_HIT_FX` / `FIN_ANIMS` are empty unless
-  `T2R_DATA_CTX_FX` is defined. `MeleeBladeKills` (`MeleeRuleBlade` + `!IntLive()`, the
-  `melee_hitfx` weapon-class rule) is an honest TODO stub returning false, and the downed
-  state reads `player_status::LocalDowned` / `PuppetDowned` (the ext's dying `2` distinction
-  is not ported), so the blade-finisher lethality path and the crawl state stay inert until
-  those subsystems land.
+  `T2R_DATA_CTX_FX` is defined. `MeleeBladeKills` is now the exact `melee_hitfx` blade
+  rule (`MHFX_TAB`, `MhfxClass` class 2, `FemUnarmedId` exclusion, invalid-id check); its
+  `!IntLive()` half stays an explicit honest gate (`kIntModeAnswerPorted = false`): the mod
+  has no server 0xDD mode answer, so it takes the ext's own old-server answer ("off") and a
+  blade finisher keeps its kill. The downed state reads `player_status::LocalDowned` /
+  `PuppetDowned` (the ext's dying `2` distinction is not ported), so the crawl state stays
+  inert until that subsystem lands.
 * **In-level gate.** The ext tests `MatchSubstate() == 6`; the port uses the level phases
   `[LoadingPlaceSpawn, Live]`. Harmless: bodies do not exist during loading.
 * **Log prefix** is `[BLOOD]` (ext: `blood: `).
