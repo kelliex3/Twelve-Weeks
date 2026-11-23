@@ -185,6 +185,14 @@ pub struct Guild {
 pub struct Ready {
     pub user: User,
     pub application: ReadyApp,
+    #[serde(default)]
+    pub guilds: Vec<ReadyGuild>,
+}
+
+#[derive(Deserialize)]
+pub struct ReadyGuild {
+    #[serde(deserialize_with = "id")]
+    pub id: u64,
 }
 
 #[derive(Deserialize)]

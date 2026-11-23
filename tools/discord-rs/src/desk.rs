@@ -88,7 +88,7 @@ pub fn find_codes(text: &str) -> Vec<String> {
 
 fn dir_code(name: &str) -> Option<(String, String)> {
     let b = name.as_bytes();
-    if b.len() < 24 || !b[..8].iter().all(u8::is_ascii_digit) || b[8] != b'-' || !b[9..15].iter().all(u8::is_ascii_digit) {
+    if b.len() < 23 || !b[..8].iter().all(u8::is_ascii_digit) || b[8] != b'-' || !b[9..15].iter().all(u8::is_ascii_digit) {
         return None;
     }
     if &b[15..18] != b"_R-" || !b[18..22].iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) || b[22] != b'_' {
@@ -650,6 +650,7 @@ mod tests {
         assert_eq!(dir_code("20261025-172418_R-T2W3_DeSyncc"), Some(("R-T2W3".into(), "2026-10-25T17:24:18Z".into())));
         assert_eq!(dir_code("20261025-172418_R-t2w3_x"), None);
         assert_eq!(dir_code("20261025-172418_R-T2W3"), None);
+        assert_eq!(dir_code("20261025-172418_R-T2W3_").map(|c| c.0), Some("R-T2W3".into()));
         assert_eq!(dir_code("2026102-172418_R-T2W3_x"), None);
     }
 

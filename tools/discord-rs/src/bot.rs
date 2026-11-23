@@ -75,6 +75,9 @@ impl Bot {
                     c.app = r.application.id;
                     c.me_name = r.user.tag();
                     log!("logged in as {} (run)", c.me_name);
+                    if !r.guilds.iter().any(|g| g.id == guild) {
+                        log!("guild_id {guild} not found - is the bot invited to that server?");
+                    }
                 }
             }
             "GUILD_CREATE" => {
