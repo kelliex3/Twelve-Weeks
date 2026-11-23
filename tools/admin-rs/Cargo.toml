@@ -1,0 +1,26 @@
+[package]
+name = "t2r-admin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bytes = "1"
+hmac = "0.12"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
