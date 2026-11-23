@@ -101,5 +101,22 @@ It also covers the TEST server switch, every login path, POST validation, and th
 ADM_SRC=<folder with t2r-live and t2r-test copied read-only from fra> bash compare/run.sh
 ```
 
-Result on fra's data of 2026-11-23 (924 players, 739 clans, ~90 MB of daemon logs, 10 bug reports): every response identical apart from the
-dropped fields above. `compare/load.py` is the RSS / CPU benchmark (one admin tab polling every 3 s while the log grows at fra's rate).
+Result on fra's data of 2026-11-23 (924 players, 739 clans, ~90 MB of daemon logs, 10 bug reports): all 2,123 checks give identical
+responses, apart from the dropped fields above.
+
+## Measurements
+
+`compare/load.py` on sfo, a droplet the same size as fra (1 vCPU / 961 MB), with fra's data. It polls the way open admin tabs do (overview +
+online + one page every 3 s per tab), runs for 5 minutes, and appends to `daemon.log` at fra's rate (~30 MB/h).
+
+| | admin.py | t2r-admin |
+|---|---|---|
+| first request after start (full log load) | 5.7 s | 0.14 s (log loaded at startup, 1.3 s CPU) |
+| RSS at start / after 5 min / peak, 1 tab | 87 / 96 / 118 MB | 12 / 17 / 21 MB |
+| CPU, 1 tab | 7.2 % | 0.95 % |
+| latency p50 / p95, 1 tab | 221 / 1455 ms | 28 / 72 ms |
+| RSS after 5 min / peak, 3 tabs | 117 / 118 MB | 18 / 24 MB |
+| CPU, 3 tabs | 17.5 % | 2.6 % |
+| latency p50 / p95, 3 tabs | 272 / 1954 ms | 54 / 137 ms |
+
+The binary uses musl's own allocator. mimalloc saved a few ms per rebuild but doubled RSS (~36 MB), which is the wrong trade on this box.
