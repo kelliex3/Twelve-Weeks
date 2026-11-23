@@ -1,16 +1,25 @@
 [package]
 name = "t2r-files"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Twelve Weeks update server front: serves the big blobs with sendfile, passes every other request to the Python update server"
+description = "Twelve Weeks update server: blobs by sendfile, the launcher API, bug reports"
 
 [[bin]]
 name = "t2r-files"
 path = "src/main.rs"
 
+[dependencies]
+t2r-clan = { path = "../clan-rs" }
+serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+serde = "1"
+regex = { version = "1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
+libc = "0.2"
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
