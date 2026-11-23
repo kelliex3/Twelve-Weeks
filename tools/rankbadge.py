@@ -18,13 +18,20 @@ def norm(name):
     return "".join(ch for ch in (name or "") if ch in _ALNUM).lower()
 
 
+# A name with no ASCII letter / digit (">,..,<", an all-Cyrillic or all-Japanese name) had key 0 = never listed, so it never drew a badge. Such a name
+# is keyed on its other bytes instead (UTF-8, not space, not the characters the screens add or strip: "_" "[" "]" "(" ")" "<" ">"). rkb_hash does the same.
+_FB_SKIP = set(b" _[]()<>")
+
+
 def key(name):
-    """32-bit FNV-1a of norm(name); 0 for a name with no letters / digits (never listed). rankbadge.c rkb_hash is the same function."""
+    """32-bit FNV-1a of norm(name); for a name with no letters / digits, of its fallback bytes (see _FB_SKIP); 0 = nothing to key on (never listed).
+    rankbadge.c rkb_hash is the same function."""
     s = norm(name)
-    if not s:
+    data = s.encode("ascii") if s else bytes(b for b in (name or "").encode("utf-8", "replace") if b > 0x20 and b not in _FB_SKIP)
+    if not data:
         return 0
     h = 2166136261
-    for b in s.encode("ascii"):
+    for b in data:
         h = ((h ^ b) * 16777619) & 0xFFFFFFFF
     return h
 

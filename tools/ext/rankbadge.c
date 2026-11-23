@@ -14,8 +14,10 @@ static volatile uint64_t g_rkb_want_at;                                      // 
 static volatile LONG g_rkb_miss;                                             // the last lookup found nothing: ask again soon
 
 static void nrim_tick(uint64_t now);                                        // namerim.c (included after friends13.c)
+// 11-23: a name with no ASCII letter / digit (">,..,<", all-Cyrillic) hashed to 0 = drawn as an empty row (no badge). It is keyed on its other bytes instead
+// (> 0x20, not one of " _[]()<>"), the same fallback as tools/rankbadge.py key().
 static uint32_t rkb_hash(const char *name) {                                // = tools/rankbadge.py key()
-    uint32_t h = 2166136261u; int any = 0;
+    uint32_t h = 2166136261u, h2 = 2166136261u; int any = 0, any2 = 0;
     for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
         if (*p == '<') { const char *e = strchr((const char *)p, '>'); if (e) { p = (const unsigned char *)e; continue; } }      // <font ...> markup
         if (p[0] == ' ') {                                                  // suffixes "  (YOU)" (friends panel: two spaces), " (party lead)", " (not searching)", "  (TY)"
@@ -25,10 +27,13 @@ static uint32_t rkb_hash(const char *name) {                                // =
         if (p[0] == ' ' && p[1] == '[' && p[2] == 'T' && p[3] >= '1' && p[3] <= '2' && p[4] == ']') { p += 4; continue; }              // " [T1]"
         int c = *p;
         if (c >= 'A' && c <= 'Z') c += 32;
-        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) continue;
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+            if (*p > 0x20 && !strchr("_[]()<>", *p)) { h2 = (h2 ^ (uint32_t)*p) * 16777619u; any2 = 1; }
+            continue;
+        }
         h = (h ^ (uint32_t)c) * 16777619u; any = 1;
     }
-    return any ? h : 0;
+    return any ? h : any2 ? h2 : 0;
 }
 static void rkb_parse(const char *t) {                                       // worker thread (clan_worker)
     static struct { uint32_t h; uint8_t rk, ro; uint16_t wk; } tmp[RKB_MAX];
