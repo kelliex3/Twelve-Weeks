@@ -13,13 +13,8 @@ use crate::daemon::{self, CallErr};
 use crate::logindex::{self, LogIndex, LogState, Match};
 use crate::py;
 use crate::timeutil;
+use t2r_clan::rules::{faction_name, needed, status_name, token_id, week_day, ALIVE, WEEKS, WIN_DAY};
 
-pub const ALIVE: i64 = 1;
-const DEAD: i64 = 2;
-const WON: i64 = 3;
-const WIN_DAY: i64 = 83;
-const WEEKS: i64 = 12;
-const DAYS: i64 = WEEKS * 7;
 const SNAPSHOT_FRESH: f64 = 35.0;
 const EARLY: [&str; 3] = ["timed out", "admin kick", "jip never loaded"];
 
@@ -79,45 +74,6 @@ fn token_embedded_name(token: &str) -> String {
 
 fn norm(n: &str) -> String {
     n.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-pub fn token_id(token: &str) -> String {
-    let t = token.to_lowercase();
-    if t.chars().count() == 64 {
-        t.chars().skip(40).take(24).collect()
-    } else {
-        t
-    }
-}
-
-fn needed(n: i64) -> i64 {
-    if n > 0 {
-        5 + 2 * n - (6 * n).div_euclid(5)
-    } else {
-        0
-    }
-}
-
-fn week_day(day: i64) -> (i64, i64) {
-    let d = day.min(DAYS - 1);
-    (d.div_euclid(7) + 1, d.rem_euclid(7) + 1)
-}
-
-fn faction_name(f: i64) -> &'static str {
-    match f {
-        1 => "WLF",
-        2 => "SERAPHITES",
-        _ => "",
-    }
-}
-
-fn status_name(s: i64) -> &'static str {
-    match s {
-        ALIVE => "alive",
-        DEAD => "dead",
-        WON => "won",
-        _ => "none",
-    }
 }
 
 fn redact(line: &str) -> String {

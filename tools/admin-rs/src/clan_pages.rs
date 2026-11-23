@@ -1,7 +1,14 @@
 use serde_json::{json, Value};
 
 use crate::store::Admin;
+use crate::timeutil;
 
-pub fn view(_admin: &Admin, _key: &str, _name: &str, _lang: &str) -> Value {
-    json!({"ok": false, "error": "clan view not available yet (waiting for the t2r_clan crate)"})
+pub fn view(admin: &Admin, key: &str, name: &str, lang: &str) -> Value {
+    let c = match admin.connect() {
+        Ok(c) => c,
+        Err(e) => return json!({"ok": false, "error": format!("database unavailable: {}", e)}),
+    };
+    let now = timeutil::now();
+    json!({"ok": true, "name": name, "clan": t2r_clan::clan_view(&c, "", Some(key)),
+           "feed": t2r_clan::clanfeed(&c, "", "40", "0", lang, now, Some(key))})
 }

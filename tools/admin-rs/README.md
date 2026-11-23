@@ -57,9 +57,11 @@ The binary is `target/x86_64-unknown-linux-musl/release/t2r-admin` (about 5 MB).
 
 - **Clan A-Life section** of the player page (`alife` is now `null`, so `admin.js` hides it) and the player fields `people`, `alive` and
   `alifeServerOn`. They needed the ~17k-line Python story engine, and no page reads the three fields. The user decided this on 2026-11-23.
-- **Clan iframe** (`/api/clanview`): players without a clan are answered natively. For players with a clan it returns
-  `{"ok": false, "error": ...}` until the shared `t2r_clan` crate (branch `update-rs`) lands. After that it shows the clan card and the menu
-  lines, which is what the launcher shows. Its SURVIVORS / RAIDS / JOURNAL tabs stay empty (same decision).
+- **Clan iframe** (`/api/clanview`): it gets the clan card and the menu lines from the shared `t2r_clan` crate (`tools/clan-rs`, the same code
+  the Rust update server uses). Its SURVIVORS / RAIDS / JOURNAL tabs stay empty, by the same decision; the launcher's `clan.js` handles the
+  missing blocks. The crate follows the clan modules the daemon runs (`host186`), not the older `tools/clan.py` admin.py imported. So event and
+  mission names now match what players see in game, e.g. `DYSENTERY OUTBREAK` where admin.py said `RESCUED HOSTAGES`. Of 564 clan cards
+  compared, those names are the only differences.
 - `textPl` on the player's clan feed rows: `admin.js` shows the feed in English only.
 - `/bg/<name>.jpg`: nothing requests it. The clan page loads its backgrounds from `/launcher/assets/bg/`.
 - The `snapshot-counts` data source: it is only for daemon builds whose `t2r-status.json` has no `live` block. The live and test daemons both
