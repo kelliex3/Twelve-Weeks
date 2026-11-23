@@ -5,8 +5,6 @@ use rusqlite::types::Value as Sql;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 
-pub const FEED_MAX: i64 = 100;
-
 fn is_hex(s: &str) -> bool {
     s.bytes().all(|c| c.is_ascii_hexdigit())
 }
