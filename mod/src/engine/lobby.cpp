@@ -189,4 +189,61 @@ namespace engine::lobby {
         return true;
     }
 
+    bool SpectateState(bool& on, float& timer, int& target)
+    {
+        uint8_t* lo = Object();
+        if (!lo) return false;
+        on = lo[kSpecOn] != 0;
+        timer = *reinterpret_cast<const float*>(lo + kSpecTimer);
+        target = *reinterpret_cast<const int32_t*>(lo + kSpecTarget);
+        return true;
+    }
+
+    bool SpectateBegin()
+    {
+        uint8_t* lo = Object();
+        if (!lo || !engine::ptr::Writable(reinterpret_cast<uintptr_t>(lo) + kSpecOn,
+                kSpecFlag - kSpecOn + 1))
+            return false;
+        lo[kSpecOn] = 1;
+        *reinterpret_cast<float*>(lo + kSpecTimer) = 2.9f;
+        *reinterpret_cast<int32_t*>(lo + kSpecTarget) = -1;
+        *reinterpret_cast<int32_t*>(lo + kSpecSlot2) = 0;
+        lo[kSpecFlag] = 0;
+        SpectateRefreshUi();
+        return true;
+    }
+
+    bool SpectateEnd()
+    {
+        uint8_t* lo = Object();
+        if (!lo || !engine::ptr::Writable(reinterpret_cast<uintptr_t>(lo) + kSpecOn, 1))
+            return false;
+        lo[kSpecOn] = 0;
+        SpectateRefreshUi();
+        return true;
+    }
+
+    bool SpectateSetTarget(int slot)
+    {
+        uint8_t* lo = Object();
+        if (!lo || slot < 0 || slot >= static_cast<int>(kRosterMax) ||
+            !engine::ptr::Writable(reinterpret_cast<uintptr_t>(lo) + kSpecTarget, 8))
+            return false;
+        *reinterpret_cast<int32_t*>(lo + kSpecTarget) = slot;
+        // Past the period: winmm's next tick re-tests the target and drives its camera
+        // (zeroing the timer would freeze the old view for 3 s -- the ext's own bug note).
+        *reinterpret_cast<float*>(lo + kSpecTimer) = kSpecPeriodSecs;
+        SpectateRefreshUi();
+        return true;
+    }
+
+    void SpectateRefreshUi()
+    {
+        const uintptr_t p = Base() + (kUiRefreshFlagVa >= 0x140000000
+            ? kUiRefreshFlagVa - 0x140000000 : kUiRefreshFlagVa);
+        if (engine::ptr::Writable(p, 1))
+            *reinterpret_cast<volatile uint8_t*>(p) = 0;
+    }
+
 } // namespace engine::lobby

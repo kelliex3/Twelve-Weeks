@@ -29,6 +29,7 @@
 #include "net/social/clan-page-data.hpp"
 #include "net/online/clan-state.hpp"
 #include "net/ui/postmatch-screens.hpp"
+#include "net/ui/death-ui.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -44,6 +45,7 @@
 
 #include <cmath>
 #include <chrono>
+#include <cstring>
 #include <random>
 #include <format>
 #include <algorithm>
@@ -269,6 +271,8 @@ namespace net::replication {
         L.respawnTimer.Clear(); // no respawn to count down to
         L.respawnLastSec = -1;
         net::gui2::SetDeathBannerVisible(false); // no countdown -> no "respawning in N" banner
+        net::ui::death_ui::NoteRespawn(false, 0.0f, true);
+        net::ui::death_ui::NoteSpectate(-1, nullptr);
         TO1_LOG("[SPEC] out of lives -> teammate spectate\n");
     }
 
@@ -280,6 +284,8 @@ namespace net::replication {
         L.specTargetSlot = -1;
         L.specOrphan = 0.0f;
         s_specActive = false;
+        net::ui::death_ui::NoteRespawn(false, 0.0f, false);
+        net::ui::death_ui::NoteSpectate(-1, nullptr);
         // Camera is handed back by simply not calling SET_CAMERA_POSITION any more
         TO1_LOG("[SPEC] leaving teammate spectate\n");
     }
@@ -317,6 +323,7 @@ namespace net::replication {
         L.respawnTimer.Start(kRespawnSeconds);
         L.respawnLastSec = L.respawnTimer.Ceil();
         net::gui2::SetDeathBannerVisible(true);
+        net::ui::death_ui::NoteRespawn(true, kRespawnSeconds, false);
         TO1_LOG("[NET] death detected — respawning in %.0fs\n", kRespawnSeconds);
     }
 
@@ -538,6 +545,8 @@ namespace net::replication {
         s_specActive = false;
         ExitElimSpectate();
         NoteRespawn(net::session::MySlot());
+        net::ui::death_ui::NoteRespawn(false, 0.0f, false);
+        net::ui::death_ui::NoteSpectate(-1, nullptr);
         net::gui2::SetDeathBannerVisible(false);
 
         gameplay::perks::NotifySpawn(true);
@@ -650,6 +659,8 @@ namespace net::replication {
 
         int sec = L.respawnTimer.Ceil();
         net::gui2::SetDeathBannerRespawn(sec);
+        net::ui::death_ui::NoteRespawn(true, L.respawnTimer.Remaining(),
+            TheMatch().BlueLives() <= 0);
         if (sec != L.respawnLastSec && sec > 0) {
             //AUDIO::PLAY_SOUND(SID("sfx-ui-acc-sonar-npc-infected-menu"));
             //AUDIO::PLAY_SOUND(SID("sfx-rl-round-timer-tick-negative"));
@@ -748,9 +759,21 @@ namespace net::replication {
     {
         auto& L = LocalState();
 
+        // Feed the death UI's native spectate offer / switch prompt with the same
+        // alive-teammate set the camera owner uses (ext DuMates).
+        {
+            int slots[kMaxNetPlayers];
+            int n = 0;
+            for (const NetPlayer& p : NetPlayers::Remotes())
+                if (SpectateTargetValid(p.netSlot) && n < kMaxNetPlayers)
+                    slots[n++] = p.netSlot;
+            net::ui::death_ui::NoteSpectateOptions(slots, n);
+        }
+
         if (net::gui2::ScoreboardShowing()) {
             ExitElimSpectate();
             s_specActive = false;
+            net::ui::death_ui::NoteSpectate(-1, nullptr);
             return;
         }
 
@@ -772,10 +795,13 @@ namespace net::replication {
                     L.specTargetSlot = next;
                     s_specActive = false;   // new target -> snap
                     L.specOrphan = 0.0f;
+                    net::ui::death_ui::NoteSpectate(next,
+                        NetPlayers::BySlot(next).name);
                     TO1_LOG("[SPEC] following slot %d (%s)\n", next, NetPlayers::BySlot(next).name);
                 }
                 else {
                     L.specTargetSlot = -1;
+                    net::ui::death_ui::NoteSpectate(-1, nullptr);
                     L.specOrphan += dt;
                     if (s_specActive && L.specOrphan < kSpecOrphanHold)
                         CAMERA::SET_CAMERA_POSITION(s_specPos, s_specRot);
@@ -791,9 +817,17 @@ namespace net::replication {
         }
 
         // lives remain -> own death cam for 3s, then spectate killer
-        if (!L.respawnTimer.Running()) return;                            // alive -> engine owns the camera
-        if (L.respawnTimer.Remaining() > kSpectateAtSeconds) return;      // still on our own death cam
+        if (!L.respawnTimer.Running()) {                                  // alive -> engine owns the camera
+            net::ui::death_ui::NoteSpectate(-1, nullptr);
+            return;
+        }
+        if (L.respawnTimer.Remaining() > kSpectateAtSeconds) {            // still on our own death cam
+            net::ui::death_ui::NoteSpectate(-1, nullptr);
+            return;
+        }
         if (L.killerSlot < 0 || L.killerSlot >= kMaxNetPlayers) return;   // environmental / unknown killer
+        net::ui::death_ui::NoteSpectate(L.killerSlot,
+            NetPlayers::BySlot(L.killerSlot).name);
         if (!DriveCameraFromSlot(L.killerSlot, dt) && s_specActive)
             CAMERA::SET_CAMERA_POSITION(s_specPos, s_specRot);            // packet gap -> hold
     }
@@ -1066,6 +1100,23 @@ namespace net::replication {
 
         if (victimSlot == mySlot) {
             net::gui2::SetDeathBannerKiller(haveKiller ? killerName : victimName, weaponName);
+            // Native death card credit: the same confirmed kill the mod already uses
+            // for the kill feed / banner. Ext's live lobby-credit fallback stays in
+            // ext while it is the bridge; no extra wire event is sent.
+            net::ui::death_ui::NoteDeath(killerSlot, weaponSID, killerName);
+            // Native du_edge_note: the confirmed lethal kill is the earliest reliable
+            // signal (the engine's Death state can lead an execution's kill frame).
+            {
+                const bool exec = gameplay::melee::PuppetFrozenForExecution(victimSlot);
+                const char* wid = weaponName ? weaponName : "";
+                const bool fire = std::strstr(wid, "molotov") ||
+                    std::strstr(wid, "fire") || std::strstr(wid, "flame");
+                net::ui::death_ui::NoteEdge(
+                    exec ? net::ui::death_ui::core::EdgeKind::Execution
+                         : fire ? net::ui::death_ui::core::EdgeKind::MolotovBurn
+                                : net::ui::death_ui::core::EdgeKind::DownedLethal,
+                    ::GetTickCount64(), killerSlot, weaponSID);
+            }
             if (haveKiller && killerSlot != mySlot) {
                 LocalState().killerSlot = killerSlot;
                 s_specActive = false;
@@ -1232,8 +1283,13 @@ namespace net::replication {
         TO1_LOG("[parts] slot%d %+d for %s -> %d\n",
             slot, partsAmount, reason.c_str(), balance);
 
-        if (slot == net::session::MySlot())
+        if (slot == net::session::MySlot()) {
             gameplay::perks::NotifyPartsAwarded(partsAmount);
+            // ext AwardHook's local tally for the to1/clan-postmatch breakdown.
+            // Wire-local only (no 0xE2 here): the ext still owns the report while
+            // it is the loaded bridge, and the mod owns the page it fills.
+            net::clan::NoteAward(reason.c_str(), partsAmount);
+        }
     }
 
     void SpawnItemFromKill(int killerSlot, int victimSlot, StringId64 weaponSID)
@@ -2032,6 +2088,7 @@ namespace net::replication {
         net::clan::Reset();
         net::clan::page::Reset();
         net::ui::postmatch::Reset();
+        net::ui::death_ui::Reset();
         net::requeue::Reset();
         net::direct::Reset();
         net::audio::music_tier::Reset();

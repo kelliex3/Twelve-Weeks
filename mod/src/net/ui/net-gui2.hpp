@@ -97,6 +97,11 @@ namespace net::gui2 {
     void SetDeathBannerRespawn(int seconds);
     void SetDeathBannerVisible(bool visible);
 
+    // The native death screen (net/ui/death-ui.*) hides this banner while it is up,
+    // without clearing the wanted latch set by the respawn countdown. Kept separate
+    // from SetDeathBannerVisible so the countdown can still own the latch.
+    void SetDeathBannerSuppressed(bool suppressed);
+
     void        UpdateMenu();
     StringId64  PrimaryWeaponSid();
     StringId64  SecondaryWeaponSid();

@@ -61,4 +61,22 @@ namespace engine::lobby {
     // false / out[0] = 0 when the entry is unavailable.
     bool RosterName(int index, char* out, size_t cap);
 
+    // ---- native owner of winmm's spectate fields -----------------------------------
+    // The death screen owns these now (ext wrote +0x2c44/+0x2c48/+0x2c4c/+0x2c50/
+    // +0x2c54 and the UI refresh flag). Every write is VirtualQuery-checked, so a
+    // game update / menu-time null fails closed.
+    constexpr size_t kSpecOn      = 0x2C44;
+    constexpr size_t kSpecTimer   = 0x2C48;
+    constexpr size_t kSpecTarget  = 0x2C4C;
+    constexpr size_t kSpecSlot2   = 0x2C50;
+    constexpr size_t kSpecFlag    = 0x2C54;
+    constexpr uintptr_t kUiRefreshFlagVa = 0x180162914;
+    constexpr float kSpecPeriodSecs = 3.1f;  // winmm's 3 s period + 0.1
+
+    bool SpectateState(bool& on, float& timer, int& target);
+    bool SpectateBegin();                       // enable with "pick first target" defaults
+    bool SpectateEnd();                         // disable
+    bool SpectateSetTarget(int slot);           // switch: target + timer past the period
+    void SpectateRefreshUi();                   // zero the engine's UI refresh flag
+
 } // namespace engine::lobby

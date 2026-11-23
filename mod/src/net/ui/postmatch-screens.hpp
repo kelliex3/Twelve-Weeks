@@ -13,22 +13,27 @@
 // net/online/clan-state.* (0xE0/0xE1/0xE2), the 2013 CLAN page data is asked and
 // parsed by net/social/clan-page-data.* (0xB6/0xB7), the g_mmBack Steam gate is in
 // net/online/steam-status.*, and the party gate is wired in net-gui2.cpp. The menu
-// stack is still sampled for pages the mod cannot push itself, so any consumer can
-// ask one question -- ScreensDone() -- without re-deriving the pages. No page is
-// pushed or popped by default (kPopOnMmBack == false): the ext still owns the widget
-// pages while it is the bridge, and the mod's find-match flow pops the page it refuses.
+// stack is still sampled for pages the mod does not own, so any consumer can ask
+// one question -- ScreensDone() -- without re-deriving the pages. The mod owns the
+// to1/clan-postmatch and to1/clan-event page lifecycle (push / populate / input /
+// pop) in this module; the ext, still loaded and ticked first, may push the same
+// page from its own latch, but every push here is behind an IS_PAGE_ON_STACK guard
+// so an ext push is adopted rather than duplicated. The mod's find-match flow pops
+// the page it refuses, so kPopOnMmBack stays false.
 //
-//   Cl13PostActive()  to1/clan13x scoreboard is up     (ext Cl13PostActive)
+//   Cl13PostActive()  to1/clan13x scoreboard is up     (ext Cl13PostActive; ext-owned)
 //   ClanPostActive()  to1/clan-postmatch due or up    (ext g_pm.pending)
 //   ClanEventActive() to1/clan-event due or up        (ext g_ev.pending)
 //   GearUpNavActive() GEAR UP navigation state != None (ext g_loState != LO_NONE)
 //   MmBackActive()    a FIND MATCH press was refused and the page is being popped
 //                     (ext g_mmBack: party gate + Steam-helper gate)
 //
-// Honest gate: the mod has no to1/clan-postmatch / to1/clan-event / to1/clan13 widget
-// page, so it cannot push one or observe its enter/exit edges directly; the ext keeps
-// doing that. The *decisions* and the pre-push latches are native now: requeue no
-// longer has to absorb that window with its settle.
+// Honest gates: to1/clan13 (and its clan13x scoreboard) stay ext-owned; the mod
+// only observes that page's stack edges. The 0xE2 wire report also stays ext-owned
+// while the ext is the bridge -- net::clan::ArmPost() latches the mod's page locally
+// at match end and NoteAward() feeds the tally, with no duplicate 0xE2 send. The
+// ext's scoreboard-first ordering (g_pm.sb), the pre-main-menu EV gates and the
+// mission-meta goal table remain unported and are called out at their sites.
 
 namespace net::ui::postmatch {
 

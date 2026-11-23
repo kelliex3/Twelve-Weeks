@@ -127,6 +127,8 @@ namespace engine::pad {
         std::atomic<float>    g_rawLx{ 0.0f };
         std::atomic<float>    g_rawLy{ 0.0f };
         std::atomic<uint64_t> g_rawStickFrame{ 0 };
+        std::atomic<uint64_t> g_rawBtnMask{ 0 };
+        std::atomic<uint64_t> g_rawBtnFrame{ 0 };
 
         std::atomic<int>      g_rawMelee{ 0 };
         std::atomic<uint32_t> g_meleePresses{ 0 };
@@ -343,6 +345,8 @@ namespace engine::pad {
             g_rawLx.store(f[0], std::memory_order_relaxed);
             g_rawLy.store(f[1], std::memory_order_relaxed);
             g_rawStickFrame.store(engine::frame::Count(), std::memory_order_relaxed);
+            g_rawBtnMask.store(bm, std::memory_order_relaxed);
+            g_rawBtnFrame.store(engine::frame::Count(), std::memory_order_relaxed);
 
             if (g_meleeWatch) {
                 const uint64_t mm = g_meleeWatch->mask.load(std::memory_order_relaxed);
@@ -742,6 +746,17 @@ namespace engine::pad {
     {
         CommandWatch* w = Watch(name);
         return w ? w->readsTrue.load(std::memory_order_relaxed) : 0;
+    }
+
+    bool Held(const char* name)
+    {
+        CommandWatch* w = Watch(name);
+        if (!w || g_state.load(std::memory_order_relaxed) != 1)
+            return false;
+        const uint64_t mask = w->mask.load(std::memory_order_relaxed);
+        const uint64_t seen = g_rawBtnFrame.load(std::memory_order_relaxed);
+        return mask && seen && engine::frame::Count() - seen <= kRawFrameWindow &&
+               (g_rawBtnMask.load(std::memory_order_relaxed) & mask) != 0;
     }
 
     namespace {

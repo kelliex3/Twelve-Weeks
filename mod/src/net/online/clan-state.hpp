@@ -4,9 +4,10 @@
 // (tools/ext/t2r-ext.c: ClanT / ClanParse / g_pm.pending / g_ev.pending,
 // PmReport / PmReady / EvWanted / EvOffer). Ported with the ext's exact wire
 // opcodes (net-protocol.hpp: 0xE0 / 0xE1 / 0xE2 / 0xE4) and the same daemon RPC
-// helper every other wire module uses. No ext page push is performed: the mod
-// has no to1/clan-event / to1/clan-postmatch widget page, so the page itself is
-// still owned by the ext while the decision and the latch are native here.
+// helper every other wire module uses. The page push / widget render / input
+// lifecycle for to1/clan-postmatch and to1/clan-event lives in
+// net/ui/postmatch-screens.*; this module owns the decision and the latch that
+// feed it.
 //
 // Pure core (State parsing, EventWanted, PmReady, the award tally) is inline in
 // this header so mod/tests/clan_core_test.cpp can compile it without Windows.
@@ -149,12 +150,21 @@ namespace net::clan {
     // AwardHook's contribution to the page's itemised breakdown.
     void NoteAward(const char* label, int amount);
 
-    // ext EvOffer: decide whether the event page is due on the MP menu. The page
-    // push itself stays gated (mod has no widget page); the latch is native.
-    void Offer(bool menuTop, bool navBusy, uint64_t now);
+    // Non-wire arm used while the ext owns the 0xE2 send: set the same local
+    // page latch / tally sort / event bookkeeping as Report(), without sending
+    // anything. Called once at match end so postmatch::Tick can drive the page
+    // even when the ext is not the active bridge. Report() remains the wire
+    // path and is intentionally left uncalled while both modules are loaded.
+    void ArmPost(uint32_t parts);
 
-    // Page handlers' observable edges. The ext's handlers own these calls while
-    // the page push is still gated; postmatch::Tick also observes the stack.
+    // ext EvOffer: decide whether the event page is due on the MP menu. Returns
+    // true when a page push is due (the caller checks the stack first so the
+    // ext's earlier push and ours cannot stack two copies of the same page).
+    bool Offer(bool menuTop, bool navBusy, bool pageUp, uint64_t now);
+
+    // Page handlers' observable edges. postmatch::Tick owns these calls now,
+    // both for pages it pushes and for pages the ext pushed first (its handlers
+    // still run while the ext module is the active bridge).
     void NotePostShown();
     void NotePostClosed(bool continued);
     void NoteEventShown();
@@ -162,8 +172,14 @@ namespace net::clan {
 
     bool PostPending();
     bool PostShown();
+    int  PostDay();
+    int  PostParts();
+    int  PostLmh0();                      // ext g_pm.lmh0 (match tag before the report)
+    uint64_t PostSentAt();                // ext g_pm.sent_at (push gate + wait watchdog)
+    const PmRow* PmRows(int* n);          // ext g_pm.row (sorted tally)
     bool EventPending();
     int  EventMode();
-    bool Blocking();               // either page is due (requeue's settle gate)
+    const EventBook& Events();            // ext g_ev's bookkeeping
+    bool Blocking();                      // either page is due (requeue's settle gate)
 
 } // namespace net::clan

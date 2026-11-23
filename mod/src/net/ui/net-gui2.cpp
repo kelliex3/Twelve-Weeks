@@ -13,6 +13,10 @@
 #include "net-debug.hpp"
 #include "engine/framecap.hpp"
 #include "engine/local-player.hpp"
+#include "engine/flag.hpp"
+#include "engine/frame.hpp"
+#include "engine/pad.hpp"
+#include "engine/window.hpp"
 #include <windows.h>
 #include <cmath>
 #include <cstdio>
@@ -27,6 +31,7 @@
 #include "net/ui/postmatch-screens.hpp"
 #include "net/ui/notify.hpp"
 #include "net/online/steam-status.hpp"
+#include "net/online/clan-state.hpp"
 #include "net/match/match-liveness.hpp"
 
 #define TO1_HUD(name) SID("canvas.hudRoot.hudMenuStack.to1/" name)
@@ -837,6 +842,7 @@ namespace net::gui2 {
     StringId64 w_waiting = 0;   // "WAITING FOR PLAYERS"
 
     static bool s_deathBannerWanted = false;
+    static bool s_deathBannerSuppressed = false;   // native death screen is up
     static bool s_hudHiddenForPause = false;
     static bool s_nativeHudCovered = false;
 
@@ -1091,7 +1097,21 @@ namespace net::gui2 {
     {
         s_deathBannerWanted = visible;
         if (!GUI2::WIDGET_EXISTS(w_deathBanner)) return;
-        GUI2::SET_WIDGET_VISIBLE(w_deathBanner, visible && !PauseMenuOpen());
+        GUI2::SET_WIDGET_VISIBLE(w_deathBanner,
+            visible && !s_deathBannerSuppressed && !PauseMenuOpen());
+    }
+
+    void SetDeathBannerSuppressed(bool suppressed)
+    {
+        if (s_deathBannerSuppressed == suppressed) {
+            // The native screen re-asserts every frame; the widget itself is kept up
+            // to date by UpdateHudPauseVisibility's own latch path too.
+            return;
+        }
+        s_deathBannerSuppressed = suppressed;
+        if (!GUI2::WIDGET_EXISTS(w_deathBanner)) return;
+        GUI2::SET_WIDGET_VISIBLE(w_deathBanner,
+            s_deathBannerWanted && !suppressed && !PauseMenuOpen());
     }
 
     void RefreshWidgets()
@@ -1275,7 +1295,7 @@ namespace net::gui2 {
         const bool show = !paused;
         if (GUI2::WIDGET_EXISTS(w_scoreBanner)) GUI2::SET_WIDGET_VISIBLE(w_scoreBanner, show);
         if (GUI2::WIDGET_EXISTS(w_currencyHUD)) GUI2::SET_WIDGET_VISIBLE(w_currencyHUD, show);
-        if (GUI2::WIDGET_EXISTS(w_deathBanner)) GUI2::SET_WIDGET_VISIBLE(w_deathBanner, s_deathBannerWanted && show);
+        if (GUI2::WIDGET_EXISTS(w_deathBanner)) GUI2::SET_WIDGET_VISIBLE(w_deathBanner, s_deathBannerWanted && show && !s_deathBannerSuppressed);
     }
 
     constexpr uint32_t kHud2RootGetRva = 0x1F21500;
@@ -1323,8 +1343,155 @@ namespace net::gui2 {
     void ResetHudLatches()
     {
         s_deathBannerWanted = false;
+        s_deathBannerSuppressed = false;
         s_hudHiddenForPause = false;
         ReleaseNativeHudCover();
+    }
+
+    // ---------------------------------------------------------------- Esc/Start end-scoreboard peek (ported from tools/ext/escscore.c)
+    // During the end scoreboard, Esc or pad Start/Options toggles the scoreboard
+    // anim-group visibility so the player can peek at the world behind it. The end
+    // clock keeps running. Off: t2r-no-end-peek.txt.
+    namespace {
+        bool g_endPeek = false;
+        bool g_endPeekWas = false;
+        uint64_t g_endPeekProbeAt = 0;
+        int g_endPeekProbeIdx = 0;
+        const char* g_endPeekPadCmd = nullptr;
+
+        bool EndPeekOff()
+        {
+            return !engine::flag::Absent("t2r-no-end-peek.txt");
+        }
+
+        void EndPeekSetScoreboard(bool show)
+        {
+            const StringId64 w = SID("canvas.hudRoot.hudMenuStack.to1/scoreboard.anim-group");
+            DC::Call<"gui2-set-widget-visible">(w, show);
+            DC::Call<"gui2-set-widget-alpha">(w, show ? 1.0f : 0.0f);
+        }
+
+        void EndPeekReset(bool showScoreboard)
+        {
+            g_endPeek = false;
+            g_endPeekWas = false;
+            if (showScoreboard)
+                EndPeekSetScoreboard(true);
+        }
+
+        struct EndPeekXInputState {
+            DWORD dwPacketNumber;
+            WORD  wButtons;
+            BYTE  bLeftTrigger;
+            BYTE  bRightTrigger;
+            SHORT sThumbLX;
+            SHORT sThumbLY;
+            SHORT sThumbRX;
+            SHORT sThumbRY;
+        };
+
+        bool EndPeekPadState(WORD* buttons, BYTE* lt, BYTE* rt, SHORT* lx, SHORT* ly)
+        {
+            using Fn = DWORD(WINAPI*)(DWORD, EndPeekXInputState*);
+            static Fn xs = nullptr;
+            static bool tried = false;
+            if (!tried) {
+                tried = true;
+                HMODULE m = GetModuleHandleA("xinput1_4.dll");
+                if (!m) m = LoadLibraryA("xinput1_4.dll");
+                if (m) xs = (Fn)GetProcAddress(m, "XInputGetState");
+            }
+            if (!xs || !engine::window::Focused())
+                return false;
+            static EndPeekXInputState st{};
+            static uint64_t frame_read = ~0ULL, next_probe = 0;
+            static int have = 0, slot = -1;
+            const uint64_t frame = engine::frame::Count();
+            if (frame_read != frame) {
+                frame_read = frame;
+                const uint64_t now = GetTickCount64();
+                have = 0;
+                if (slot >= 0 && xs((DWORD)slot, &st) == 0)
+                    have = 1;
+                else if (now >= next_probe) {
+                    slot = -1;
+                    next_probe = now + 2000;
+                    for (DWORD u = 0; u < 4 && !have; ++u)
+                        if (xs(u, &st) == 0) { have = 1; slot = (int)u; }
+                }
+                if (!have) slot = slot >= 0 ? -1 : slot;
+            }
+            if (!have) return false;
+            *buttons = st.wButtons; *lt = st.bLeftTrigger; *rt = st.bRightTrigger; *lx = st.sThumbLX; *ly = st.sThumbLY;
+            return true;
+        }
+
+        bool EndPeekEdge()
+        {
+            bool on = engine::window::KeyDown(VK_ESCAPE);
+
+            if (!on) {
+                WORD pb = 0; BYTE lt = 0, rt = 0; SHORT lx = 0, ly = 0;
+                if (EndPeekPadState(&pb, &lt, &rt, &lx, &ly) && (pb & (0x0010 | 0x0020)))
+                    on = true; // XInput Start / Back
+            }
+
+            if (!on) {
+                if (g_endPeekPadCmd) {
+                    on = engine::pad::Held(g_endPeekPadCmd);
+                } else {
+                    static const char* const kNames[] = {
+                        "pause", "start", "pause-menu", "menu-pause", "options"
+                    };
+                    const uint64_t now = GetTickCount64();
+                    if (now >= g_endPeekProbeAt) {
+                        g_endPeekProbeAt = now + 2000;
+                        const char* nm = kNames[g_endPeekProbeIdx++ %
+                            (int)(sizeof(kNames) / sizeof(kNames[0]))];
+                        engine::pad::Watch(nm);
+                        engine::pad::ProbeRead(nm);
+                        if (engine::pad::Held(nm)) {
+                            g_endPeekPadCmd = nm;
+                            TO1_LOG("[endpeek] pad button learned from command '%s'\n", nm);
+                            on = true;
+                        }
+                    }
+                    for (const char* nm : kNames) {
+                        if (g_endPeekPadCmd) break;
+                        (void)engine::pad::Watch(nm);
+                        if (engine::pad::Held(nm)) {
+                            g_endPeekPadCmd = nm;
+                            TO1_LOG("[endpeek] pad button learned from command '%s'\n", nm);
+                            on = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            const bool edge = on && !g_endPeekWas;
+            g_endPeekWas = on;
+            return edge;
+        }
+
+        void UpdateEndPeek()
+        {
+            if (TheMatch().endSeq != EndSeq::Scoreboard) {
+                if (g_endPeek)
+                    EndPeekReset(true);
+                return;
+            }
+            if (EndPeekOff()) {
+                if (g_endPeek)
+                    EndPeekReset(true);
+                return;
+            }
+            if (EndPeekEdge()) {
+                g_endPeek = !g_endPeek;
+                TO1_LOG("[endpeek] %s\n", g_endPeek ? "scoreboard hidden" : "scoreboard shown");
+            }
+            EndPeekSetScoreboard(!g_endPeek);
+        }
     }
 
     void ResetMultiplayer()
@@ -1340,6 +1507,7 @@ namespace net::gui2 {
         resetLobbyHold();
         SetLives(kStartLives, kStartLives);
         TheMatch().matchTimer.Clear();
+        EndPeekReset(false);
         TheMatch().endSeq = EndSeq::Idle;
         Despawn();
         TheMatch().matchArmed = false;
@@ -1347,6 +1515,7 @@ namespace net::gui2 {
 
     void LeaveMatch()
     {
+        EndPeekReset(false);
         net::match::Get().Reset(net::match::ResetReason::LeaveToMenu);
         Despawn();
         net::matchmaking::Cancel();
@@ -1378,6 +1547,8 @@ namespace net::gui2 {
     void BeginMatchOver(int winnerAbs)
     {
         if (TheMatch().endSeq != EndSeq::Idle) return;
+        g_endPeek = false;
+        g_endPeekWas = true; // held key at transition must not trigger a peek edge
         TheMatch().finalBlueLives = GetBlueLives();
         TheMatch().finalRedLives = GetRedLives();
         TheMatch().finalSeconds = TheMatch().matchTimer.Duration() > 0.0f ? TheMatch().matchTimer.Remaining() : kMatchSeconds;
@@ -1386,6 +1557,12 @@ namespace net::gui2 {
 
         if (winnerAbs >= 0 && net::session::IsHost() && net::matchmaking::GetMatch())
             net::matchmaking::ReportResult(winnerAbs);
+
+        // Arm the native post-match page latch without touching the wire: the
+        // ext still owns the 0xE2 report while it is the loaded bridge, and the
+        // award tally was accumulated locally by net::clan::NoteAward() from
+        // AwardParts(). ArmPost() itself guards on a living clan (ext PmReport).
+        net::clan::ArmPost(static_cast<uint32_t>(StatsFor(net::session::MySlot()).parts));
 
         HideAllWidgets();
         DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, 0);
@@ -1402,12 +1579,14 @@ namespace net::gui2 {
         RefreshScoreboard();
         RefreshEmbeddedScoreBanner();
         RefreshResultText();
+        UpdateEndPeek();
 
         if (ScoreboardIsTop())
             DC::Call<"joypad-disable-all-commands-except">(SID("move"));
 
         if (GetTickCount64() - TheMatch().scoreboardShownMs >= kScoreboardHoldMs)
         {
+            EndPeekReset(true);
             TheMatch().endSeq = EndSeq::Idle;
             LeaveMatch();
         }

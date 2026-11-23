@@ -61,6 +61,10 @@ namespace engine::pad {
     CommandWatch* Watch(const char* name);
     void ProbeRead(const char* name);
     uint32_t ReadsTrue(const char* name);
+    // True when the command's learned input bit is currently set in the primary pad's
+    // real button mask (recent frame). Unlike ReadsTrue, this does not depend on the
+    // engine reading the command this frame.
+    bool Held(const char* name);
 
     // Queue a press for `ms` (minimum 20 ms, delivered for at least two Joypad::Update
     // calls). Returns false when the bit is unknown, the hooks are off, or all slots are

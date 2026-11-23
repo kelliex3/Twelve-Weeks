@@ -18,6 +18,7 @@
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "net/ui/postmatch-screens.hpp"
+#include "net/online/steam-status.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -188,7 +189,7 @@ namespace net::requeue {
             g_rq.asked = 0;
         }
 
-        // ---- honest gates for producers still owned by the ext ---------------------
+        // ---- post-match gates (both producers native) -------------------------------
         bool KickedSinceArm()
         {
             // ext `g_kickMs > g_rq.armed`: the kick text (admin / AFK / ping removal,
@@ -294,6 +295,13 @@ namespace net::requeue {
         if (matchEndHold || top != pMm || !onMenu || !PostMatchScreensDone()) {
             g_rq.menuSince = 0;
             g_rq.asked = 0;
+            return;
+        }
+        // ext requeue.c: the Steam-only check sits between the page gate and the party
+        // gate. FIND MATCH is refused while the helper is down (net-gui2 shows the
+        // toast), so do not arm a self-search that the server would drop anyway.
+        if (net::steam::SteamOnly() && !net::steam::Connected()) {
+            g_rq.menuSince = 0;
             return;
         }
         if (net::friends13::IsMember()) {

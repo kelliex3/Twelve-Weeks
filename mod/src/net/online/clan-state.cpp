@@ -1,6 +1,6 @@
 // Native port of the ext's 2013 CLAN server state and the g_pm.pending /
 // g_ev.pending producers (tools/ext/t2r-ext.c). Same wire, same byte order, same
-// decision table; only the widget page itself stays ext-owned.
+// decision table; the widget page lifecycle is in net/ui/postmatch-screens.*.
 
 #include "clan-state.hpp"
 
@@ -28,6 +28,7 @@ namespace net::clan {
         constexpr uint64_t kPollMs       = 3000; // ext's first read: repeat every 3 s until answered
         constexpr uint64_t kPendingPollMs = 5000;
         constexpr uint64_t kIdlePollMs   = 30000;
+        constexpr uint64_t kPostPageMs   = 10000; // ext drops its post-match page after 3 failed pushes
 
         struct Post {
             int pending = 0, shown = 0, day = 0, lmh0 = 0;
@@ -138,7 +139,10 @@ namespace net::clan {
             return true;
         }
 
-        void ArmReport()
+        // The local half of ext PmReport: sort the award tally and arm the page
+        // latch. Shared by the wire path (ArmReport, after 0xE2 goes out) and the
+        // non-wire path (ArmPost, while the ext still owns the wire).
+        void ArmPostLocal(uint32_t parts)
         {
             PmRow sorted[kPmRows];
             int n = 0;
@@ -156,7 +160,7 @@ namespace net::clan {
             g.post.pending = 1;
             g.post.day = g.state.day;
             g.post.lmh0 = g.state.lmh;
-            g.post.parts = g.repParts;
+            g.post.parts = parts;
             g.post.sentAt = GetTickCount64();
             g.post.pollAt = g.post.sentAt + kPollMs;
             // ext PmReport also resets the event result bookkeeping for this day.
@@ -164,6 +168,11 @@ namespace net::clan {
             g.ev.outDone = 0;
             TO1_LOG("clan: post-match page due (%u parts, %d award rows, day %d)\n",
                     g.post.parts, g.nRows, g.post.day);
+        }
+
+        void ArmReport()
+        {
+            ArmPostLocal(g.repParts);
         }
 
     } // namespace
@@ -207,6 +216,16 @@ namespace net::clan {
                     g.repRetryAt = now + net::daemon::BackoffMs(g.repTries + 1, 6000, 30000);
                 }
             }
+        }
+
+        // postmatch::Tick owns the page now, but the ext can still push the same
+        // page first while it is the loaded bridge. Either way the page-edge hooks
+        // clear this latch; if no page ever appears at all (different build /
+        // cutover), releasing it on a bounded timeout keeps a stuck latch from
+        // blocking requeue's settle forever.
+        if (g.post.pending && !g.post.shown && now - g.post.sentAt > kPostPageMs) {
+            TO1_LOG("clan: post-match page never came up - releasing the latch\n");
+            NotePostClosed(true);
         }
 
         // ext's 0xE0 read: 3 s until the first answer, then slowly while a day is
@@ -264,42 +283,69 @@ namespace net::clan {
         NoteAwardRow(g.rows, g.nRows, label, amount);
     }
 
-    void Offer(bool menuTop, bool navBusy, uint64_t now)
+    void ArmPost(uint32_t parts)
+    {
+        // Same guard as ext PmReport: without a living clan the server books no
+        // day, so there is nothing for a supply-counter page to show.
+        if (!g.state.ok || g.state.st != 1)
+            return;
+        // Do not re-stamp an already armed latch for the same match: that would
+        // reset the caller's page-push retry window. A new match (new lmh tag)
+        // re-arms normally.
+        if (g.post.pending && g.post.lmh0 == g.state.lmh)
+            return;
+        // Coexistence: the ext still sends 0xE2 while it is the loaded bridge;
+        // this arms only the mod's local latch so the page lifecycle works with
+        // the ext unloaded. No wire op is touched here -- Report() stays the
+        // ext-owned 0xE2 sender until a real cutover.
+        ArmPostLocal(parts);
+    }
+
+    bool Offer(bool menuTop, bool navBusy, bool pageUp, uint64_t now)
     {
         if (!menuTop)
-            return;
+            return false;
         if (g.ev.outDay >= 0 && !g.ev.outDone && g.state.ok
             && g.state.lday == g.ev.outDay && !g.state.levk)
             g.ev.outDone = 1;                // nothing happened that day
 
         const int want = g.ev.pending ? g.ev.mode : EventWanted(g.state, g.ev);
         if (want <= 0)
-            return;
+            return false;
         if (g.ev.pending) {
-            if (g.ev.shown)
-                return;
+            if (g.ev.shown || pageUp)
+                return false;
             if (g.evPushes >= 3 && now - g.evPushedAt > 1000) {
                 if (g.ev.mode == 1) g.ev.annDay = g.state.day;
                 else                g.ev.outDone = 1;
                 g.ev.pending = 0;
                 g.evPushes = 0;
-                return;
+                return false;
             }
             if (g.evPushes >= 3 || now - g.evPushedAt <= 1500)
-                return;
+                return false;
         }
+        // ext EvOffer's gate at :81127-81132. Ported here: g_loState (navBusy),
+        // g_pm.pending (g.post.pending) and the page-up / retry cadence above.
+        // Honest gates (producers not ported to mod/): g_veilOn's dead-clan hold,
+        // MsSwitching(), QuietScreen() (launch-note / first-entry black, with the
+        // g_ldsHold && g_entSt==1 exception), g_clan_busy (RPC slot), the 1.5 s
+        // g_sideClosedAt hold after CHOOSE YOUR SIDE, and g_mqN (mission queue).
+        // While the ext is the bridge its own EvOffer still applies them first.
         if (navBusy || g.post.pending)
-            return;                          // ext EvOffer's g_loState / g_pm gate
+            return false;
         if (!g.ev.pending) {
             g.ev.pending = 1;
             g.ev.mode = want;
             g.evPushes = 0;
             g.ev.shown = 0;
         }
-        // NOTE: the ext pushes to1/clan-event here. The mod has no such widget
-        // page, so that call stays with the ext; the latch is the ported part.
+        // The ext pushes to1/clan-event at this point. postmatch::Tick does the
+        // same behind an IS_PAGE_ON_STACK guard, so an ext push that landed first
+        // is adopted (not stacked) and a mod push works with the ext unloaded.
         ++g.evPushes;
         g.evPushedAt = now;
+        return true;
     }
 
     void NotePostShown() { g.post.shown = 1; }
@@ -311,7 +357,11 @@ namespace net::clan {
             g.ev.outDone = 1;                // never seen: no event result either
         g.nextGet = GetTickCount64() + 200;  // the day has just landed: re-read soon
     }
-    void NoteEventShown() { g.ev.shown = 1; }
+    void NoteEventShown()
+    {
+        g.ev.shown = 1;
+        g.evPushes = 0;              // ext EvTick resets the retry counter on entry
+    }
     void NoteEventClosed()
     {
         if (g.ev.mode == 2)
@@ -322,8 +372,18 @@ namespace net::clan {
 
     bool PostPending() { return g.post.pending != 0; }
     bool PostShown()   { return g.post.shown != 0; }
+    int  PostDay()     { return g.post.day; }
+    int  PostParts()   { return static_cast<int>(g.post.parts); }
+    int  PostLmh0()    { return g.post.lmh0; }
+    uint64_t PostSentAt() { return g.post.sentAt; }
+    const PmRow* PmRows(int* n)
+    {
+        if (n) *n = g.nRows;
+        return g.rows;
+    }
     bool EventPending(){ return g.ev.pending != 0; }
     int  EventMode()   { return g.ev.mode; }
+    const EventBook& Events() { return g.ev; }
     bool Blocking()    { return g.post.pending != 0 || g.ev.pending != 0; }
 
 } // namespace net::clan

@@ -21,6 +21,7 @@
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
 #include "net/ui/denynote.hpp"
+#include "net/ui/death-ui.hpp"
 #include "net/game/glass.hpp"
 #include "engine/pcm.hpp"
 #include "net/audio/shivsting.hpp"
@@ -194,6 +195,7 @@ namespace boot {
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
 		NetTick();                // the entire MP driver
+		net::ui::death_ui::Tick(::GetTickCount64()); // victim death screen (ported from tools/ext/death_ui.c)
 		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
 		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
 		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
