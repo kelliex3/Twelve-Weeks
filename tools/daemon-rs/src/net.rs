@@ -14,7 +14,9 @@ const BATCH: usize = 64;
 pub fn bind_exclusive(s: &Socket, kind: &str, host: &str, port: u16) -> io::Result<()> {
     let ip: Ipv4Addr = host.parse().unwrap_or(Ipv4Addr::UNSPECIFIED);
     let addr = SocketAddr::new(IpAddr::V4(ip), port);
-    s.set_reuse_address(true)?;
+    if kind == "TCP" {
+        s.set_reuse_address(true)?;
+    }
     let retry_s: f64 = env_parse("T2R_BIND_RETRY_S", 30.0);
     let t0 = Instant::now();
     let mut next = 1.0;

@@ -1,0 +1,16 @@
+[Unit]
+Description=Twelve Weeks UDP relay (t2r-daemon relay, port 7001 UDP; the Python daemon keeps TCP 7001 with T2R_UDP=0)
+After=network-online.target
+Wants=network-online.target
+Before=t2r-daemon.service
+[Service]
+Type=simple
+User=kellie
+WorkingDirectory=/home/kellie/t2r-live
+Environment=T2R_HOST=0.0.0.0 T2R_PORT=7001 T2R_LOG_PATH=/home/kellie/t2r-live/relay.log
+ExecStart=/home/kellie/t2r-live/bin/t2r-daemon relay
+Restart=always
+RestartSec=2
+MemoryMax=64M
+[Install]
+WantedBy=multi-user.target
