@@ -4,7 +4,7 @@ B=${ADM_CMP:-/root/adm-cmp}
 SRC=${ADM_SRC:?set ADM_SRC to a folder holding read-only copies t2r-live and t2r-test from fra}
 BIN=${ADM_BIN:-$H/../target/x86_64-unknown-linux-musl/release/t2r-admin}
 export ADM_CMP=$B
-stop() { pkill -f fakedaemon.py; pkill -f statusbump.py; pkill -f "admin_site/admin.py"; pkill -f "$BIN"; sleep 0.5; }
+stop() { pkill -f "^python3 -u .*fakedaemon.py"; pkill -f "^python3 -u .*statusbump.py"; pkill -f "^python3 -u tools/admin_site/admin.py"; pkill -f "^$BIN "; sleep 0.5; }
 stop
 rm -rf $B && mkdir -p $B/base
 cp -a $SRC/t2r-live $B/base/live
@@ -23,7 +23,7 @@ args() {
 (cd $B/py/live && nohup python3 -u tools/admin_site/admin.py $(args py 17010) > $B/py.out 2>&1 &)
 (cd $B/rs/live && nohup $BIN $(args rs 17020) > $B/rs.out 2>&1 &)
 mode() {
-  pkill -f fakedaemon.py; pkill -f statusbump.py; sleep 0.3
+  pkill -f "^python3 -u .*fakedaemon.py"; pkill -f "^python3 -u .*statusbump.py"; sleep 0.3
   for s in py rs; do for d in live test; do cp -p $B/base/$d/data/t2r-status.json $B/$s/$d/data/t2r-status.json; done; done
   case "$1" in
     live) nohup python3 -u $H/fakedaemon.py $B > $B/fake.out 2>&1 & ;;
