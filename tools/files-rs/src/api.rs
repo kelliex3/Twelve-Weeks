@@ -49,7 +49,6 @@ fn mtime_of(m: &fs::Metadata) -> f64 {
 pub struct Api {
     pub data: PathBuf,
     pub db: Option<PathBuf>,
-    pub public_url: String,
     pub status_file: Option<PathBuf>,
     news: Mutex<Option<(SystemTime, u64, String)>>,
     status: Mutex<Option<(f64, String)>>,
@@ -59,11 +58,10 @@ pub struct Api {
 }
 
 impl Api {
-    pub fn new(data: PathBuf, db: Option<PathBuf>, public_url: String, status_file: Option<PathBuf>, window: f64) -> Api {
+    pub fn new(data: PathBuf, db: Option<PathBuf>, status_file: Option<PathBuf>, window: f64) -> Api {
         Api {
             data,
             db,
-            public_url,
             status_file,
             news: Mutex::new(None),
             status: Mutex::new(None),
@@ -116,8 +114,8 @@ impl Api {
                         o.insert("zurl".into(), json!(format!("{}/files/{}.{}", base, sha, e)));
                     }
                     _ => {
-                        o.remove("zsize");
-                        o.remove("enc");
+                        o.shift_remove("zsize");
+                        o.shift_remove("enc");
                     }
                 }
             }
@@ -290,7 +288,7 @@ impl Api {
             if !part1_name(path) || !is_sha(&sha) {
                 return none();
             }
-            if fs::metadata(root.join("blobs").join(&sha)).map(|x| x.len() as i64) != Ok(size) {
+            if fs::metadata(root.join("blobs").join(&sha)).ok().map(|x| x.len() as i64) != Some(size) {
                 return none();
             }
             total += size;
@@ -333,6 +331,7 @@ impl Api {
             q.first("since").unwrap_or("0"),
             q.first("lang").unwrap_or("en"),
             now_secs(),
+            None,
         );
         reply(200, &v)
     }
@@ -430,7 +429,7 @@ mod tests {
             {"path":"big.slim","size":9,"sha256":b,"url":"https://github.com/x/y/releases/download/build-7/b"}]});
         fs::write(d.join("manifests/stable/7.json"), m.to_string()).unwrap();
         fs::write(d.join("launcher.json"), json!({"version":"0.1.51","sha256":b,"size":5,"url":"https://github.com/l.exe"}).to_string()).unwrap();
-        let api = Api::new(d.clone(), None, String::new(), None, 75.0);
+        let api = Api::new(d.clone(), None, None, 75.0);
         let r = api.manifest(&Query::parse(""), "http://h:7002");
         assert_eq!(r.code, 200);
         let v: Value = serde_json::from_str(&r.body).unwrap();

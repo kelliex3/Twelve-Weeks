@@ -112,6 +112,9 @@ impl PyRandom {
     }
 
     pub fn randbelow(&mut self, n: usize) -> usize {
+        if n == 0 {
+            return 0;
+        }
         let k = usize::BITS - n.leading_zeros();
         let mut r = self.getrandbits(k) as usize;
         while r >= n {

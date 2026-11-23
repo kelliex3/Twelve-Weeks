@@ -220,7 +220,7 @@ pub fn snapshot(report_dir: &Path, meta: &Value, log_dir: &Path, now: f64) -> io
     let mid_text = if sorted.is_empty() { "-".to_string() } else { sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ") };
     let mut out = format!(
         "# daemon lines for {} (steam {}), {} file(s) from the last {:.0} h; {} session address(es), match ids: {}\n",
-        name.replace('\\', "\\\\").replace('\'', "\\'"),
+        py_repr(&name),
         if steam.is_empty() { "-" } else { &steam },
         srcs.len(),
         HOURS,
@@ -243,7 +243,7 @@ pub fn snapshot(report_dir: &Path, meta: &Value, log_dir: &Path, now: f64) -> io
                 return true;
             }
             let line = r.ipv4.replace_all(l, "IP");
-            size += line.len();
+            size += line.chars().count();
             if size > MAX_OUT {
                 out += &format!("# ... cut at {} MB\n", MAX_OUT >> 20);
                 cut = true;

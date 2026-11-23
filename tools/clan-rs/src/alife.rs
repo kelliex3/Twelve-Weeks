@@ -409,6 +409,9 @@ pub fn ticker_lines(d: &Data, c: &Connection, tid: &str, st: &State, slot: i64, 
     let seed = format!("{}:{}:{}", tid, st.run, st.day);
     let morale = st.morale;
     let l = deck(d, &fs, &seed, 0).len() as i64;
+    if l == 0 {
+        return Some(Vec::new());
+    }
     let mut decks: HashMap<i64, Vec<(usize, i64)>> = HashMap::new();
     let mut out = Vec::new();
     let share = d.alife.ticker_share as i64;

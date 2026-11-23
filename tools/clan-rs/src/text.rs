@@ -368,11 +368,11 @@ fn people_phrase(d: &Data, n: i64, case: &str, new: bool) -> String {
     let one = n == 1;
     let few = (2..=4).contains(&n);
     if case == "gen" {
-        let num = if n <= 10 { d.pl.card_gen[n as usize].clone() } else { n.to_string() };
+        let num = if n <= 10 { d.pl.card_gen.get(n as usize).cloned().unwrap_or_default() } else { n.to_string() };
         let noun = if one { if new { "nowej osoby" } else { "osoby" } } else if new { "nowych osób" } else { "osób" };
         return format!("{} {}", num, noun);
     }
-    let mut num = if n <= 10 { d.pl.card_nom[n as usize].clone() } else { n.to_string() };
+    let mut num = if n <= 10 { d.pl.card_nom.get(n as usize).cloned().unwrap_or_default() } else { n.to_string() };
     let noun = if one {
         num = if case == "acc" { "jedną" } else { "jedna" }.into();
         if new {

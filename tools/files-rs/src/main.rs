@@ -12,7 +12,6 @@ use reports::{Limits, RateLimiter};
 use serde_json::json;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -85,13 +84,11 @@ fn send_reply(s: &mut TcpStream, r: &Reply, head: bool) -> io::Result<()> {
 
 fn guarded(sh: &Shared, f: impl FnOnce() -> Reply) -> Reply {
     sh.stats.api.fetch_add(1, Ordering::Relaxed);
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(r) => r,
-        Err(_) => {
-            sh.stats.api_err.fetch_add(1, Ordering::Relaxed);
-            api::reply(500, &json!({"error": "internal error"}))
-        }
+    let r = f();
+    if r.code >= 500 {
+        sh.stats.api_err.fetch_add(1, Ordering::Relaxed);
     }
+    r
 }
 
 struct Body<'a> {
@@ -148,21 +145,16 @@ fn post_report(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr,
         return Ok(false);
     }
     sh.stats.reports.fetch_add(1, Ordering::Relaxed);
-    let res = catch_unwind(AssertUnwindSafe(|| reports::save_report(&root, &body, &ip, &sh.clip_limit, &sh.cfg.limits)));
-    match res {
-        Ok(Ok(r)) => {
+    match reports::save_report(&root, &body, &ip, &sh.clip_limit, &sh.cfg.limits) {
+        Ok(r) => {
             log!("report {} stored in {}", r.code, r.dir.display());
             daemonlog::snapshot_later(r.dir.clone(), sh.cfg.daemon_log_dir.clone(), sh.cfg.archive_days);
             send_json(s, 200, &json!({"ok": true, "code": r.code, "clipKey": r.clip_key, "clipRefused": r.clip_refused}).to_string(), false)?;
             Ok(true)
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             send_json(s, e.status, &json!({"ok": false, "error": e.msg}).to_string(), false)?;
             Ok(true)
-        }
-        Err(_) => {
-            send_json(s, 500, &json!({"ok": false, "error": "internal error"}).to_string(), false)?;
-            Ok(false)
         }
     }
 }
@@ -188,20 +180,16 @@ fn put_clip(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr, pe
     expect_continue(s, req)?;
     let r = {
         let mut rd = Body { pending, s: &mut *s }.take(n);
-        catch_unwind(AssertUnwindSafe(|| reports::save_clip(&root, &code, &key, n, &mut rd, &sh.clip_lock, &sh.cfg.limits)))
+        reports::save_clip(&root, &code, &key, n, &mut rd, &sh.clip_lock, &sh.cfg.limits)
     };
     match r {
-        Ok(Ok(c)) => {
+        Ok(c) => {
             log!("report {} clip {} ({} bytes) from {}", code, c.name, c.size, ip);
             send_json(s, 200, &json!({"ok": true, "name": c.name, "size": c.size}).to_string(), false)?;
             Ok(true)
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             send_json(s, e.status, &json!({"ok": false, "error": e.msg}).to_string(), false)?;
-            Ok(false)
-        }
-        Err(_) => {
-            send_json(s, 500, &json!({"ok": false, "error": "internal error"}).to_string(), false)?;
             Ok(false)
         }
     }
@@ -212,13 +200,12 @@ fn get(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr) -> io::
     let path = req.path();
     let data = &sh.cfg.data;
     let nofile = "{\"error\":\"no such file\"}";
-    let file = |name: &str| FileReply { etag: "", name: None, ctype: "application/octet-stream", cache: None, missing: nofile, max_size: None }.with(name);
     if let Some(n) = path.strip_prefix("/files/") {
         if !is_blob_name(n) {
             sh.stats.file_404.fetch_add(1, Ordering::Relaxed);
             return send_json(s, 404, nofile, head);
         }
-        return serve_file(sh, s, req, &data.join("blobs").join(n), &file(n));
+        return serve_file(sh, s, req, &data.join("blobs").join(n), &plain(n, nofile));
     }
     if let Some(n) = path.strip_prefix("/download/") {
         let missing = "{\"error\":\"no such download\"}";
@@ -261,7 +248,7 @@ fn get(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr) -> io::
             if !is_sha(n) {
                 return send_json(s, 404, nofile, head);
             }
-            return serve_file(sh, s, req, &data.join("part1").join("blobs").join(n), &file(n));
+            return serve_file(sh, s, req, &data.join("part1").join("blobs").join(n), &plain(n, nofile));
         }
         let base = base_url(sh, req, peer);
         let r = guarded(sh, || sh.api.part1_maps(&base, &sid));
@@ -286,11 +273,8 @@ fn get(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr) -> io::
     send_reply(s, &r, head)
 }
 
-impl<'a> FileReply<'a> {
-    fn with(mut self, etag: &'a str) -> Self {
-        self.etag = etag;
-        self
-    }
+fn plain<'a>(etag: &'a str, missing: &'a str) -> FileReply<'a> {
+    FileReply { etag, name: None, ctype: "application/octet-stream", cache: None, missing, max_size: None }
 }
 
 fn handle(sh: Arc<Shared>, mut s: TcpStream, peer: SocketAddr) {
@@ -428,7 +412,7 @@ fn main() {
         if cfg.rate_mbit > 0 { format!("{} Mbit/s", cfg.rate_mbit) } else { "unlimited".into() }
     );
     let bucket = if cfg.rate_mbit > 0 { Some(Mutex::new((0.0, Instant::now()))) } else { None };
-    let api = Api::new(cfg.data.clone(), cfg.db.clone(), cfg.public_url.clone(), cfg.status_file.clone(), cfg.window);
+    let api = Api::new(cfg.data.clone(), cfg.db.clone(), cfg.status_file.clone(), cfg.window);
     let sh = Arc::new(Shared {
         cfg,
         stats: Stats::default(),
@@ -501,8 +485,8 @@ fn main() {
         }
         sh.stats.active.fetch_add(1, Ordering::Relaxed);
         let sh2 = sh.clone();
-        let r = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || {
-            let _ = catch_unwind(AssertUnwindSafe(|| handle(sh2.clone(), s, peer)));
+        let r = std::thread::Builder::new().stack_size(1 << 20).spawn(move || {
+            handle(sh2.clone(), s, peer);
             sh2.stats.active.fetch_sub(1, Ordering::Relaxed);
         });
         if r.is_err() {
