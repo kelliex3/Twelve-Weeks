@@ -44,10 +44,31 @@ fn pp(p: &Member) -> Person {
 
 fn load(c: &Connection, tid: &str) -> Option<Map<String, Value>> {
     let row: Option<Option<String>> = c.query_row("SELECT state FROM clan_alife WHERE token_id=?", params![tid], |r| r.get(0)).optional().ok()?;
-    match serde_json::from_str::<Value>(&row??).ok()? {
-        Value::Object(m) if m.get("v") == Some(&Value::from(1)) => Some(m),
-        _ => None,
+    let p: Partial = serde_json::from_str(&row??).ok()?;
+    if p.v != Some(Value::from(1)) {
+        return None;
     }
+    let mut m = Map::new();
+    for (k, x) in [("v", p.v), ("seed", p.seed), ("run", p.run), ("fac", p.fac), ("P", p.p), ("T", p.t), ("D", p.d)] {
+        if let Some(x) = x {
+            m.insert(k.into(), x);
+        }
+    }
+    Some(m)
+}
+
+#[derive(serde::Deserialize)]
+struct Partial {
+    v: Option<Value>,
+    seed: Option<Value>,
+    run: Option<Value>,
+    fac: Option<Value>,
+    #[serde(rename = "P")]
+    p: Option<Value>,
+    #[serde(rename = "T")]
+    t: Option<Value>,
+    #[serde(rename = "D")]
+    d: Option<Value>,
 }
 
 fn same_num(a: Option<&Value>, b: i64) -> Option<bool> {

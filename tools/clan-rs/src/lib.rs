@@ -16,5 +16,5 @@ pub fn menu_lines(conn: &rusqlite::Connection, key: &str, limit: usize, lang: &s
 }
 
 pub fn warm() -> bool {
-    data::data().is_some() && data::res().is_some()
+    data::data().is_some()
 }

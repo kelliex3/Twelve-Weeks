@@ -18,6 +18,8 @@ fn main() {
         Ok(mut st) => st.query_map([], |r| r.get(0)).map(|r| r.flatten().collect()).unwrap_or_default(),
         Err(_) => Vec::new(),
     };
+    t2r_clan::warm();
+    eprintln!("after data load: {}", mem());
     let nows: Vec<f64> = a[1..].iter().filter_map(|x| x.parse().ok()).collect();
     let t0 = std::time::Instant::now();
     for tid in &tids {
@@ -28,5 +30,11 @@ fn main() {
             }
         }
     }
-    eprintln!("{} calls in {:.2}s", tids.len() * 2 * nows.len(), t0.elapsed().as_secs_f64());
+    eprintln!("{} calls in {:.2}s, {}", tids.len() * 2 * nows.len(), t0.elapsed().as_secs_f64(), mem());
+}
+
+fn mem() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .map(|s| s.lines().filter(|l| l.starts_with("VmRSS") || l.starts_with("VmHWM")).map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default()
 }

@@ -1,5 +1,5 @@
 use crate::alife;
-use crate::data::{data, res, Data, TplInfo};
+use crate::data::{crowd_re, data, group_re, pl_group_re, Data, TplInfo};
 use crate::pyrand::PyRandom;
 use crate::rules::{week_day, SERAPHITES, WLF};
 use crate::text::{
@@ -144,12 +144,50 @@ pub struct RawState {
     pub parsed: Option<State>,
 }
 
+#[derive(serde::Deserialize)]
+struct Partial {
+    v: Option<Value>,
+    fac: Option<Value>,
+    run: Option<Value>,
+    day: Option<Value>,
+    morale: Option<Value>,
+    ds: Option<Value>,
+    ss: Option<Value>,
+    seed: Option<Value>,
+    n: Option<Value>,
+    sn: Option<Value>,
+    pid: Option<Value>,
+    people: Option<Value>,
+    dead: Option<Value>,
+}
+
 pub fn load_state(c: &Connection, tid: &str) -> Option<RawState> {
     let row: Option<Option<String>> = c.query_row("SELECT state FROM clan_story WHERE token_id=?", params![tid], |r| r.get(0)).optional().ok()?;
-    let v: Value = serde_json::from_str(&row??).ok()?;
-    if !v.is_object() || v.get("v") != Some(&Value::from(1)) {
+    let p: Partial = serde_json::from_str(&row??).ok()?;
+    if p.v != Some(Value::from(1)) {
         return None;
     }
+    let mut m = Map::new();
+    for (k, x) in [
+        ("v", p.v),
+        ("fac", p.fac),
+        ("run", p.run),
+        ("day", p.day),
+        ("morale", p.morale),
+        ("ds", p.ds),
+        ("ss", p.ss),
+        ("seed", p.seed),
+        ("n", p.n),
+        ("sn", p.sn),
+        ("pid", p.pid),
+        ("people", p.people),
+        ("dead", p.dead),
+    ] {
+        if let Some(x) = x {
+            m.insert(k.into(), x);
+        }
+    }
+    let v = Value::Object(m);
     let parsed = parse_state(&v);
     Some(RawState { value: v, parsed })
 }
@@ -261,14 +299,13 @@ fn populate(d: &Data, rng: &mut PyRandom, st: &mut State, h: i64, u: i64, s: i64
     Some(())
 }
 
-pub fn ensure_roster(c: &Connection, tid: &str) -> Option<State> {
+fn ensure_roster(c: &Connection, tid: &str, old: Option<&RawState>) -> Option<State> {
     let d = data()?;
     let cl = clan_row(c, tid)??;
     if cl.faction != WLF && cl.faction != SERAPHITES {
         return None;
     }
-    let old = load_state(c, tid);
-    let old_st = match &old {
+    let old_st = match old {
         Some(r) => {
             let st = r.parsed.clone();
             if r.value.get("fac").and_then(py_int_v) == Some(cl.faction) && r.value.get("people").map_or(false, |p| crate::text::truthy(Some(p))) {
@@ -412,8 +449,8 @@ fn class_items(d: &Data, st: &State, p: &Member, fk: &str) -> Option<Vec<(String
     Some(c.into_iter().map(|(t, pid)| (line_id(&t), t, pid)).collect())
 }
 
-fn perm<T: Clone>(items: &[T], seed: &str, e: usize) -> Vec<T> {
-    let mut r = items.to_vec();
+fn perm(m: usize, seed: &str, e: usize) -> Vec<usize> {
+    let mut r: Vec<usize> = (0..m).collect();
     PyRandom::new(&format!("{}:{}", seed, e)).shuffle(&mut r);
     r
 }
@@ -427,18 +464,17 @@ fn cycle_pick<T: Clone>(items: &[T], key: impl Fn(&T) -> &str, seed: &str, k: us
         return Some(items[0].clone());
     }
     let (e, j) = (k / m, k % m);
-    let mut cur = perm(items, seed, e);
-    let w = (m - 1) / 3;
-    let w = w.min(24);
+    let mut cur = perm(m, seed, e);
+    let w = ((m - 1) / 3).min(24);
     if e == 0 || w == 0 {
-        return Some(cur[j].clone());
+        return Some(items[cur[j]].clone());
     }
-    let prev = perm(items, seed, e - 1);
-    let tail: HashSet<String> = prev[m - w..].iter().map(|x| key(x).to_string()).collect();
+    let prev = perm(m, seed, e - 1);
+    let tail: HashSet<&str> = prev[m - w..].iter().map(|&x| key(&items[x])).collect();
     let mut t = w;
     for jj in 0..w {
-        if tail.contains(key(&cur[jj])) {
-            while t < m - w && tail.contains(key(&cur[t])) {
+        if tail.contains(key(&items[cur[jj]])) {
+            while t < m - w && tail.contains(key(&items[cur[t]])) {
                 t += 1;
             }
             if t >= m - w {
@@ -448,7 +484,7 @@ fn cycle_pick<T: Clone>(items: &[T], key: impl Fn(&T) -> &str, seed: &str, k: us
             t += 1;
         }
     }
-    Some(cur[j].clone())
+    Some(items[cur[j]].clone())
 }
 
 #[derive(Clone)]
@@ -944,10 +980,7 @@ fn read_rows(c: &Connection, tid: &str, pl: bool) -> Vec<Row> {
 }
 
 fn plural(t: &str) -> bool {
-    match res() {
-        Some(r) => r.group.is_match(t) || r.pl_group.is_match(t),
-        None => false,
-    }
+    group_re().map_or(false, |r| r.is_match(t)) || pl_group_re().map_or(false, |r| r.is_match(t))
 }
 
 fn voice_of(lid: Option<&str>) -> &'static str {
@@ -980,7 +1013,7 @@ fn widget_keep(d: &Data, c: &Connection, tid: &str, st: &Value, rows: Vec<Row>, 
     }
     let n_alive = alive.len();
     let feeling = &d.story.feeling;
-    let crowd = res().map(|r| &r.crowd);
+    let crowd = crowd_re();
     let mut out = Vec::new();
     for mut m in rows {
         let k = m.kind.clone();
@@ -1048,9 +1081,9 @@ fn widget_keep(d: &Data, c: &Connection, tid: &str, st: &Value, rows: Vec<Row>, 
     out
 }
 
-fn pick_slot(d: &Data, c: &Connection, tid: &str, slot: i64, n: usize, pl: bool, now: f64) -> Vec<(String, String)> {
+fn pick_slot(d: &Data, c: &Connection, tid: &str, st: Option<&RawState>, slot: i64, n: usize, pl: bool, now: f64) -> Vec<(String, String)> {
     let mut rows = read_rows(c, tid, pl);
-    if let Some(st) = load_state(c, tid) {
+    if let Some(st) = st {
         rows = widget_keep(d, c, tid, &st.value, rows, pl);
     }
     if rows.is_empty() {
@@ -1077,9 +1110,10 @@ pub fn menu_lines(c: &Connection, tid: &str, n: usize, lang: &str, now: f64) -> 
     };
     let pl = norm_lang(lang) == "pl";
     let slot = slot_of(now);
-    let mut out = pick_slot(d, c, tid, slot, n.min(2), pl, now);
+    let raw = load_state(c, tid);
+    let mut out = pick_slot(d, c, tid, raw.as_ref(), slot, n.min(2), pl, now);
     if out.len() < n {
-        let st = ensure_roster(c, tid);
+        let st = ensure_roster(c, tid, raw.as_ref());
         if let Some(st) = &st {
             let want = d.alife.ticker_share.min(n - out.len());
             if let Some(lines) = alife::ticker_lines(d, c, tid, st, slot, want, pl) {

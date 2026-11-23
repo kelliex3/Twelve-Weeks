@@ -133,16 +133,6 @@ pub struct Data {
     pub chron: Chron,
 }
 
-pub struct Res {
-    pub crowd: regex::Regex,
-    pub group: regex::Regex,
-    pub pl_group: regex::Regex,
-    pub ze: regex::Regex,
-    pub combat_en: regex::Regex,
-    pub combat_pl: regex::Regex,
-    pub sentence: regex::Regex,
-}
-
 static RAW: &str = include_str!("../data/clan.json");
 
 pub fn data() -> Option<&'static Data> {
@@ -150,22 +140,53 @@ pub fn data() -> Option<&'static Data> {
     D.get_or_init(|| serde_json::from_str(RAW).ok()).as_ref()
 }
 
-pub fn res() -> Option<&'static Res> {
-    static R: OnceLock<Option<Res>> = OnceLock::new();
-    R.get_or_init(|| {
-        let d = data()?;
-        let re = |p: &str| regex::Regex::new(p).ok();
-        Some(Res {
-            crowd: re(&format!("(?i){}", d.story.crowd_re))?,
-            group: re(&format!("(?i){}", d.story.group_re))?,
-            pl_group: re(r"(?i)\b(?:my|nas|nam|nami|nasz\w*|nikt\w*|wszyscy|wszystkich|\w+(?:śmy|emy|imy|amy|ymy))\b")?,
-            ze: re(&d.alife.ze_re)?,
-            combat_en: re(&format!(r"(?i)(?:^|[^\w'])(?:{})(?:$|[^\w'])", d.alife.combat_en))?,
-            combat_pl: re(&format!(r"(?i)(?:^|\W)(?:{})(?:$|\W)", d.alife.combat_pl))?,
-            sentence: re(r"[^.!?]*[.!?]+(?:\s+|$)|[^.!?]+$")?,
-        })
-    })
-    .as_ref()
+fn build(p: &str) -> Option<regex::Regex> {
+    regex::RegexBuilder::new(p).dfa_size_limit(1 << 18).build().ok()
+}
+
+fn cached(cell: &'static OnceLock<Option<regex::Regex>>, p: impl FnOnce() -> Option<String>) -> Option<&'static regex::Regex> {
+    cell.get_or_init(|| build(&p()?)).as_ref()
+}
+
+pub fn crowd_re() -> Option<&'static regex::Regex> {
+    static C: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    cached(&C, || Some(format!("(?i){}", data()?.story.crowd_re)))
+}
+
+pub fn group_re() -> Option<&'static regex::Regex> {
+    static C: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    cached(&C, || Some(format!("(?i){}", data()?.story.group_re)))
+}
+
+pub fn pl_group_re() -> Option<&'static regex::Regex> {
+    static C: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    cached(&C, || Some(r"(?i)\b(?:my|nas|nam|nami|nasz\w*|nikt\w*|wszyscy|wszystkich|\w+(?:śmy|emy|imy|amy|ymy))\b".to_string()))
+}
+
+pub fn ze_re() -> Option<&'static regex::Regex> {
+    static C: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    cached(&C, || Some(data()?.alife.ze_re.clone()))
+}
+
+pub const WORD: &str = "0-9a-z_ąćęłńóśźż";
+
+fn lean(p: &str) -> String {
+    p.replace(r"\w", &format!("[{}]", WORD)).replace(r"\b", "")
+}
+
+pub fn combat_re(pl: bool) -> Option<&'static regex::Regex> {
+    static EN: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    static PL: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    if pl {
+        cached(&PL, || Some(format!("(?:^|[^{w}])(?:{})(?:$|[^{w}])", lean(&data()?.alife.combat_pl), w = WORD)))
+    } else {
+        cached(&EN, || Some(format!("(?:^|[^{w}'])(?:{})(?:$|[^{w}'])", lean(&data()?.alife.combat_en), w = WORD)))
+    }
+}
+
+pub fn sentence_re() -> Option<&'static regex::Regex> {
+    static C: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    cached(&C, || Some(r"[^.!?]*[.!?]+(?:\s+|$)|[^.!?]+$".to_string()))
 }
 
 #[cfg(test)]
@@ -177,6 +198,8 @@ mod tests {
         let d = data().expect("clan.json parses");
         assert!(d.pl.reg.len() > 1000);
         assert!(d.alife.reg.len() > 500);
-        assert!(res().is_some());
+        assert!(crowd_re().is_some() && group_re().is_some() && pl_group_re().is_some() && ze_re().is_some());
+        assert!(combat_re(false).is_some() && combat_re(true).is_some() && sentence_re().is_some());
+        assert!(!lean(&data().map_or(String::new(), |d| d.alife.combat_en.clone() + &d.alife.combat_pl)).contains('\\'));
     }
 }

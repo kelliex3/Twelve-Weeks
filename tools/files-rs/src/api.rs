@@ -7,7 +7,11 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const DB_POOL: usize = 2;
+const DB_CACHE_KIB: i64 = 512;
+const DB_MAX_AGE: Duration = Duration::from_secs(60);
 
 pub struct Reply {
     pub code: u16,
@@ -54,6 +58,7 @@ pub struct Api {
     status: Mutex<Option<(f64, String)>>,
     elig: Mutex<(Option<SystemTime>, HashSet<String>)>,
     pub seen: Mutex<HashMap<String, f64>>,
+    pool: Mutex<Vec<(Instant, Connection)>>,
     pub window: f64,
 }
 
@@ -67,6 +72,7 @@ impl Api {
             status: Mutex::new(None),
             elig: Mutex::new((None, HashSet::new())),
             seen: Mutex::new(HashMap::new()),
+            pool: Mutex::new(Vec::new()),
             window,
         }
     }
@@ -298,42 +304,51 @@ impl Api {
         reply(200, &Value::Object(m))
     }
 
-    pub fn ro_db(&self) -> Option<Connection> {
+    fn ro_db(&self) -> Option<Connection> {
         let c = Connection::open_with_flags(self.db.as_ref()?, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
         let _ = c.busy_timeout(Duration::from_secs(2));
         let _ = c.pragma_update(None, "query_only", true);
+        let _ = c.pragma_update(None, "cache_size", -DB_CACHE_KIB);
         Some(c)
     }
 
-    pub fn clan(&self, q: &Query) -> Reply {
+    fn with_db(&self, f: impl FnOnce(&Connection) -> Value) -> Reply {
         if self.db.is_none() {
             return reply(503, &json!({"ok": false, "error": "no database configured (--db)"}));
         }
-        let c = match self.ro_db() {
-            Some(c) => c,
+        let pooled = {
+            let mut g = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+            g.retain(|(t, _)| t.elapsed() < DB_MAX_AGE);
+            g.pop()
+        };
+        let (born, c) = match pooled.or_else(|| self.ro_db().map(|c| (Instant::now(), c))) {
+            Some(x) => x,
             None => return reply(200, &json!({"ok": false, "error": "database unavailable"})),
         };
-        reply(200, &t2r_clan::clan_view(&c, q.first("player").unwrap_or(""), None))
+        let v = f(&c);
+        let mut g = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+        if g.len() < DB_POOL && born.elapsed() < DB_MAX_AGE {
+            g.push((born, c));
+        }
+        reply(200, &v)
+    }
+
+    pub fn clan(&self, q: &Query) -> Reply {
+        self.with_db(|c| t2r_clan::clan_view(c, q.first("player").unwrap_or(""), None))
     }
 
     pub fn clanfeed(&self, q: &Query) -> Reply {
-        if self.db.is_none() {
-            return reply(503, &json!({"ok": false, "error": "no database configured (--db)"}));
-        }
-        let c = match self.ro_db() {
-            Some(c) => c,
-            None => return reply(200, &json!({"ok": false, "error": "database unavailable"})),
-        };
-        let v = t2r_clan::clanfeed(
-            &c,
-            q.first("player").unwrap_or(""),
-            q.first("limit").unwrap_or("30"),
-            q.first("since").unwrap_or("0"),
-            q.first("lang").unwrap_or("en"),
-            now_secs(),
-            None,
-        );
-        reply(200, &v)
+        self.with_db(|c| {
+            t2r_clan::clanfeed(
+                c,
+                q.first("player").unwrap_or(""),
+                q.first("limit").unwrap_or("30"),
+                q.first("since").unwrap_or("0"),
+                q.first("lang").unwrap_or("en"),
+                now_secs(),
+                None,
+            )
+        })
     }
 
     pub fn ban_check(&self, q: &Query, path: &str) -> Reply {

@@ -1,4 +1,4 @@
-use crate::data::{data, res, Data};
+use crate::data::{combat_re, data, sentence_re, ze_re, Data};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -540,7 +540,7 @@ fn size_ppl_en(v: &Value) -> Option<String> {
 }
 
 pub fn with_prep(ins: &str) -> Option<String> {
-    Some(format!("{}{}", if res()?.ze.is_match(ins) { "ze " } else { "z " }, ins))
+    Some(format!("{}{}", if ze_re()?.is_match(ins) { "ze " } else { "z " }, ins))
 }
 
 const COPY_KEYS: [&str; 8] = ["sup", "need", "size", "sick_n", "hungry_n", "due", "jd", "n"];
@@ -673,8 +673,8 @@ pub fn short_text(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     let mut out = String::new();
-    if let Some(r) = res() {
-        for m in r.sentence.find_iter(text) {
+    if let Some(r) = sentence_re() {
+        for m in r.find_iter(text) {
             let p = m.as_str();
             if clen(&out) + clen(p.trim_end()) <= limit {
                 out.push_str(p);
@@ -767,9 +767,9 @@ fn combat_key(t: &str, vars: &std::collections::HashSet<String>) -> bool {
 }
 
 pub fn combat_text(t: &str, pl: bool) -> bool {
-    let (d, r) = match (data(), res()) {
-        (Some(d), Some(r)) => (d, r),
-        _ => return false,
+    let d = match data() {
+        Some(d) => d,
+        None => return false,
     };
     if t.is_empty() {
         return false;
@@ -777,11 +777,12 @@ pub fn combat_text(t: &str, pl: bool) -> bool {
     if combat_key(t, &d.alife.combat_vars) {
         return true;
     }
-    if pl {
-        r.combat_pl.is_match(t)
-    } else {
-        r.combat_en.is_match(t)
-    }
+    let norm: String = t
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii() || "ąćęłńóśźż".contains(c) { c } else if is_word(c) { '_' } else { ' ' })
+        .collect();
+    combat_re(pl).map_or(false, |r| r.is_match(&norm))
 }
 
 pub fn kid_text_ok(text: &str, people: &People, pl: bool) -> bool {
@@ -824,5 +825,21 @@ mod tests {
         assert_eq!(widget_text(long), "One sentence that is quite long but fine.");
         assert_eq!(split_sentences("A b. C d!  E"), vec!["A b.", "C d!", "E"]);
         assert!(has_word("x Bob.", "Bob") && !has_word("Bobby", "Bob"));
+        let cases = [
+            ("Ana shot the clicker.", false, true),
+            ("Zoë's gun", false, true),
+            ("José-shot", false, true),
+            ("O'Rifle", false, false),
+            ("Ezra STRZELA do puszek.", true, true),
+            ("Ostatni bastion padł.", true, true),
+            ("Celina piecze chleb.", true, false),
+            ("Cel jest daleko.", true, false),
+            ("Celu nie widać.", true, true),
+            ("ŁUKASZ śpi", true, true),
+            ("Biegaczka śpi.", false, false),
+        ];
+        for (t, pl, want) in cases {
+            assert_eq!(combat_text(t, pl), want, "{}", t);
+        }
     }
 }

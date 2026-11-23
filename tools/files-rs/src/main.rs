@@ -432,6 +432,13 @@ fn main() {
             std::thread::sleep(Duration::from_secs(15));
         });
     }
+    if sh.cfg.db.is_some() {
+        std::thread::spawn(|| {
+            if !t2r_clan::warm() {
+                log!("clan templates did not load: /clanfeed.json menus stay empty");
+            }
+        });
+    }
     if sh.cfg.reports.is_some() {
         daemonlog::archive_loop(sh.cfg.daemon_log_dir.clone(), sh.cfg.archive_days);
     }
