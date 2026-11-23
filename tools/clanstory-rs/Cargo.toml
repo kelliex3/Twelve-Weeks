@@ -1,0 +1,19 @@
+[package]
+name = "t2r-clanstory"
+version = "0.1.0"
+edition = "2021"
+description = "Twelve Weeks clan engine shared by the daemon and the launcher API: CPython-exact random, the story text tables and their renderer"
+
+[lib]
+name = "t2r_clanstory"
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
