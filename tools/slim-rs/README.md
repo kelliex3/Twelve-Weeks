@@ -6,7 +6,11 @@ The client no longer ships `t2r-maps/main/t2r-data.bin` (about 2.2 GB, most of i
 `t2r-data.slim` (format `T2SLIM03`) holds:
 
 - a zstd patch against the game's original for every packed file that exists at the same path in the game (identical files: no patch at all),
-- one xz stream with the packed files the game does not have,
+- the packed files the game does not have, as a run of independent xz streams, one per group of files (`make.rs` `pack_groups`: a group
+  ends after a file whose path hash hits a cut once it holds 1 MiB, or at 8 MiB). Unchanged groups compress to the same bytes in the
+  next build, so a content-defined patch between two slim files (`tools/update_server/make_patch.py file`, made by
+  `publish_github.py --patch-base`) carries only the changed groups: a small data change is a small update. One stream for the whole
+  pack (the earlier format) made every byte after the first change differ: 30 KB added 10 % into a 208 MB slice of real pack files gave a 94.8 MB patch as one stream, 0.12 MB grouped. Cost: about 137 MB more than one stream on a first download (build 198: 819 MB instead of 682 MB).
 - the few bytes of `t2r-data.bin` that are not file data (header, archive directory, table of contents, `_t2r*` files),
 - the chunk table: how every rebuilt file is cut, lz4-HC compressed and encrypted, exactly as the build did.
 

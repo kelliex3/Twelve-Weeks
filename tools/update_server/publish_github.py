@@ -102,9 +102,58 @@ def release(repo, tag, title, notes, assets, work, dry):
     shutil.rmtree(upload_dir, ignore_errors=True)
 
 
+PATCH_KEEP = 0.5     # a patch is listed only when it is under half the file (else the launcher's normal download is as good)
+
+
+def add_patch(files, assets, patch_path):
+    """list the T2PT patch for the file entry it leads to (header "to" = the entry's sha256); the asset is named by the patch's sha256, so
+    the launcher finds it next to the file (release/launcher lib/update/files.js: the file url with the patch sha in place of the file sha)"""
+    import make_patch
+    h = make_patch.read_header(patch_path)
+    psha, psize = publish.sha256_file(patch_path), os.path.getsize(patch_path)
+    hit = 0
+    for f in files:
+        if f["sha256"] != h["to"] or psize >= f["size"] * PATCH_KEEP:
+            continue
+        ps = f.setdefault("patches", [])
+        if not any(p["from"] == h["from"] for p in ps):
+            ps.append({"from": h["from"], "sha256": psha, "size": psize})
+            hit += 1
+    if hit:
+        assets.setdefault(psha, patch_path)
+    return hit
+
+
+def make_patches(files, assets, bases, work):
+    """patch-sized updates: for every file that changed against an older client folder (a build players have installed), a content-defined
+    binary patch (make_patch.py file). A 2 MB change in a 700 MB file is then about a 2 MB download. The slim data file is made of
+    independent xz groups (tools/slim-rs make.rs pack_groups), so unchanged groups patch as copies."""
+    import make_patch
+    pdir = os.path.join(work, "patches")
+    os.makedirs(pdir, exist_ok=True)
+    for base in bases or []:
+        for f in list(files):
+            old = os.path.join(base, *f["path"].split("/"))
+            if not f["size"] or not os.path.isfile(old):
+                continue
+            osha = publish.sha256_file(old)
+            if osha == f["sha256"] or any(p["from"] == osha for p in f.get("patches", [])):
+                continue
+            out = os.path.join(pdir, "%s-%s.t2pt" % (osha[:12], f["sha256"][:12]))
+            if not os.path.exists(out):
+                make_patch.make("file", [old, assets[f["sha256"]]], out + ".tmp")
+                os.replace(out + ".tmp", out)
+            n = add_patch(files, assets, out)
+            print("patch %s: %s -> %s %.2f MB%s" % (f["path"], osha[:8], f["sha256"][:8], os.path.getsize(out) / 1e6, "" if n else " (not listed: too big)"))
+
+
 def publish_client(a, work):
     tag = a.tag or "build-%s" % a.version
     files, assets = collect(a.folder, work)
+    make_patches(files, assets, a.patch_base, work)
+    for p in a.patch or []:
+        if not add_patch(files, assets, p):
+            print("patch %s: no file of this build is its target (or it is too big) - skipped" % p)
     m = manifest_for(files, a.version, a.channel, a.repo, tag)
     mpath = os.path.join(work, "manifest.json")
     with open(mpath, "w", encoding="utf-8") as f:
@@ -161,6 +210,8 @@ def main():
     ap.add_argument("--data", help="update server data folder: the manifest / launcher.json files are written there")
     ap.add_argument("--no-promote", action="store_true")
     ap.add_argument("--work", help="folder for the compressed copies (default: a temp folder)")
+    ap.add_argument("--patch-base", action="append", help="an older client folder (repeatable): changed files get a patch from it")
+    ap.add_argument("--patch", action="append", help="a ready T2PT patch file to list (repeatable)")
     ap.add_argument("--dry-run", action="store_true", help="print the gh commands and write the manifest next to the work files only")
     a = ap.parse_args()
     has_launcher = bool(a.launcher or a.launcher_linux)

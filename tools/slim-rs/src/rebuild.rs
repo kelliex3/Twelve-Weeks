@@ -277,7 +277,7 @@ pub fn rebuild(slim_path: &Path, game: &Path, out_path: &Path) -> Res<()> {
     if h.pack_len > 0 {
         let mut src = s.f.try_clone()?;
         src.seek(SeekFrom::Start(h.pack_off))?;
-        let mut dec = liblzma::bufread::XzDecoder::new(BufReader::with_capacity(1 << 20, src.take(h.pack_len)));
+        let mut dec = liblzma::bufread::XzDecoder::new_multi_decoder(BufReader::with_capacity(1 << 20, src.take(h.pack_len)));   // one xz stream per pack group (make.rs pack_groups); an old single-stream pack decodes the same
         let mut n_files = 0u32;
         for r in s.recs.iter().filter(|r| r.kind == KIND_PACK) {
             let mut res = vec![0u8; r.usz as usize];

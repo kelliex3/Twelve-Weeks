@@ -139,36 +139,78 @@ fn work(md: &ModData, it: &Item, game: &Path, cache: Option<&Path>, archives: &m
     Ok(Done { delta, raw_fnv })
 }
 
-fn pack_stream(items: &[&Item], dst: &Path, threads: u32) -> Res<u64> {
-    use liblzma::stream::{Check, Filters, LzmaOptions, MatchFinder, MtStreamBuilder, PRESET_EXTREME};
-    let mut opts = LzmaOptions::new_preset(9 | PRESET_EXTREME).map_err(|e| Fail { code: EXIT_INTERNAL, msg: format!("xz: {}", e) })?;
-    opts.dict_size(128 << 20).literal_context_bits(1).literal_position_bits(3).position_bits(3).nice_len(273).match_finder(MatchFinder::BinaryTree4).depth(1000);
-    let mut filters = Filters::new();
-    filters.lzma2(&opts);
-    let stream = MtStreamBuilder::new()
-        .threads(threads.max(1))
-        .block_size(96 << 20)
-        .filters(filters)
-        .check(Check::Crc64)
-        .encoder()
-        .map_err(|e| Fail { code: EXIT_INTERNAL, msg: format!("xz: {}", e) })?;
-    let f = io_ctx(File::create(dst), || format!("cannot create {}", dst.display()))?;
-    let mut enc = liblzma::write::XzEncoder::new_stream(BufWriter::with_capacity(1 << 22, f), stream);
-    let mut total = 0u64;
-    let mut buf = vec![0u8; 1 << 22];
-    for it in items {
-        let mut f = io_ctx(File::open(&it.fp), || format!("cannot read {}", it.fp.display()))?;
-        loop {
-            let n = f.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            enc.write_all(&buf[..n])?;
-            total += n as u64;
+// Pack groups (patch-sized updates): the pack is a run of independent xz streams, one per group of consecutive pack files. A group ends
+// after a file whose path hash hits GROUP_CUT_MOD once the group holds GROUP_MIN bytes, or when it reaches GROUP_MAX. The cut points
+// depend on paths (and sizes only through the caps), so between two builds every group whose files did not change compresses to
+// the same bytes, only at another offset; the launcher's content-defined patch (make_patch.py file) then carries only the changed
+// groups. One xz stream for the whole pack made every byte after the first change differ, so any data change was a full download.
+pub const GROUP_MIN: u64 = 1 << 20;
+pub const GROUP_MAX: u64 = 8 << 20;
+pub const GROUP_CUT_MOD: u64 = 4;
+
+pub fn pack_groups(paths_sizes: &[(&str, u64)]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let (mut start, mut acc) = (0usize, 0u64);
+    for (i, (p, sz)) in paths_sizes.iter().enumerate() {
+        acc += *sz;
+        let cut = (acc >= GROUP_MIN && path_md5(p)[0] as u64 % GROUP_CUT_MOD == 0) || acc >= GROUP_MAX;   // md5: fnv here hashes 8-byte words, its low bits barely move between similar paths
+        if cut || i + 1 == paths_sizes.len() {
+            out.push((start, i + 1));
+            start = i + 1;
+            acc = 0;
         }
     }
-    let mut w = enc.finish()?;
+    out
+}
+
+fn xz_group(items: &[&Item]) -> Res<(Vec<u8>, u64)> {
+    use liblzma::stream::{Check, Filters, LzmaOptions, MatchFinder, Stream, PRESET_EXTREME};
+    let mut raw = Vec::new();
+    for it in items {
+        let mut f = io_ctx(File::open(&it.fp), || format!("cannot read {}", it.fp.display()))?;
+        f.read_to_end(&mut raw)?;
+    }
+    let mut dict = 1u32 << 20;
+    while (dict as u64) < raw.len() as u64 && dict < (64 << 20) {
+        dict <<= 1;
+    }
+    let mut opts = LzmaOptions::new_preset(9 | PRESET_EXTREME).map_err(|e| Fail { code: EXIT_INTERNAL, msg: format!("xz: {}", e) })?;
+    opts.dict_size(dict).literal_context_bits(1).literal_position_bits(3).position_bits(3).nice_len(273).match_finder(MatchFinder::BinaryTree4).depth(1000);
+    let mut filters = Filters::new();
+    filters.lzma2(&opts);
+    let stream = Stream::new_stream_encoder(&filters, Check::Crc64).map_err(|e| Fail { code: EXIT_INTERNAL, msg: format!("xz: {}", e) })?;
+    let mut enc = liblzma::write::XzEncoder::new_stream(Vec::with_capacity(raw.len() / 3 + 4096), stream);
+    enc.write_all(&raw)?;
+    Ok((enc.finish()?, raw.len() as u64))
+}
+
+fn pack_stream(items: &[&Item], dst: &Path, threads: u32) -> Res<u64> {
+    let ps: Vec<(&str, u64)> = items.iter().map(|it| (it.path.as_str(), it.size)).collect();
+    let groups = pack_groups(&ps);
+    let next = AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<Res<(Vec<u8>, u64)>>>> = groups.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|sc| {
+        for _ in 0..threads.max(1) {
+            sc.spawn(|| loop {
+                let g = next.fetch_add(1, Ordering::SeqCst);
+                if g >= groups.len() {
+                    break;
+                }
+                let (a, b) = groups[g];
+                *results[g].lock().unwrap() = Some(xz_group(&items[a..b]));
+            });
+        }
+    });
+    let f = io_ctx(File::create(dst), || format!("cannot create {}", dst.display()))?;
+    let mut w = BufWriter::with_capacity(1 << 22, f);
+    let mut total = 0u64;
+    for r in results {
+        let (bytes, usz) = r.into_inner().unwrap().unwrap_or_else(|| fail(EXIT_INTERNAL, "xz group not done"))?;
+        w.write_all(&bytes)?;
+        total += usz;
+    }
     w.flush()?;
+    eprintln!("t2r-slim make: pack in {} independent groups", groups.len());
     Ok(total)
 }
 
@@ -454,5 +496,37 @@ mod tests {
         let mut out: Vec<u8> = Vec::with_capacity(target.len());
         dc.decompress(&mut out, &d).unwrap();
         assert_eq!(out, target);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn groups_cover_all_in_order() {
+        let names: Vec<String> = (0..500).map(|i| format!("actor97/f{:04}.pak", i)).collect();
+        let ps: Vec<(&str, u64)> = names.iter().enumerate().map(|(i, n)| (n.as_str(), 200_000 + (i as u64 % 7) * 90_000)).collect();
+        let g = pack_groups(&ps);
+        assert_eq!(g[0].0, 0);
+        assert_eq!(g.last().unwrap().1, ps.len());
+        for w in g.windows(2) {
+            assert_eq!(w[0].1, w[1].0);
+        }
+        for &(a, b) in &g {
+            let sz: u64 = ps[a..b].iter().map(|x| x.1).sum();
+            assert!(sz <= GROUP_MAX + 650_000 || b - a == 1);
+        }
+    }
+
+    #[test]
+    fn one_file_change_moves_few_groups() {
+        let names: Vec<String> = (0..2000).map(|i| format!("actor97/f{:04}.pak", i)).collect();
+        let a: Vec<(&str, u64)> = names.iter().enumerate().map(|(i, n)| (n.as_str(), 150_000 + (i as u64 * 7919 % 13) * 40_000)).collect();
+        let mut b = a.clone();
+        b[300].1 += 2_000_000;
+        let (ga, gb) = (pack_groups(&a), pack_groups(&b));
+        let same: usize = gb.iter().filter(|g| ga.contains(g)).count();
+        assert!(gb.len() - same <= 3, "{} of {} groups differ", gb.len() - same, gb.len());
     }
 }

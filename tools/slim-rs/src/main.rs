@@ -13,6 +13,8 @@ const USAGE: &str = "usage:
   t2r-slim <t2r-data.slim> <game folder> <out t2r-data.bin>
       rebuild t2r-data.bin from the slim file and the game's own files (what the launcher runs)
   t2r-slim make <t2r-data.bin> <stage folder> <game folder> <out t2r-data.slim> [--cache <dir>] [--jobs N] [--xz-threads N]
+  t2r-slim extract <t2r-data.bin> <out folder>
+      write every packed file of a data file (its own path list) = a stage folder for make when the build's stage is gone
       make the slim file of a build (stage folder = the files the build packed)
   t2r-slim check <t2r-data.bin> <t2r-data.slim> <game folder>
       rebuild into a temporary file next to the slim file and compare it with t2r-data.bin byte for byte";
@@ -75,6 +77,24 @@ fn run(args: &[String]) -> Res<()> {
                 jobs,
                 xz_threads: xz,
             })
+        }
+        Some("extract") if args.len() == 3 => {
+            let mut ps = archive::Psarc::open(moddata::ModData::open(Path::new(&args[1]))?, "t2r-data.bin")?;
+            let out = Path::new(&args[2]);
+            let mut n = 0usize; let mut skipped = 0usize;
+            for p in ps.paths("t2r-data.bin")? {
+                let rel = p.trim_start_matches('/');
+                if rel.is_empty() || rel.contains("..") { continue; }
+                let got = match ps.file(&archive::path_md5(rel), "t2r-data.bin") { Ok(v) => v, Err(_) => { skipped += 1; continue; } };   // data in part1.dat: not in this file
+                if let Some(b) = got {
+                    let fp = out.join(rel);
+                    if let Some(d) = fp.parent() { std::fs::create_dir_all(d).map_err(|e| Fail { code: EXIT_IO, msg: e.to_string() })?; }
+                    std::fs::write(&fp, &b).map_err(|e| Fail { code: EXIT_IO, msg: e.to_string() })?;
+                    n += 1;
+                } else { eprintln!("extract: no toc entry for {}", rel); }
+            }
+            println!("extract: {} files, {} skipped (side file)", n, skipped);
+            Ok(())
         }
         Some("check") if args.len() == 4 => {
             let data = Path::new(&args[1]);
