@@ -1299,7 +1299,7 @@ impl Admin {
         if let Ok(c) = &conn {
             let mut items = Vec::new();
             let ok = (|| -> rusqlite::Result<()> {
-                let mut q = c.prepare("SELECT token_id,id,ts,day,week,kind,mood,faction,text FROM clan_feed ORDER BY ts DESC LIMIT 40")?;
+                let mut q = c.prepare("SELECT token_id,id,ts,day,week,kind,mood,faction,text FROM clan_feed WHERE rowid IN (SELECT rowid FROM clan_feed ORDER BY ts DESC LIMIT 40) ORDER BY ts DESC")?;
                 let mut it = q.query([])?;
                 while let Some(r) = it.next()? {
                     let v: Vec<S> = (0..9).map(|i| r.get::<_, S>(i).unwrap_or(S::Null)).collect();
