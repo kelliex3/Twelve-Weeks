@@ -30,6 +30,8 @@
 #include "net-account.hpp"
 #include "net-player.hpp"
 #include "net-session.hpp"
+#include "net/online/requeue.hpp"
+#include "net/online/clan-state.hpp"
 #include "net/ui/net-gui2.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends-state.hpp"
@@ -138,10 +140,11 @@ namespace net::chat {
 
         const char* NameColor(const char* who, bool own, const char* base)
         {
-            // The ext takes OUR role from the 0xE1 clan state, which the native port
-            // does not read; the shared 0xBF table is the honest substitute for both.
-            (void)own;
-            const int role = net::rank_badge::RoleOf(who ? who : "");
+            // ext chat.c (build 201): our own role comes from the 0xE1 clan state,
+            // everyone else's from the 0xBF rank table. Role 0 is the plain colour;
+            // any other role tints every chat line, on both sides of the wire.
+            const int role = own ? net::clan::OwnRole()
+                                 : (who && who[0]) ? net::rank_badge::RoleOf(who) : 0;
             const char* hex = net::social::RankRoleHex(role);
             return hex ? hex : base;
         }
@@ -446,10 +449,13 @@ namespace net::chat {
 
         bool InLobby()
         {
-            // ext: requeue's held ticket, or the FIND MATCH page with session state 3.
-            // The requeue latch is not exposed to native callers; the engine's own
-            // party status is the shared source for both cases here.
-            return engine::lobby::PartyStatus() == 3;
+            // ext chat.c: requeue's held ticket (`g_rq_back + g_rq_post > 0`), or
+            // the FIND MATCH page with session state 3 (searching). Both readers
+            // are shared now -- no second lobby latch and no new wire read.
+            const bool onFindMatch = engine::widget::TopPage()
+                == engine::widget::PageId("find-match-menu");
+            return net::requeue::TicketHeld()
+                || (onFindMatch && engine::lobby::PartyStatus() == 3);
         }
 
         void LobbyLines(const core::PartyReply& d, uint64_t now)

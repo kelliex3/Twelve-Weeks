@@ -482,6 +482,33 @@ namespace engine::pcm {
 
     }
 
+    void SetSessionVolume(float v)
+    {
+        if (v < 0.0f) v = 0.0f;
+        if (v > 1.0f) v = 1.0f;
+        const int q = static_cast<int>(v * 0xFFFF + 0.5f);
+        static int lastQ = -1;
+        if (q == lastQ) return;
+        static MMRESULT (WINAPI* setVol)(HWAVEOUT, DWORD) = nullptr;
+        if (!setVol) {
+            char dir[MAX_PATH];
+            if (!GetSystemDirectoryA(dir, MAX_PATH)) return;
+            std::strcat(dir, "\\winmm.dll");
+            HMODULE m = LoadLibraryA(dir);
+            if (m) {
+                // Avoid -Wcast-function-type: the symbol's signature matches our
+                // typedef, but FARPROC is declared as a generic function pointer.
+                FARPROC raw = GetProcAddress(m, "waveOutSetVolume");
+                static_assert(sizeof raw == sizeof setVol);
+                std::memcpy(&setVol, &raw, sizeof setVol);
+            }
+            if (!setVol) return;
+        }
+        setVol(reinterpret_cast<HWAVEOUT>(static_cast<uintptr_t>(WAVE_MAPPER)),
+            static_cast<DWORD>(q) | (static_cast<DWORD>(q) << 16));
+        lastQ = q;
+    }
+
     float SfxUserVolume()
     {
         static float    v = 1.0f;
@@ -538,35 +565,47 @@ namespace engine::pcm {
         return g_mixState.load(std::memory_order_acquire) == 1;
     }
 
+    namespace {
+        Voice StartPlain(const Sample* src, int n, float gl, float gr, int rate)
+        {
+            if (!Start() || !src || n < 2 || rate <= 0)
+                return {};
+            std::lock_guard<std::mutex> lk(g_mixLock);
+            for (int v = 0; v < kVoices; v++) {
+                if (g_mixv[v].on)
+                    continue;
+                Slot& s = g_mixv[v];
+                s.src = src;
+                s.n = n;
+                s.pos = 0.0;
+                s.step = static_cast<double>(rate) / kRate;
+                s.played = 0;
+                s.fadeN = 0;
+                s.fadeLeft = 0;
+                s.gl = gl;
+                s.gr = gr;
+                s.tgl = s.gl;
+                s.tgr = s.gr;
+                s.base = 1.0f;
+                s.dyn = 0;
+                s.ent = 0;
+                s.rnear = s.rfar = 0.0f;
+                s.on = 1;
+                return { v, src };
+            }
+            return {};
+        }
+    }
+
     Voice Play(const Sample* src, int n, float gl, float gr, int rate)
     {
-        if (!Start() || !src || n < 2 || rate <= 0)
-            return {};
         const float vol = SfxUserVolume();
-        std::lock_guard<std::mutex> lk(g_mixLock);
-        for (int v = 0; v < kVoices; v++) {
-            if (g_mixv[v].on)
-                continue;
-            Slot& s = g_mixv[v];
-            s.src = src;
-            s.n = n;
-            s.pos = 0.0;
-            s.step = static_cast<double>(rate) / kRate;
-            s.played = 0;
-            s.fadeN = 0;
-            s.fadeLeft = 0;
-            s.gl = gl * vol;
-            s.gr = gr * vol;
-            s.tgl = s.gl;
-            s.tgr = s.gr;
-            s.base = 1.0f;
-            s.dyn = 0;
-            s.ent = 0;
-            s.rnear = s.rfar = 0.0f;
-            s.on = 1;
-            return { v, src };
-        }
-        return {};
+        return StartPlain(src, n, gl * vol, gr * vol, rate);
+    }
+
+    Voice PlayRaw(const Sample* src, int n, float gain, int rate)
+    {
+        return StartPlain(src, n, gain, gain, rate);
     }
 
     bool PlayStereo(const Sample* l, const Sample* r, int n, float gain, int rate,

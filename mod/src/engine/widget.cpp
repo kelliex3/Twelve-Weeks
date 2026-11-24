@@ -132,6 +132,17 @@ namespace engine::widget {
         return MENU2::GET_TOP_PAGE_IN_STACK(MenuStack::hudMenuStack);
     }
 
+    uint64_t PageOnStack(const char* rel, MenuStack stack)
+    {
+        if (!rel) return 0;
+        return MENU2::GET_PATH_IN_CURRENT_PAGE(rel, stack);
+    }
+
+    uint64_t TopPage(MenuStack stack)
+    {
+        return MENU2::GET_TOP_PAGE_IN_STACK(stack);
+    }
+
     uint64_t PageId(const char* page)
     {
         char b[96];

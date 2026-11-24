@@ -718,4 +718,8 @@ namespace net::ui::death_ui {
 
     bool Active() noexcept;
 
+    // The last computed HUD-under-black fade (0..1). Consumers such as the icon
+    // kill feed need the same value the death UI applied that frame.
+    float Black() noexcept;
+
 } // namespace net::ui::death_ui

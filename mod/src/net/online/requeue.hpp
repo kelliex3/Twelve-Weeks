@@ -10,8 +10,17 @@
 // last match, the status label reads WAITING FOR PLAYERS... instead of FINDING MATCH...
 //
 // Wire (tools/daemon.py / tools/requeue.py):
-//   0xBC [64B token][u8 sub = 0][u8 mode = 0]       no side effect on the daemon
-//   0xBD [text payload]                             "... rq=1 rqw=<n> ..." when a ticket is held
+//   0xBC [64B token][u8 sub = 0][u8 mode = 0]       mode-count poll, no side effect
+//   0xBC [64B token][u8 sub = 3][u8 0]               "my game window is closing" (see below)
+//   0xBD [text payload]                             "... rq=1 rqw=<n> rqs=<s> rqb=<n> rqp=<n> ..."
+//                                                   rqs seconds until the match forms anyway,
+//                                                   rqb members back, rqp members on the screens.
+//                                                   An older daemon sends only rq / rqw.
+//
+// The build-201 close-watch is a single thread-local WH_CALLWNDPROC hook on the game
+// window thread (never a keyboard hook): the sent WM_SYSCOMMAND SC_CLOSE / WM_CLOSE is
+// seen before the window procedure runs, and the daemon gets the sub-3 notice before
+// the session drop so a window close in a match counts as the player's own leave.
 //
 // `t2r-no-requeue.txt` turns the whole feature off (the ext honours the same file). The
 // server-side ticket is issued when the 0xE3 JIP clock report carries flag 0x20; net::jip
@@ -32,6 +41,12 @@ namespace net::requeue {
 
     // Once a frame from boot::FrameTick, after net::jip::Tick.
     void Tick();
+
+    // The persistent-lobby latch, shared with chat's LOBBY tab: the ext's exact
+    // `g_rq_back + g_rq_post > 0` from the 0xBD rqb / rqp fields. True only while
+    // the daemon confirms a held ticket -- a fresh arm or a pushed page alone are
+    // not enough. Counts zero when the search is released or the ticket times out.
+    bool TicketHeld();
 
     // Session / match reset: drop the armed ticket and any answer in flight.
     void Reset();

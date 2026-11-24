@@ -6,6 +6,10 @@
 #include "net-hooks.hpp"
 #include "net-patches.hpp"
 #include "kill-feed.hpp"
+#include "net/ui/kill-feed-icons.hpp"
+#include "net/ui/kick-note.hpp"
+#include "net/ui/launch-notice.hpp"
+#include "menu/loadseq.hpp"
 #include "net-gui2.hpp"
 #include "scopeglint.hpp"
 #include "notify.hpp"
@@ -1065,14 +1069,25 @@ namespace net::replication {
         if (haveKiller && killerSlot == mySlot && victimSlot != mySlot && !NetPlayers::SlotIsFriendly(victimSlot))
             net::vox::PlayForLocal(net::vox::Scenario::EnemyKill);
 
-        if (haveKiller) {
-            AddKillFeedEntry(killerName, victimName,
-                (killerSlot == mySlot) || NetPlayers::SlotIsFriendly(killerSlot),
-                (victimSlot == mySlot) || NetPlayers::SlotIsFriendly(victimSlot));
-        }
-        else {
-            AddDeathFeedEntry(victimName,
-                (victimSlot == mySlot) || NetPlayers::SlotIsFriendly(victimSlot));
+        // The icon feed owns the visible feed while its widgets are live: the mod's
+        // debug-draw text feed is our own producer, so suppressing it needs no detour.
+        // t2r-old-killfeed.txt keeps the old text rows (killfeed::Active() is false).
+        const bool iconFeed = net::ui::killfeed::Active();
+        net::ui::killfeed::OnKill(
+            static_cast<uint8_t>(victimSlot), static_cast<uint8_t>(killerSlot),
+            haveKiller, weaponSID, victimName, killerName,
+            (victimSlot == mySlot) || NetPlayers::SlotIsFriendly(victimSlot),
+            (killerSlot == mySlot) || NetPlayers::SlotIsFriendly(killerSlot));
+        if (!iconFeed) {
+            if (haveKiller) {
+                AddKillFeedEntry(killerName, victimName,
+                    (killerSlot == mySlot) || NetPlayers::SlotIsFriendly(killerSlot),
+                    (victimSlot == mySlot) || NetPlayers::SlotIsFriendly(victimSlot));
+            }
+            else {
+                AddDeathFeedEntry(victimName,
+                    (victimSlot == mySlot) || NetPlayers::SlotIsFriendly(victimSlot));
+            }
         }
 
         if (victimSlot >= 0 && victimSlot < kMaxNetPlayers) TheMatch().slotState[victimSlot].dead = true;
@@ -1638,7 +1653,8 @@ namespace net::replication {
         if (!s_debugMenuOpen && !TIME::IS_GAME_PAUSED() && !net::gui2::PauseMenuOpen() && !net::gui2::ScoreboardShowing()) {
             net::gui2::Spawn();
             net::gui2::RefreshWidgets();
-            DrawKillFeed();
+            if (!net::ui::killfeed::Active()) DrawKillFeed();
+            net::ui::killfeed::Draw();  // icon row names, drawn under the HUD widgets
             DrawRadar();
             net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
             net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
@@ -2032,11 +2048,27 @@ namespace net::replication {
             break;
 
         // Downed state uses the ext's exact MSG_DOWNED / MSG_REVIVE bytes; its own gated
+        // ext MSG_KFWEAPON 0x94: [u8 victimSlot][u64 LE weapon][u8 1 = down].
+        // Broadcast by the victim; a peer waiting on a down / kill row fills it in
+        // (validated inside OnPeerWeapon, including data[0] == senderSlot).
+        case NEVT_KFWEAPON:
+            net::ui::killfeed::OnPeerWeapon(senderSlot, data, size);
+            break;
+
         // bridge no-ops while disabled, so ext clients see the wire exactly as before.
         case NEVT_DOWNED:
-        case NEVT_REVIVE:
+        case NEVT_REVIVE: {
             net::match::downed_bridge::OnEvent(senderSlot, type, data, size);
+            // ext killfeed also watches the same wire for the down / revive rows.
+            // MSG_DOWNED body: [state][downer][...]; 0xFE downer on an up means revived.
+            if (type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2 && data[0] == 1)
+                net::ui::killfeed::NoteDownBegin(senderSlot, data[1]);
+            else if ((type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2
+                      && data[0] == 0 && data[1] == 0xFE)
+                     || type == static_cast<uint8_t>(NEVT_REVIVE))
+                net::ui::killfeed::NoteDownEnd(senderSlot);
             break;
+        }
 
         // ext MSG_STUNNED 0x45: the sender's local stun lock started. Ext plays the stun
         // reaction on that peer's puppet and stamps g_stunPupAt[slot], the rising edge that
@@ -2087,11 +2119,15 @@ namespace net::replication {
         net::jip::Reset();
         net::friends13::Reset();
         net::chat::Reset();
-        engine::text_input::Reset();
+        ::engine::text_input::Reset();
         net::social::search_rows::Reset();
         net::rank_badge::Reset();
         net::name_rim::Reset();
         net::match::kick::Reset();
+        net::ui::kick_note::Reset();
+        net::ui::launch_notice::ResetRuntime();  // keeps the once-per-run latch
+        menu::loadseq::Reset();
+        net::ui::killfeed::Reset();
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();
         net::netsmooth::bridge::ResetAll();

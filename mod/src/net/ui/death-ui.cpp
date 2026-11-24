@@ -52,6 +52,7 @@
 namespace net::ui::death_ui {
 
     namespace {
+        float g_lastBlack = 0.0f;
 
         using namespace core;
 
@@ -557,6 +558,7 @@ namespace net::ui::death_ui {
 
         Outputs out;
         core::Step(g_state, in, out, nowMs);
+        g_lastBlack = out.black;
 
         // ---- death sting (native PCM sink; no-op when not compiled in) ----
         if (out.stingDue || out.softStingAtEdge) {
@@ -592,5 +594,7 @@ namespace net::ui::death_ui {
         // Consume the edge note once (newest note wins).
         g_notes.edgeSignalled = false;
     }
+
+    float Black() noexcept { return g_lastBlack; }
 
 } // namespace net::ui::death_ui

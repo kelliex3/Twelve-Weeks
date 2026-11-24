@@ -28,6 +28,7 @@ namespace net::clan {
         int levl = 0, levg = 0, levt = 0, mx = 0, rw = 0, rl = 0;
         int ag[3] = { 0, 0, 0 };
         int lmh = 0, rk = 0, dt = 0;
+        int ro = 0;                          // ext build-201 ClanT.ro: our own role (tools/roles.py)
     };
 
     // ext ClanParse's key table. Unknown keys are skipped so a newer daemon
@@ -40,7 +41,8 @@ namespace net::clan {
             "fac", "st", "day", "h", "hu", "s", "need", "wk", "lday",
             "lparts", "lsup", "lneed", "lgain", "ldied", "lhungry", "lsick",
             "lheal", "lleft", "ev", "evn", "levk", "levn", "levl", "levg",
-            "levt", "mx", "rw", "rl", "ag1", "ag2", "ag3", "lmh", "rk", "dt"
+            "levt", "mx", "rw", "rl", "ag1", "ag2", "ag3", "lmh", "rk", "dt",
+            "ro"          // build 201: own role, read by chat's name colour
         };
         State c{};
         // Rebind the field table to the local snapshot: a malformed reply must
@@ -51,7 +53,8 @@ namespace net::clan {
             &c.lgain, &c.ldied, &c.lhungry, &c.lsick, &c.lheal,
             &c.lleft, &c.ev, &c.evn, &c.levk, &c.levn, &c.levl,
             &c.levg, &c.levt, &c.mx, &c.rw, &c.rl, &c.ag[0],
-            &c.ag[1], &c.ag[2], &c.lmh, &c.rk, &c.dt
+            &c.ag[1], &c.ag[2], &c.lmh, &c.rk, &c.dt,
+            &c.ro
         };
         const char* t = text;
         char k[16];
@@ -141,6 +144,11 @@ namespace net::clan {
     // A 0xE1 reply arrived at least once this session.
     bool HaveState();
     const State& Get();
+
+    // ext clan_get().ro (build 201): our own role from the 0xE1 state, 0 = plain.
+    // 0 until a state arrives, so an answerless daemon never tints a chat name.
+    // Others' roles come from the shared 0xBF table (net::rank_badge::RoleOf).
+    int OwnRole();
 
     // ext PmReport: the 0xE2 match report was sent; arm the supply-counter page.
     // `labels` / `counts` are the ext's award-tail pairs (may be null / 0).

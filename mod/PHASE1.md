@@ -45,7 +45,7 @@ ext gate was flipped and no wire opcode was renumbered.
 | 11 | Tabbed page frame / composed outfits (build 191) | `nrui.c` (`nr_style.py`), `customize_compose.c` (`MSG_CUSTOM_LOOK`, `cz_body_*`) | **not started** — no frame API, no look-wire slot, no composed `look2` consumer | needs §3 widgets, a reserved net slot and `mod/widgets/`; no cutover |
 | 12 | Built-header guard (build 191) | `build_ext.py check_built_headers()`, `__has_include("vintage_bolt_built.h")`, `T2R_EXT_NO_BUILT_H=1` | **partial** — `T2R_DATA_*` compile gates and stub strategy exist | wire a mod build-time presence check for generated headers |
 | 13 | Remote-puppet playout (netsmooth) | `netsmooth.c`: msg 5/7 pairing, jitter buffer, adaptive delay + playout clock, lerp/slerp + extrapolation, error correction, 10 s `net stats:`; winmm apply/alpha/compose hooks + pinned VAs | **ported (live apply)** — `net/game/net-smooth.*` pure core + `net-smooth-bridge.*` native clock/stats; feeds in `net-session.cpp`, locator cutover in `net-replication.cpp` with an unprimed fallback | ext fixed-VA patches / winmm hooks / send cap / relay dedup / host-bw / root-vec4 / anim-clock advisory have no native equivalent; no live game A/B yet |
-| 14 | Chat / friend messages (build 199–201) | `chat.c` + pure `chat.h` (`MSG_CHAT 0xC7`, typed-key catcher), `friends13.c` MESSAGES tab (`0xD8` sub `14` `S_CHAT`, subs `15..19` for chat, `S_PSAY` / `S_PCHAT`), `padact.h` activity for AFK | **ported** — `net/chat/chat-core.hpp` (UTF-8 clean, slur filter, 0xC7 v1/v2 packet build / parse, party reply reader) + `tests/chat_core_test.cpp`; `net/chat/chat.cpp` (four stores, editor, 0/150/450 ms peer resend, 420-byte 0xD8 chat subs 14..19, HUD / ESC / MP panels via `engine::widget`); `engine/text-input.hpp/.cpp` is the one shared hook-free sampler + typing gate (friends13 shares it); `engine/pad-act.hpp` feeds the existing `net/match/afk.cpp` Tick | chat widget definitions are not in this repo, so panel writes stay inert until a GUI pak carries `chat_widgets.py`; no live A/B; no second AFK path, no settext / keyboard hook and no ext toggle / wire change |
+| 14 | Chat / friend messages (build 199–201) | `chat.c` + pure `chat.h` (`MSG_CHAT 0xC7`, typed-key catcher), `friends13.c` MESSAGES tab (`0xD8` sub `14` `S_CHAT`, subs `15..19` for chat, `S_PSAY` / `S_PCHAT`), `padact.h` activity for AFK | **ported** — `net/chat/chat-core.hpp` (UTF-8 clean, slur filter, 0xC7 v1/v2 packet build / parse, party reply reader) + `tests/chat_core_test.cpp`; `net/chat/chat.cpp` (four stores, editor, 0/150/450 ms peer resend, 420-byte 0xD8 chat subs 14..19, HUD / ESC / MP panels via `engine::widget`); `engine/text-input.hpp/.cpp` is the one shared hook-free sampler + typing gate (friends13 shares it); `engine/pad-act.hpp` feeds the existing `net/match/afk.cpp` Tick; the LOBBY tab reads requeue's persistent-lobby latch (`TicketHeld()`, the 0xBD `rqb` / `rqp` counters) and own-name colour reads the 0xE1 clan `ro` (`OwnRole()`), others the 0xBF table | chat widget definitions are not in this repo, so panel writes stay inert until a GUI pak carries `chat_widgets.py`; no live A/B; no second AFK path, no settext / keyboard hook and no ext toggle / wire change |
 
 ---
 
@@ -414,9 +414,11 @@ kind-'p' notice line (daemon `kick_token` sends both). The stamp feeds the 120 s
 check in `notice.c` (via `notice::Hooks::kickShownAt`, installed next to the friends13 hooks)
 and `requeue::KickedSinceArm()` (the ext's `g_kickMs > g_rq.armed`). A removed AFK player needs
 no separate path: `net/match/afk.*` already reports idle on the 0xE3 report and the daemon
-returns the removal as this same kick text. Honest gates: the ext's winmm op 0x11 producer, the
-kicknote MP-menu box (`KnSet`), and the team-move rejoin (`g_moveMs` / `move_rejoin_tick`) stay
-in the ext; without the winmm hook the notice line is the only producer the mod can see. No
+returns the removal as this same kick text. Honest gates: the ext's winmm op 0x11 producer and the team-move rejoin (`g_moveMs` /
+`move_rejoin_tick`) still stay in the ext; without the winmm hook the notice line is the only
+producer the mod can see. The kicknote box itself is now native (`net/ui/kick-note.*` installs
+`notice::Hooks::kickSet` and owns `to1/kick-notice`), so the kick text is consumed twice only at
+that one seam: dedupe stamp plus page push. No
 dedicated sidecar (the ext has none) -- the consumers keep `t2r-no-notice.txt` /
 `t2r-no-requeue.txt`.
 
@@ -870,6 +872,10 @@ mechanism-level split is:
   `tools/features/chat_widgets.py` (`T2R_CHAT` HUD group at depth 40 above the death, end and
   intro screens — a native port must not hide behind the death UI's black). `friends13.c` gains a
   MESSAGES list / thread / quick replies / typing editor and moves its strip above the LOBBY box.
+  The LOBBY tab's gate is requeue's persistent-lobby latch (`net::requeue::TicketHeld()`, the
+  0xBD `rqb` / `rqp` counters); own-name
+  role colour reads the build-201 0xE1 clan `ro` (`net::clan::OwnRole()`), others the 0xBF table
+  — shared native seams, no second lobby / role state.
 - **Pure cores (§1, §6):** `chat.h` (UTF-8 clean, slur filter, packet build / parse, party reply
   reader) and `padact.h` (`padact_note` / `padact_answer` — any joypad, not just the command-reader's
   learned pad, plus Steam Input answer flips). `afk.c` consumes `padact.h`; that behaviour is now
@@ -877,20 +883,23 @@ mechanism-level split is:
   `net/match/afk.cpp` Tick — no second AFK detection path. The chat pure core is ported into
   `net/chat/chat-core.hpp` (with `net/chat/chat.cpp` for the panels and wire paths). Offline tests:
   `tests/chat_test.c`, `tests/padact_test.c` (native equivalents: `mod/tests/chat_core_test.cpp`,
-  `mod/tests/padact_core_test.cpp` — both pass).
+  `mod/tests/padact_core_test.cpp` — both pass). The build-201 requeue parser /
+  countdown is the pure `net/online/requeue-core.hpp` with `mod/tests/requeue_core_test.cpp`.
 - **Net / daemon (§2, §7):** `MSG_CHAT 0xC7` (version / channel / seq / byte length / UTF-8, three
   sends at 0 / 150 / 450 ms, seq dedupe), `0xD8` subs `15..19` plus sub `14` `S_CHAT`, `S_PSAY` /
   `S_PCHAT`, the `0xBC` sub `0` / `0xBD` reply fields `rq` / `rqw` / `rqs` / `rqb` / `rqp` and
   `0xBC` sub `3` window-close notice, `MSG_BACKPACK`'s trailing stance byte, `MSG_EXPBOW_BURST`
-  byte 12 (Launcher), the `0xCA` msg-7 loss trailer and `0xA1` to `0xA3` install check. These are
-  ext wire facts to document, not slots to renumber here.
+  byte 12 (Launcher), the `0xCA` msg-7 loss trailer and `0xA1` to `0xA3` install check. The requeue
+  reply fields and sub-3 notice are now read / sent natively by `net/online/requeue.*`; the rest
+  are ext wire facts to document, not slots to renumber here.
 - **Gameplay / diagnostics:** `loadheap.c` (level + PSO heap pages, peaks, render-buffer sizes),
   stance-aware `backpack.c`, instant Scavenger II+ satchel booking in `itemspots.c`, Launcher
   blast / stun handling in `expbow2013.c` / `explosives2013.c`, lockbox stage toasts + PCM stingers
   in `interrogation.c` (`lb_sting.h`) and the marker ring rule in `interrogation_hud.c`,
   `netdiag.c`'s internet-check redirect, packet-loss text in `kicknote.c`, the `CZ_SUP_MAX` 512 /
   sender-name outfit cache in `customize_compose.c`, and `requeue.c`'s persistent lobby plus
-  `WH_CALLWNDPROC` close-watch. `t2r-ext.c` adds typed-key isolation, respawn defer, NPC-die hold,
+  `WH_CALLWNDPROC` close-watch (both now native in `net/online/requeue.*`: `rqb` / `rqp` counters,
+  local `rqs` countdown and one thread-local close hook). `t2r-ext.c` adds typed-key isolation, respawn defer, NPC-die hold,
   downer drop / satchel toggles and Launcher / Vintage integration.
 - **Generated data / log:** seven new private rows (`clanend_data.h`, `clanend_pcm.h`,
   `clanend_seg.h`, `lb_sting.h`, `loadseq.h`, `melee_pose0.h`, `vox_pick.h`); regenerated
@@ -900,6 +909,41 @@ mechanism-level split is:
   `t2r-no-downer-satchel.txt`, `t2r-no-npcdie-hold.txt`, `t2r-no-respawn-defer.txt`) are read by
   the ext; none is flipped in this branch.
 
+**Four more ext modules are now fully native** (no ext-owned residual on these surfaces):
+
+- **Kick notice (`kicknote.c`)** — `net/ui/kick-note.cpp/.hpp` owns the `to1/kick-notice` MP-menu
+  page: admin / AFK / ping / build-201 packet-loss text from the existing notice 0xBB producer is
+  parsed by the pure `net/ui/kick-note-core.hpp` (EN + PL, 4 new `loc_table_pl.hpp` rows), with
+  the ext's 800/250/1500 ms, 3-push and 120 s dedupe gates. `notice::Hooks::kickSet` is installed
+  by `kick_note::InstallNoticeHooks()` in `boot.cpp`, so the server toast yields to the box.
+- **Icon kill feed (`killfeed.c`)** — `net/ui/kill-feed-icons.cpp/.hpp` owns five hud-root icon
+  rows; `net/ui/kill-feed-core.hpp` is the pure queue / row / timing core. `net-replication.cpp`
+  produces kill / down / revive rows and dispatches the reserved `NEVT_KFWEAPON 0x94` peer weapon
+  answer (payload validated in `OnPeerWeapon`); the mod's own debug-draw text feed is simply not
+  emitted while icons are live — no winmm hook, no VA detour. `t2r-old-killfeed.txt` keeps the
+  older text feed. `net-protocol.hpp` stays the single wire registry; `NEVT_CHAT 0xC7` and the
+  daemon 0xD8 subs 14..19 are unchanged.
+- **Launch notice (`launchnote.c`)** — `net/ui/launch-notice.cpp/.hpp` owns the once-per-run
+  `to1/launch-notice` page under the TWELVE WEEKS title; the v1 `t2r-notice.txt` latch, 10 s read
+  clock, 4 s hand-off hold and 3-push gate are in `net/ui/launch-notice-core.hpp` with a standalone
+  `mod/tests/launch_notice_core_test.cpp`.
+- **Entry sequence (`loadseq.c`)** — `menu/loadseq.cpp/.hpp` owns the black / title / thin bar /
+  outro connecting-page sequence with the build-201 timings; `menu/loadseq-core.hpp` holds the
+  pure smootherstep / monotonic-fill / mute-ramp math, `menu/loadseq-sting.hpp` is the
+  `TO1_LOADSEQ_STING_PCM`-guarded sink (silent without the private data header), and
+  `engine/pcm.cpp/.hpp` gained `PlayRaw()` / `SetSessionVolume()` for it. The port-201 extra
+  pick-reload sequence is intentionally not included.
+
+All four share one hook-free `engine::menu_input::BeginFrame()` sampler (no second keyboard hook,
+no new AFK path, no second settext hook), yield while the legacy `t2r-ext.dll` is actually loaded
+(`boot::ExtLoaded()`), are ticked from `boot.cpp` after `NetTick()` and reset from
+`net-replication.cpp::ResetRuntime()`. Native death UI / escscore authority and the existing
+netsmooth exclusions are untouched. Widget definitions live in `tools/features/*_widgets.py`
+outside this repo, so page / icon writes stay inert until a GUI pak carries them; there is no
+local game build or newer daemon for a live A/B. Standalone C++17 tests pass for all four pure
+cores (`kick_note_core_test`, `launch_notice_core_test`, `kill_feed_core_test`,
+`loadseq_core_test`), alongside the earlier requeue / chat / clan / padact harnesses.
+
 **Already-ported rows with new work** (FEATURES.md per-row notes): `afk`, `padinject`, `backpack`,
 `friends13`, `kicknote`, `customize_compose`, `interrogation`, `interrogation_hud`, `itemspots`,
 `netdiag`, `requeue`, `expbow2013`, `explosives2013`, plus smaller changes in `death_ui`, `notify`,
@@ -907,7 +951,8 @@ mechanism-level split is:
 surfaces; the ext changes do not move their gates or wire bytes.
 
 Honest gate (same as §12): no cutover, no `t2r-*.txt` toggle flipped in-repo, no ext wire opcode
-renumbered; every new producer remains ext-owned until a native counterpart lands and is A/B'd.
+renumbered. The four module surfaces above are now native but untested in-game; the remaining
+ext work (team-move rejoin, netsmooth's winmm / fixed-VA hooks, GUI pak widgets) stays ext-owned.
 
 ---
 

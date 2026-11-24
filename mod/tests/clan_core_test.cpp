@@ -39,17 +39,18 @@ namespace {
     {
         net::clan::State c;
         Check(net::clan::ParseState("fac=1 st=1 day=3 h=12 s=40 need=60 lday=2 levk=2 "
-                                    "lmh=771 ev=1 evn=2 ag1=4 rk=3 dt=1", c),
+                                    "lmh=771 ev=1 evn=2 ag1=4 rk=3 dt=1 ro=2", c),
               "0xE1 state parses");
         Check(c.ok && c.fac == 1 && c.st == 1 && c.day == 3 && c.lday == 2
               && c.levk == 2 && c.lmh == 771 && c.ev == 1 && c.evn == 2
-              && c.ag[0] == 4 && c.rk == 3 && c.dt == 1,
-              "0xE1 fields map to the ext ClanT layout");
+              && c.ag[0] == 4 && c.rk == 3 && c.dt == 1 && c.ro == 2,
+              "0xE1 fields map to the ext ClanT layout (incl. build-201 ro)");
 
         net::clan::State bad;
         Check(net::clan::ParseState("nonsense", bad) && bad.ok && bad.fac == 0,
               "unrecognised keys are skipped (ext behaviour)");
         Check(!net::clan::ParseState(nullptr, bad), "null 0xE1 text refused");
+        Check(bad.ro == 0, "an older daemon without ro leaves the plain role");
 
         // EvWanted: a played result beats an announcement; a missing day holds (-1).
         net::clan::EventBook ev;

@@ -12,13 +12,18 @@
 #include "engine/framecap.hpp"
 #include "engine/frame.hpp"
 #include "engine/text-input.hpp"
+#include "engine/menu-input.hpp"
 #include "engine/render-camera.hpp"
 #include "engine/vfx.hpp"
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
+#include "menu/loadseq.hpp"
 #include "gameplay/barrel-check.hpp"
 #include "gameplay/stun-lock.hpp"
 #include "net/ui/notice.hpp"
+#include "net/ui/kick-note.hpp"
+#include "net/ui/launch-notice.hpp"
+#include "net/ui/kill-feed-icons.hpp"
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
 #include "net/ui/denynote.hpp"
@@ -154,6 +159,7 @@ namespace boot {
 	}
 
 	static safetyhook::MidHook gFrameHook;
+	static bool s_extLoaded = false;   // set once by TickExt, read by ExtLoaded
 
 	// was tools/features/ext_loader.py: the byte-patch cave hooked the per-frame MP tick
 	// (FUN_180063370 == net::gui2::UpdateMenu) and loaded t2r-ext.dll + called t2r_tick.
@@ -169,15 +175,25 @@ namespace boot {
 			s_ext = LoadLibraryW(L"t2r-ext.dll");
 			if (s_ext)
 				s_tick = reinterpret_cast<TickFn>(GetProcAddress(s_ext, "t2r_tick"));
+			s_extLoaded = s_tick != nullptr;
 			TO1_LOG("[boot] t2r-ext: dll %s, t2r_tick %s\n",
 				s_ext ? "loaded" : "not found", s_tick ? "resolved" : "missing");
 		}
 		if (s_tick) s_tick();
 	}
 
+	bool ExtLoaded()
+	{
+		// TickExt() runs inside UpdateMenu (from NetTick) before every native
+		// module tick, so this is the settled answer for the current frame.
+		return s_extLoaded;
+	}
+
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
+		const uint64_t now = ::GetTickCount64();
 		engine::text_input::BeginFrame();  // one hook-free keyboard sampler for chat + friends
+		engine::menu_input::BeginFrame(now);  // one hook-free menu sampler (kick / launch notices)
 		net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
 		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
 		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
@@ -190,6 +206,7 @@ namespace boot {
 			static bool hooksInstalled = false;
 			if (!hooksInstalled) {
 				net::match::kick::InstallNoticeHooks();  // native g_kickMs: notice kick dedupe
+				net::ui::kick_note::InstallNoticeHooks();  // the kick box takes over the toast line
 				net::friends13::InstallNoticeHooks();  // route kind 'p' notice lines to friends13
 				hooksInstalled = true;
 			}
@@ -197,8 +214,14 @@ namespace boot {
 #ifdef TO1_DEBUG
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
-		NetTick();                // the entire MP driver
-		net::ui::death_ui::Tick(::GetTickCount64()); // victim death screen (ported from tools/ext/death_ui.c)
+		NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
+		// Native menu / HUD owners. Each yields while the legacy ext is loaded so
+		// the ext cannot push the same page or sample the same click twice.
+		net::ui::launch_notice::Tick(now);  // once-per-run notice under the entry title
+		net::ui::kick_note::Tick(now);      // admin / AFK / packet-loss kick box
+		menu::loadseq::Tick(now);           // TWELVE WEEKS entry sequence (connecting page)
+		net::ui::death_ui::Tick(now);       // victim death screen (ported from tools/ext/death_ui.c)
+		net::ui::killfeed::Tick(now);       // icon kill feed (hud-root widgets)
 		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
 		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
 		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)

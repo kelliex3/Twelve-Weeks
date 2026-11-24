@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstddef>
 
+enum MenuStack : uint64_t;   // engine/script.hpp (a forward declaration keeps this header light)
+
 // Ported from the widget helpers in tools/ext/t2r-ext.c (Hudw / UiW / TopPage / PageId /
 // WVisible / WAlpha / FeedAlpha / WScale / WPivot / FeedTextW / DnWrapW). They were
 // feature-local statics in the ext; here they are one reusable module so every HUD feature
@@ -26,6 +28,11 @@ namespace engine::widget {
     uint64_t Page(const char* rel);           // top-of-hud-stack page's <rel>, 0 if absent
     uint64_t TopPage();                       // the top page of the HUD menu stack
     uint64_t PageId(const char* page);        // "canvas.hudRoot.hudMenuStack.to1/<page>" sid
+
+    // The same lookups on an arbitrary menu stack. loadseq needs the title / main
+    // stack (the TWELVE WEEKS connecting page lives there during a hand-off).
+    uint64_t PageOnStack(const char* rel, MenuStack stack);
+    uint64_t TopPage(MenuStack stack);
 
     void Visible(uint64_t w, bool on);
     void Alpha(uint64_t w, float a);          // the ext's plain FeedAlpha (never deduped)

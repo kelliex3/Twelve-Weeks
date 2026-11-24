@@ -245,6 +245,7 @@ namespace net::clan {
 
     bool HaveState() { return g.have; }
     const State& Get() { return g.state; }
+    int  OwnRole() { return g.have ? g.state.ro : 0; }
 
     void Report(uint32_t parts, uint8_t flags,
                 const uint8_t* labels, const uint16_t* counts, int n)

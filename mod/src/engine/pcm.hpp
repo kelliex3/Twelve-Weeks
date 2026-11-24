@@ -37,6 +37,13 @@ namespace engine::pcm {
 
     using Sample = int16_t;
 
+    // ---- whole-session volume (ext SessionVolume / music fade) ---------------
+
+    // waveOutSetVolume(WAVE_MAPPER, ...) at a quantised 16-bit level, deduped so a
+    // per-frame caller never touches the device on an unchanged value. loadseq
+    // fades this to silence during the menu-world hand-off and back afterwards.
+    void SetSessionVolume(float v);
+
     // ---- gain model (ext SfxUserVolume / ExmusUserVolume) --------------------
 
     // The game's SFX slider as our mixer gain (options volume-sfx, squared, x general
@@ -58,6 +65,10 @@ namespace engine::pcm {
 
     // One voice, sfx volume applied to gl/gr (ext PcmPlayVoice / PcmPlayLr).
     Voice Play(const Sample* src, int n, float gl, float gr, int rate);
+
+    // One centered voice at an EXPLICIT gain, no slider applied (ext PcmPlayRate,
+    // used by loadseq's stinger at music volume).
+    Voice PlayRaw(const Sample* src, int n, float gain, int rate);
 
     // A stereo wave as two hard-panned voices, one lock, sfx volume applied to gain
     // (ext PcmPlayStereo).

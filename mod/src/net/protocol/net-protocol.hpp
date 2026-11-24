@@ -212,6 +212,10 @@ enum NetEventType : uint8_t {
     NEVT_DODGE_RES   = 0x98,   // ext MSG_DODGE_RES: a blow was dodged, play the miss
     NEVT_DODGE_PRESS = 0x99,   // ext MSG_DODGE_PRESS: dodge pressed (immune / dir / clip sid)
     NEVT_HITREACT2   = 0x9A,   // ext MSG_HITREACT2: [u8 flags][u64 clip][u16 cut ms]
+    // ext MSG_KFWEAPON 0x94 (killfeed.c): [u8 victimSlot][u64 LE weaponSID]
+    // [u8 1 = downing weapon]. Broadcast by the victim so a peer can resolve the
+    // weapon icon for its kill / down row (net/ui/kill-feed-icons.cpp).
+    NEVT_KFWEAPON    = 0x94,
     NEVT_MEX         = 0x9C,   // ext MSG_MEX: melee exchange window
     NEVT_MV3         = 0x9E,   // ext MSG_MV3: melee-v3 bubble / inputs / hash
 
