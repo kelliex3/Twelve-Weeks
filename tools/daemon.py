@@ -5525,6 +5525,14 @@ class MatchMaker:
                 pms = jip_ping_block(token, mid, pl[hslot], active, set(self.joining), now)
                 if pms is not None:
                     why_not.append("%s: %d ms to the host, over the %d ms ping limit (it would be removed)" % (mid, pms, ping_match_ms() if MM_PING_GATE else PING_KICK_MS)); continue
+            if need > 1 and only_mid is None:
+                # A party joins a running match only when every searching member passes its ping limit; otherwise it waits for another match.
+                # (Checking only the leader sent the leader in alone when a mate was too far from the host, and split the party across two matches.)
+                lim = ping_match_ms() if MM_PING_GATE else PING_KICK_MS
+                bad = [(m, b) for m, b in ((m, jip_ping_block(m, mid, pl[hslot], active, set(self.joining), now))
+                                           for m in mates if m in self.queue and m not in pl) if b is not None]
+                if bad:
+                    why_not.append("%s: party mate %s %d ms to the host, over the %d ms ping limit (the party stays together)" % (mid, tag(bad[0][0]), bad[0][1], lim)); continue
             ck = self.clock.get(mid)
             if not ck or now - ck[3] > JIP_CLOCK_TTL:
                 # (say how stale - PT79 had 'no fresh clock report' for minutes in running 6-player matches; the digits are ignored by the log dedupe)
@@ -6881,10 +6889,12 @@ def hostcap_repick_log(mid, players, alive, hslot, scores, act, what):
         verd = "no change"
     log("HOST-REPICK", mid, "cap: host %s %s; %s" % (tag(players[hslot]), cur[1], verd))
 
+SAT_TARGET_RANK = int(os.environ.get("T2R_HOST_SAT_TARGET_RANK", "1"))   # highest hostcap rank a saturated host may hand over to (0 = proven only, the old rule)
+
 def repick_cap(mid, players, alive, hslot):
     """Capacity override for REPICK.check (hostmig REPICK_CAP_CONFIRM) or None: the host LAGGED below the upload this lobby needs in THIS
     match (hostcap verdict rank 2 + a lag charged in this match), or its link is saturated (every ping to it >= 3x its match baseline) and it
-    never proved enough upload. Targets: rank < 2 (proven first) after a lag; proven (rank 0) only on saturation alone and with 2 players."""
+    never proved enough upload. Targets: rank < 2 (proven first) after a lag; on saturation (proven host or not) rank <= SAT_TARGET_RANK, proven first."""
     if hostcap.MODE < 1:
         return None
     n = len(alive)
@@ -6896,8 +6906,11 @@ def repick_cap(mid, players, alive, hslot):
     bad, max_rank = None, 0
     if n >= 3 and vs[hslot][0] >= 2 and HOSTCAP.lagged_in(mid, h):
         bad, max_rank = "%s lagged in this match (%s)" % (tag(h), vs[hslot][1]), 1
-    elif sat and vs[hslot][0] >= 1:
-        bad = "%s link saturated (%s; %s)" % (tag(h), why, vs[hslot][1])
+    elif sat:
+        # A host that PROVED its upload can still saturate (every ping to it several times its baseline for minutes); skipping saturation for a
+        # proven host left the lobby lagging until the host left. A saturated link now moves: a proven target first, else one that never lagged
+        # at this lobby size (rank 1, SAT_TARGET_RANK), never a lagged one (rank 2).
+        bad, max_rank = "%s link saturated (%s; %s)" % (tag(h), why, vs[hslot][1]), SAT_TARGET_RANK
     if not bad:
         if hostcap.MODE >= 2 and n >= hostmig.REPICK_PROVEN_N > 0:
             # no capacity problem, but a ping-only handover in a big lobby may only go to a proven target (hostmig REPICK_PROVEN_N)
@@ -8934,14 +8947,16 @@ class UdpRelay:
             peer_seen(ip, addr)
             op = data[0] if data else -1
             UDP_STATS[(addr, op)] += 1                 # (key = the address tuple: the "ip:port" string is built once per status tick, not per packet)
-            if len(data) >= 5 and op == 0x03:     # keepalive: pong locally + relay to other KA sockets
+            if len(data) >= 5 and op == 0x03:     # keepalive: pong locally (no longer relayed, see below)
                 self.send(b"\x04" + data[1:5], addr)   # pong: 04 + the client's seq (the game-server check needs the 0x04 opcode)
                 PRES.ping(addr)
                 k = (addr, 0x03)
                 if self.seen.get(k, 0) < 2:
                     self.seen[k] = self.seen.get(k, 0) + 1
                     log("UDP", addr, f"03-keepalive {len(data)}B", data[:16].hex(" "))
-                self._relay_table(self.KA, data, addr, now)
+                # Keepalives used to be copied to EVERY other keepalive socket on the server, whatever match they were in: n players made
+                # n x (n - 1) packets, growing with the square of the player count. The game's keepalive record only accepts the 0x04 pong above
+                # (validation: byte 0 == 4, matching seq); a copied 0x03 carries no sender and is dropped.
             elif len(data) >= 6 and op == 0x00:   # GAMEPLAY relay HELLO [00][u32 sid][u8 slot]
                 sid = struct.unpack_from("<I", data, 1)[0]; slot = data[5]
                 if not self._known_sid(sid, now):
