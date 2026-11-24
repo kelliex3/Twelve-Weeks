@@ -17,12 +17,14 @@
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
 #include "engine/frame.hpp"
+#include "engine/text-input.hpp"
 #include "gameplay/melee-hit-react.hpp"
 #include "gameplay/melee-dodge.hpp"
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/game/net-smooth-bridge.hpp"
 #include "net/social/friends13.hpp"
+#include "net/chat/chat.hpp"
 #include "net/social/rank-badge.hpp"
 #include "net/social/name-rim.hpp"
 #include "net/social/search-rows.hpp"
@@ -1680,6 +1682,13 @@ namespace net::replication {
             break;
         }
 
+        case NEVT_CHAT_C7: {
+            // Build 199..201 in-game chat. The legacy NEVT_CHAT (0x01) string log
+            // above stays untouched; chat's own packet is validated in its core.
+            net::chat::NotePeer(senderSlot, data, size);
+            break;
+        }
+
         case NEVT_OPEN_DOOR: {
             DoorOpenEvent evt;
             if (!ReadPod(data, size, evt)) break;
@@ -2077,6 +2086,8 @@ namespace net::replication {
         net::afk::Reset();
         net::jip::Reset();
         net::friends13::Reset();
+        net::chat::Reset();
+        engine::text_input::Reset();
         net::social::search_rows::Reset();
         net::rank_badge::Reset();
         net::name_rim::Reset();

@@ -14,6 +14,7 @@
 #include "engine/locale.hpp"
 #include "engine/lobby.hpp"
 #include "engine/script.hpp"
+#include "engine/text-input.hpp"
 #include "engine/widget.hpp"
 #include "engine/window.hpp"
 #include "daemon-rpc.hpp"
@@ -249,7 +250,7 @@ namespace net::friends13 {
         {
             for (int i = 0; i < 256; i++) {
                 g_keyPrev[i] = g_keyCur[i];
-                g_keyCur[i] = engine::window::KeyDown(i);
+                g_keyCur[i] = engine::text_input::Down(i);   // one shared hook-free sampler
             }
         }
         bool KeyDown(int vk) { return g_keyCur[vk & 0xff]; }
@@ -1081,18 +1082,9 @@ namespace net::friends13 {
         }
         void Paste()
         {
-            if (!OpenClipboard(nullptr)) return;
-            HANDLE h = GetClipboardData(CF_UNICODETEXT);
-            if (h) {
-                const wchar_t* w = static_cast<const wchar_t*>(GlobalLock(h));
-                if (w) {
-                    char utf8[128];
-                    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, utf8, sizeof utf8, nullptr, nullptr);
-                    if (n > 0) Insert(utf8, n - 1);
-                    GlobalUnlock(h);
-                }
-            }
-            CloseClipboard();
+            char utf8[128];
+            if (!engine::text_input::Paste(utf8, sizeof utf8)) return;
+            Insert(utf8, static_cast<int>(std::strlen(utf8)));
         }
         void TypingTick(uint64_t now)
         {
@@ -1127,13 +1119,18 @@ namespace net::friends13 {
         }
         void TypingStart()
         {
+            engine::text_input::Begin(engine::text_input::Owner::Friends);
             g_panel.typing = true;
             g_panel.blen = g_panel.caret = 0;
             g_panel.buf[0] = 0;
             g_panel.typMs = g_panel.editMs = Now();
             Edited();
         }
-        void TypingStop() { g_panel.typing = false; }
+        void TypingStop()
+        {
+            engine::text_input::End(engine::text_input::Owner::Friends);
+            g_panel.typing = false;
+        }
         void SendTyped()
         {
             while (g_panel.blen > 0 && g_panel.buf[g_panel.blen - 1] == ' ') g_panel.buf[--g_panel.blen] = 0;
@@ -1545,6 +1542,16 @@ namespace net::friends13 {
     void NoteAutoPush() { NoteAutoPushState(); }
     bool PanelOpen() { return g_panel.up; }
 
+    void OpenFromPause()
+    {
+        if (!FeatureEnabled() || g_panel.up) return;
+        g_openAt = Now();
+        TO1_LOG("friendsui: P on the ESC menu - pushing to1/friends13\n");
+        PushPage("to1/friends13");
+    }
+
+    int UnreadTotal() { return g_net.have ? social::Badge(&g_state) : 0; }
+
     bool Toast(const char* text, float secs)
     {
         if (!FeatureEnabled() || !ToastCardEnabled()) return false;
@@ -1588,6 +1595,7 @@ namespace net::friends13 {
         g_hSel = g_hUp = g_hDown = g_hLeft = g_hRight = false;
         g_hBack = g_hPrev = g_hNext = g_hAct = g_hP = g_hPadNext = false;
         g_repUp = g_repDown = 0;
+        engine::text_input::End(engine::text_input::Owner::Friends);
         std::memset(g_keyCur, 0, sizeof g_keyCur);
         std::memset(g_keyPrev, 0, sizeof g_keyPrev);
         g_net.actSub = 0;

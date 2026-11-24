@@ -10,13 +10,16 @@
 // who dies and respawns keeps the idle time he had); any input resets it to 0. A new
 // match starts at 0.
 //
-// Input sources:
-//   - keyboard + mouse: engine::window::LastInputTick (the session's last hardware input
-//     tick), counted only while engine::window::Focused();
-//   - any pad: engine::pad::ActivityMs (the engine's own Pad -> Joypad pipeline, sampled
-//     before injection so a virtual press never counts as *real* player input);
-//   - injected input: engine::pad::Applied() / StickApplied() counters change when the
-//     virtual pad applies a dev bot's press / stick, counted as player activity.
+// Input sources (the single Tick() below ORs them into log bits 1 / 2 / 4):
+//   - bit 1 keyboard + mouse: engine::window::LastInputTick (the session's last hardware
+//     input tick), counted only while engine::window::Focused();
+//   - bit 2 real pad: engine::pad::Activity() (build 199 padact core). Every (joypad,
+//     Pad) pair seen by Joypad::Update has its own button baseline, so a pad player is
+//     counted even when the command-reader hook learned nothing (the Steam Input path in
+//     pad mode). A changed watched-command answer on that path counts too. All of it is
+//     sampled BEFORE injection, so a virtual press never counts as *real* pad input;
+//   - bit 4 injected input: engine::pad::Applied() / StickApplied() counters change when
+//     the virtual pad applies a dev bot's press / stick, counted as player activity.
 //
 // Without the pad hook the whole feature stays off (a pad player could not be told from
 // an idle one), matching the ext. Every gate the ext uses is wired: MatchSubstate 6 /
@@ -34,7 +37,9 @@
 // idle count reaches the daemon and the test-server no-AFK flag (g_srvTestFlags &
 // 0x40) reaches this watchdog through net::daemon::TestFlags(). The virtual pad's
 // injection counters (engine::pad::Applied / StickApplied) now count a playing bot as
-// active; a pad player still needs engine::pad::Ready() for the count to be known.
+// active; a pad player still needs engine::pad::Ready() for the count to be known. The
+// padact facts and the optional Steam Input answer counters are exposed by the same
+// engine::pad layer -- this watchdog is the only consumer, not a second AFK path.
 
 namespace net::afk {
 

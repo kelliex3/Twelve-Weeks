@@ -219,6 +219,13 @@ enum NetEventType : uint8_t {
     // Pinned to the ext's exact byte for cutover interop. NOTE: 0xAF is also a daemon tag inside
     // the 0xE3 report (NetDaemonOp::kAfkTrailer) -- a different wire, so there is no collision.
     NEVT_SHOTRAY     = 0xAF,   // ShotRayEvent
+
+    // ext MSG_CHAT 0xC7 (chat.c). Pinned to the ext's exact byte. This is NOT the legacy
+    // NEVT_CHAT (0x01, a plain string log event); chat's own payload is validated by
+    // net/chat/chat-core.hpp before it reaches the line stores. A short line keeps the
+    // ext's v1 layout; a line too long for the native event's 255-byte size byte uses the
+    // native v2 fragment layout defined there.
+    NEVT_CHAT_C7     = 0xC7,   // [u8 ver][u8 chan][u16 seq][u16 bytes][UTF-8 text]
 };
 
 // ---- other wire opcodes introduced by the ext -> mod port -------------------------------
@@ -253,6 +260,18 @@ enum class NetDaemonOp : uint8_t {
     kFriendsReply   = 0xD9,
     kJipClockReport = 0xE3,
     kJipClockReply  = 0xE5,
+};
+
+// 0xD8 sub-ops used by the in-game chat (tools/social.py). The 0xD8/0xD9 op pair is
+// already registered above; these are the exact sub-byte values from chat.c, kept here
+// so no feature module pins its own copy of a wire number.
+enum class NetDaemonChatSub : uint8_t {
+    kSay   = 14,  // S_CHAT
+    kPSay  = 15,  // CH_S_PSAY
+    kPChat = 16,  // CH_S_PCHAT
+    kMLog  = 17,  // CH_S_MLOG (server-side report-log copy)
+    kLSay  = 18,  // CH_S_LSAY
+    kLChat = 19,  // CH_S_LCHAT
 };
 
 enum class NetBackpackPayload : uint8_t {

@@ -18,13 +18,29 @@
 // at those sites. A version guard still protects the one pinned data address (the debug
 // "Enable Joypad w/o Focus" byte) that cannot be pattern-matched.
 //
-// Activity tracking (ActivityMs) stays in the same hook and is read BEFORE injection, so
-// an injected press never counts as real player input. `t2r-no-pad-inject.txt` turns the
-// whole module off; `t2r-dodge-pad-ps53-old.txt` selects the old dodge-input rule.
+// Activity tracking stays in the same hook and is read BEFORE injection, so an injected
+// press never counts as real player input. Build 199's padact rework is included: every
+// (joypad, Pad) pair is a source (not just the command-reader's learned joypad), and a
+// changed answer on the Steam Input command path counts too. `t2r-no-pad-inject.txt`
+// turns the whole module off; `t2r-dodge-pad-ps53-old.txt` selects the old dodge rule.
 
 namespace engine::pad {
 
     struct CommandWatch;   // opaque; Watch() returns one of the fixed table entries
+
+    // Snapshot of the padact facts consumed by the one AFK watchdog in net/match/afk.cpp.
+    // lastMs covers both real-pad activity and Steam Input answer flips; the counters are
+    // kept separate so a flip does not masquerade as a new pad source.
+    struct PadActivity {
+        uint64_t lastMs = 0;             // GetTickCount64() of the last real pad / SI input
+        int      sourceSlot = -1;        // padact slot of the last real pad input
+        uint32_t activityCount = 0;      // padact activity calls (button edges / sticks)
+        uint32_t sourcesSeen = 0;        // distinct (joypad, Pad) pairs tracked
+        uint32_t steamReads = 0;         // watched-command reads on the Steam Input path
+        uint32_t steamFlips = 0;         // changed Steam Input command answers
+        void*    steamJoypad = nullptr;  // first joypad seen on that path (diagnostics)
+        bool     steamHooked = false;    // optional Steam Input inline hook installed
+    };
 
     struct MeleeEdgeState {
         uint32_t seq = 0;
@@ -44,8 +60,12 @@ namespace engine::pad {
     // learned command bits and the pending-injection heartbeat.
     void Tick();
 
-    // GetTickCount64() of the last REAL pad input (button edge or stick past 0.3).
+    // GetTickCount64() of the last REAL pad input (button edge / stick past 0.3 on ANY
+    // joypad, or a changed Steam Input command answer), taken before injection.
     uint64_t ActivityMs();
+
+    // The same stamp plus the padact / Steam Input diagnostic counters in one snapshot.
+    PadActivity Activity();
 
     // Monotonic counters of injected button frames / stick frames. A change means an
     // injection was applied; the AFK watchdog uses that to treat a playing bot as active.

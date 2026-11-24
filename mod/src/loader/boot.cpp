@@ -11,6 +11,7 @@
 #include "engine/debugdraw.hpp"
 #include "engine/framecap.hpp"
 #include "engine/frame.hpp"
+#include "engine/text-input.hpp"
 #include "engine/render-camera.hpp"
 #include "engine/vfx.hpp"
 #include "sid/sidbase.hpp"
@@ -39,6 +40,7 @@
 #include "net/match/downed-bridge.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
+#include "net/chat/chat.hpp"
 #include "net/social/rank-badge.hpp"
 #include "net/social/name-rim.hpp"
 #include "net/social/search-rows.hpp"
@@ -175,6 +177,7 @@ namespace boot {
 
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
+		engine::text_input::BeginFrame();  // one hook-free keyboard sampler for chat + friends
 		net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
 		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
 		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
@@ -213,6 +216,7 @@ namespace boot {
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
 		net::friends13::Tick();   // in-game FRIENDS / PARTY panel + party gate (after liveness, before requeue)
+		net::chat::Tick(::GetTickCount64()); // in-game chat (0xC7 peer lines + 0xD8 chat subs)
 		net::social::search_rows::Tick(); // g_srchTab / g_srchName mirror (read-only, observer on mod text writes)
 		net::rank_badge::Tick(::GetTickCount64());  // async 0xBF rank table poll (only while a screen draws a badge)
 		net::name_rim::Tick(::GetTickCount64());    // lead-dev pink name rim (role 4, 150 ms poll)

@@ -1,8 +1,9 @@
 # Phase 1 — Enabling infrastructure
 
 Phase 0 ([FEATURES.md](FEATURES.md)) listed the feature modules and tagged each with the
-mechanisms it sits on: 135 at this branch point, **154 after build 191** on `main` (19 new direct
-modules plus 3 nested `customize_*.c`). Phase 1 ports those **mechanisms** — once each, in `mod/`
+mechanisms it sits on: 135 at this branch point, **156 after build 201** on `main` (19 new direct
+modules in build 191 plus 2 in build 199, and 3 nested `customize_*.c`). Phase 1 ports those
+**mechanisms** — once each, in `mod/`
 idiom — before any feature is ported. A feature port is then "use an existing mechanism + write
 the behaviour", not "re-invent native invocation / widget spawn / PCM playback every time".
 
@@ -20,23 +21,31 @@ codebases differ massively in casing (`snake_case` vs `PascalCase` / `g_camelCas
 is not tractable — build 191 stays a separate behavioural reference and its behaviours are ported
 one at a time, as below. No ext cutover or `t2r-*.txt` gate was flipped for the work on this branch.
 
+`main` then advanced through **build 199/200/201** (`66db11f`, `3e0b498`, `66fdfc6`, `5f8a9da`,
+`abffae7`, `59902b9`, `256a5ac`): two more direct modules (`chat.c`, `loadheap.c`), two pure C
+cores (`chat.h`, `padact.h`), two offline tests, seven more private generated rows and new
+`t2r-*.txt` strings (1,743 distinct names in main's ext vs 1,638 here). They are inventoried in
+FEATURES.md and §14 below; none is ported here, no
+ext gate was flipped and no wire opcode was renumbered.
+
 ## Mechanism status
 
 | # | Mechanism | Ext reference | `mod/` today | Gap |
 |---|---|---|---|---|
 | 1 | Native invocation (DC lookup → call) | `DcCall` / `*(rec+0x10)` | **exists** — `DC::Call`, `DC::Call_V2` | cached-native helper; convention doc |
 | 2 | Net event channel | `SendEvent` (winmm `0x18005DC60`, opcodes `0x41..0xAF`) | **exists** — `NetEventType` + `net::session::SendEvent` | slot reservation + exact-byte compatibility |
-| 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*`; build 191 adds the `nrui.c` tab frame + `customize` / `achieve_ui` / `mfnr` / `lbnr` / `pmunlock` / `namerim` / `fac13ui` pages | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source; every build-191 page unported |
+| 3 | Widgets / HUD | `GUI2_FIND/CHILD`, `gui2-rxfm-*`; build 191 adds the `nrui.c` tab frame + `customize` / `achieve_ui` / `mfnr` / `lbnr` / `pmunlock` / `namerim` / `fac13ui` pages; build 201 adds `chat_widgets.py` (`canvas.hudRoot.t2rChat.chatBox`, depth 40 above death / end / intro screens) | **partial** — `GUI2::SPAWN_WIDGET`, `MENU2::*` | widget-tree nav, transform, draw helper, `mod/widgets/` source; every build-191 page and the build-201 chat panels unported |
 | 4 | PCM audio mixer | `waveOut*` in `loadseq.c`, `t2r-ext.c`; build 191 adds `vintage` / `voxchar` / `sendoff` and the `ach_chime` / `choose_vox` / `choose_music` / `revive_nr` cues | **partial** — `engine/pcm.*` (stream + voices + gain model); stings in `net/audio/*` | 3D voices, loop / crossfade, data wiring; the new build-191 cues are unported |
 | 5 | Camera control | render-cam switch + `*_tracks.h` | **partial** — `CAMERA::SET_CAMERA_POSITION/OVERRIDE_FOV`; read-only `engine/render-camera.*` observer (ext icam capture) | camera write path + track evaluator |
 | 6 | Pad injection | `padinject.c` (writes `Pad` before `Joypad::Update`) | **ported** — `engine/pad.*` (virtual presses / sticks via mid-hooks at rel32-scanned call sites; command-bit learning; activity stamp; dev-bot consumers still unported) | call-site scan needs live-exe verification |
-| 7 | Generated data pipeline | 84 headers (`tools/ext/GENERATED.md`; +6 private in build 191, + `vintage_bolt_built.h` via `__has_include`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy / build-time header guard |
-| 8 | Config, toggles, logging | 1,636 `t2r-*.txt` + `xlog` in this branch's ext; build-191 adds 186 new strings | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config, then reclassify the new build-191 toggles |
+| 7 | Generated data pipeline | 91 headers (`tools/ext/GENERATED.md`; +6 private in build 191, +7 in build 199/200, + `vintage_bolt_built.h` via `__has_include`) | **partial** — `mod/cmake/*.py`, `mod/scripts/make-xvag.py` | wire ext generators / stub strategy / build-time header guard; `lb_sting.h` / `clanend_*` / `loadseq.h` / `melee_pose0.h` / `vox_pick.h` are new private rows |
+| 8 | Config, toggles, logging | 1,638 `t2r-*.txt` + `xlog` in this branch's ext (older notes said 1,636); build 191 adds 186 strings, main's ext has 1,743 distinct names | `TO1_LOG` + compile-time `config.hpp` | toggle policy + runtime config, then reclassify the new build-191 and build-199/200/201 toggles |
 | 9 | Engine RVA call / hook | `*(exe + rva)(…)` + hand-built RWX trampolines (`bp_pick`, `padinject.c`) | **partial** — `engine/transform.*`, `engine/pcm.*`, `engine/backpack-prop.*` call pinned RVAs; `net-patches.cpp` / `loader/boot.cpp` / `engine/pad.cpp` hook via safetyhook | pattern resolution + a shared exe-call helper + version guard |
 | 10 | Localisation | `loc.c` / `loc_pl.h` (lookup + language detection every 2 s) | **ported** — `engine/locale.*` (language registry + table-driven lookup, exact / `%d`-`%s` templates / `{1}` captures / `{N|…}` plurals / rich-text split / diacritic fold), `engine/loc_table_pl.hpp` (ported Polish table), `net/social/friends-state.*` (`Tr` uses the active table) | engine text-lookup probe for `auto` detection is not wired in mod/ yet (auto resolves to English); only the Polish table ships, other languages resolve to English until their generated table is added |
 | 11 | Tabbed page frame / composed outfits (build 191) | `nrui.c` (`nr_style.py`), `customize_compose.c` (`MSG_CUSTOM_LOOK`, `cz_body_*`) | **not started** — no frame API, no look-wire slot, no composed `look2` consumer | needs §3 widgets, a reserved net slot and `mod/widgets/`; no cutover |
 | 12 | Built-header guard (build 191) | `build_ext.py check_built_headers()`, `__has_include("vintage_bolt_built.h")`, `T2R_EXT_NO_BUILT_H=1` | **partial** — `T2R_DATA_*` compile gates and stub strategy exist | wire a mod build-time presence check for generated headers |
 | 13 | Remote-puppet playout (netsmooth) | `netsmooth.c`: msg 5/7 pairing, jitter buffer, adaptive delay + playout clock, lerp/slerp + extrapolation, error correction, 10 s `net stats:`; winmm apply/alpha/compose hooks + pinned VAs | **ported (live apply)** — `net/game/net-smooth.*` pure core + `net-smooth-bridge.*` native clock/stats; feeds in `net-session.cpp`, locator cutover in `net-replication.cpp` with an unprimed fallback | ext fixed-VA patches / winmm hooks / send cap / relay dedup / host-bw / root-vec4 / anim-clock advisory have no native equivalent; no live game A/B yet |
+| 14 | Chat / friend messages (build 199–201) | `chat.c` + pure `chat.h` (`MSG_CHAT 0xC7`, typed-key catcher), `friends13.c` MESSAGES tab (`0xD8` sub `14` `S_CHAT`, subs `15..19` for chat, `S_PSAY` / `S_PCHAT`), `padact.h` activity for AFK | **ported** — `net/chat/chat-core.hpp` (UTF-8 clean, slur filter, 0xC7 v1/v2 packet build / parse, party reply reader) + `tests/chat_core_test.cpp`; `net/chat/chat.cpp` (four stores, editor, 0/150/450 ms peer resend, 420-byte 0xD8 chat subs 14..19, HUD / ESC / MP panels via `engine::widget`); `engine/text-input.hpp/.cpp` is the one shared hook-free sampler + typing gate (friends13 shares it); `engine/pad-act.hpp` feeds the existing `net/match/afk.cpp` Tick | chat widget definitions are not in this repo, so panel writes stay inert until a GUI pak carries `chat_widgets.py`; no live A/B; no second AFK path, no settext / keyboard hook and no ext toggle / wire change |
 
 ---
 
@@ -850,6 +859,58 @@ gate, and no ext toggle or wire ID was touched.
 
 ---
 
+## 14. Build 199 / 200 / 201 — new ext work and rework of ported features
+
+`main` gained 2 direct ext modules after §12. FEATURES.md has the per-file rows; the
+mechanism-level split is:
+
+- **UI / typing (§3, §6, §8):** `chat.c` owns four line stores (MATCH / TEAM / PARTY in the HUD
+  and ESC menu, PARTY on the MP / FIND MATCH menus, plus the build-201 LOBBY tab while searching),
+  a typing line that eats every key while open and answers held keys as up afterwards, and
+  `tools/features/chat_widgets.py` (`T2R_CHAT` HUD group at depth 40 above the death, end and
+  intro screens — a native port must not hide behind the death UI's black). `friends13.c` gains a
+  MESSAGES list / thread / quick replies / typing editor and moves its strip above the LOBBY box.
+- **Pure cores (§1, §6):** `chat.h` (UTF-8 clean, slur filter, packet build / parse, party reply
+  reader) and `padact.h` (`padact_note` / `padact_answer` — any joypad, not just the command-reader's
+  learned pad, plus Steam Input answer flips). `afk.c` consumes `padact.h`; that behaviour is now
+  ported into `engine/pad-act.hpp` / `engine/pad.cpp` and consumed by the existing
+  `net/match/afk.cpp` Tick — no second AFK detection path. The chat pure core is ported into
+  `net/chat/chat-core.hpp` (with `net/chat/chat.cpp` for the panels and wire paths). Offline tests:
+  `tests/chat_test.c`, `tests/padact_test.c` (native equivalents: `mod/tests/chat_core_test.cpp`,
+  `mod/tests/padact_core_test.cpp` — both pass).
+- **Net / daemon (§2, §7):** `MSG_CHAT 0xC7` (version / channel / seq / byte length / UTF-8, three
+  sends at 0 / 150 / 450 ms, seq dedupe), `0xD8` subs `15..19` plus sub `14` `S_CHAT`, `S_PSAY` /
+  `S_PCHAT`, the `0xBC` sub `0` / `0xBD` reply fields `rq` / `rqw` / `rqs` / `rqb` / `rqp` and
+  `0xBC` sub `3` window-close notice, `MSG_BACKPACK`'s trailing stance byte, `MSG_EXPBOW_BURST`
+  byte 12 (Launcher), the `0xCA` msg-7 loss trailer and `0xA1` to `0xA3` install check. These are
+  ext wire facts to document, not slots to renumber here.
+- **Gameplay / diagnostics:** `loadheap.c` (level + PSO heap pages, peaks, render-buffer sizes),
+  stance-aware `backpack.c`, instant Scavenger II+ satchel booking in `itemspots.c`, Launcher
+  blast / stun handling in `expbow2013.c` / `explosives2013.c`, lockbox stage toasts + PCM stingers
+  in `interrogation.c` (`lb_sting.h`) and the marker ring rule in `interrogation_hud.c`,
+  `netdiag.c`'s internet-check redirect, packet-loss text in `kicknote.c`, the `CZ_SUP_MAX` 512 /
+  sender-name outfit cache in `customize_compose.c`, and `requeue.c`'s persistent lobby plus
+  `WH_CALLWNDPROC` close-watch. `t2r-ext.c` adds typed-key isolation, respawn defer, NPC-die hold,
+  downer drop / satchel toggles and Launcher / Vintage integration.
+- **Generated data / log:** seven new private rows (`clanend_data.h`, `clanend_pcm.h`,
+  `clanend_seg.h`, `lb_sting.h`, `loadseq.h`, `melee_pose0.h`, `vox_pick.h`); regenerated
+  `loc_pl.h`. Eleven new toggles (`t2r-no-chat.txt`, `t2r-int-ring-active-only.txt`,
+  `t2r-music-no-lockbox.txt`, `t2r-no-lb-stings.txt`, `t2r-no-inet-redirect.txt`,
+  `t2r-scav-satchel-old.txt`, `t2r-dev-end-soon.txt`, `t2r-no-downer-drop.txt`,
+  `t2r-no-downer-satchel.txt`, `t2r-no-npcdie-hold.txt`, `t2r-no-respawn-defer.txt`) are read by
+  the ext; none is flipped in this branch.
+
+**Already-ported rows with new work** (FEATURES.md per-row notes): `afk`, `padinject`, `backpack`,
+`friends13`, `kicknote`, `customize_compose`, `interrogation`, `interrogation_hud`, `itemspots`,
+`netdiag`, `requeue`, `expbow2013`, `explosives2013`, plus smaller changes in `death_ui`, `notify`,
+`netsmooth` and others. The native death UI and escscore ports stay authoritative on their own
+surfaces; the ext changes do not move their gates or wire bytes.
+
+Honest gate (same as §12): no cutover, no `t2r-*.txt` toggle flipped in-repo, no ext wire opcode
+renumbered; every new producer remains ext-owned until a native counterpart lands and is A/B'd.
+
+---
+
 ## Sequencing
 
 Ordered by dependency, cheapest-unblock-first:
@@ -952,7 +1013,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/render-camera.hpp` + `.cpp` | **new** — read-only final render camera observer (ext icam capture): safetyhook mid-hook at `FUN_141477750 + 15` snapshots position + quaternion forward into a seqlock for `pcm` / `music-sight`; pure `ForwardFromQuaternion` / `QuaternionOk` / `Fresh` core; `t2r-no-render-camera.txt` opt-out; camera write path / track evaluator stay in the ext |
 | `mod/tests/render_camera_core_test.cpp` | **new** — standalone C++17 harness for the render-camera pure helpers (`RENDER_CAMERA_CORE_TEST_OK`); no game headers |
 | `mod/PORTING.md` | mechanisms section: DC mapping, `MSG_*`⇄`NEVT_*` table, toggle/log/hook conventions |
-| `mod/FEATURES.md` | data-table column: generator availability; build-191 inventory — 154 direct modules (+3 nested `customize_*`), 12 new headers / 6 private generated rows, deleted `t2r-engine.*`, and `build 191:` flags on every ported row with new work |
+| `mod/FEATURES.md` | data-table column: generator availability; build-191 inventory — 154 direct modules (+3 nested `customize_*`), 12 new headers / 6 private generated rows, deleted `t2r-engine.*`, and `build 191:` flags on every ported row with new work; build-199/200/201 inventory — 156 direct modules, `chat.c` / `loadheap.c`, `chat.h` / `padact.h` + 2 tests, 7 more private generated rows, 11 new toggles and the new wire items, with per-row notes on reworked features |
 | `mod/src/engine/loc_table_pl.hpp` | regenerate from `main:tools/ext/loc_pl.h` (build 191: `12-customize`, `13-achievements`, restored lines, Spanish melee skills); keep the registry API unchanged |
 
 ## Risks
@@ -964,11 +1025,14 @@ which is the Phase-2 cutover pattern in miniature.
   path only covers an unprimed buffer; watch the `[NETSMOOTH]` 10 s line against the ext's
   `net stats:` (delay, extrap %, snaps, stutter) on a live build and revert the four call sites in
   `net-session.cpp` / `net-replication.cpp` if remote puppets stutter.
-- **`main` has diverged (Port build 191).** The new ext modules / headers are now inventoried in
-  FEATURES.md and §12, but none is ported and the branch is intentionally *not* merged (ext/mod
-  casing differs too widely for a text merge). Several already-ported features gained new work on
-  `main` (§12), so "ported" statuses must be read with their `build 191:` notes; do not treat the
-  wire slots, generated tables or Polish strings here as build-191-current.
+- **`main` has diverged (Port build 191 and 199/200/201).** The new ext modules / headers are now
+  inventoried in FEATURES.md and §§12/14, but none is ported and the branch is intentionally *not*
+  merged (ext/mod casing differs too widely for a text merge). Several already-ported features
+  gained new work on `main` (§§12/14), so "ported" statuses must be read with their `build 191:`
+  / build-199/200/201 notes; do not treat the wire slots, generated tables or Polish strings here
+  as current with `main`. A chat port must keep its HUD box above the native death / end screens
+  without reviving the ext's fades, and a pad-activity port must extend the existing AFK core
+  rather than add a second detection path.
 - **Wire compatibility.** Ported and ext clients share a lobby during coexistence; net opcodes must
   keep their exact byte values, and no port may reuse an ext opcode.
 - **Private generators.** Features whose data generator is private cannot be fully ported until the

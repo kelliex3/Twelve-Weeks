@@ -58,6 +58,11 @@ namespace net::friends13 {
 
     bool PanelOpen();
 
+    // The ESC chat block's P FRIENDS prompt uses these instead of a second friends
+    // state reader: open the existing page over the match, and share its unread count.
+    void OpenFromPause();
+    int  UnreadTotal();
+
     // notice.c kind 'p' lines: the card takes them when it can, else a plain toast.
     bool Toast(const char* text, float secs);
     void NoteSeen(const char* text);

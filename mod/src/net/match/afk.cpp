@@ -138,34 +138,39 @@ namespace net::afk {
             return;
         }
 
-        int input = 0;
+        int input = 0;              // bit 1 keyboard/mouse, 2 pad, 4 dev bot (ext log bits)
         uint32_t lii = 0;
         if (engine::window::LastInputTick(&lii)) {
             if (lii != g_afk.lii && engine::window::Focused())
-                input = 1;          // keyboard / mouse while the game has the focus
+                input |= 1;         // keyboard / mouse while the game has the focus
             g_afk.lii = lii;
         }
-        const uint64_t padAct = engine::pad::ActivityMs();
-        if (padAct && now - padAct < kPadWindowMs)
-            input = 1;              // any pad
-        // The virtual pad now reports its own applied-button / applied-stick counters.
-        // A change means the engine applied an injected press / stick this frame, which
-        // the ext counted as player activity (a bot that plays must not be kicked). The
-        // real-pad stamp above was taken before injection, so an injected press never
-        // counts as a *real* pad via that path.
+        // Build 199 padact: the stamp comes from ANY (joypad, Pad) pair the Update hook
+        // sees, not just the learned joypad, or from a changed Steam Input command
+        // answer. It is sampled before injection, so a dev bot's virtual press cannot
+        // masquerade as real pad input here (it is counted separately below).
+        const engine::pad::PadActivity padAct = engine::pad::Activity();
+        if (padAct.lastMs && now - padAct.lastMs < kPadWindowMs)
+            input |= 2;
         const uint32_t injBtn = engine::pad::Applied();
         const uint32_t injSt = engine::pad::StickApplied();
         if (injBtn != g_afk.btn || injSt != g_afk.st)
-            input = 1;
+            input |= 4;             // a bot that plays must not be kicked
         g_afk.btn = injBtn;
         g_afk.st = injSt;
 
         if (input) {
+            char src[192];
+            std::snprintf(src, sizeof src,
+                "%s%s%s (pad slot %d, %u pad inputs, %u Steam Input reads / %u answer changes so far)",
+                input & 1 ? " keyboard/mouse" : "", input & 2 ? " pad" : "",
+                input & 4 ? " bot" : "", padAct.sourceSlot, padAct.activityCount,
+                padAct.steamReads, padAct.steamFlips);
             if (g_afk.warn)
-                TO1_LOG("afk: input after %.0f s idle - warning cleared\n",
-                    g_afk.idle / 1000.0);
+                TO1_LOG("afk: input after %.0f s idle - warning cleared:%s\n",
+                    g_afk.idle / 1000.0, src);
             else if (g_afk.idle >= 30000)
-                TO1_LOG("afk: input after %.0f s idle\n", g_afk.idle / 1000.0);
+                TO1_LOG("afk: input after %.0f s idle:%s\n", g_afk.idle / 1000.0, src);
             g_afk.idle = 0;
             g_afk.warn = 0;
             g_afk.vis = 0;
@@ -181,8 +186,10 @@ namespace net::afk {
             g_afk.warn = 1;
             g_afk.warnAt = now;
             g_afk.vis = 0;
-            TO1_LOG("afk: no input for %.0f s - warning shown (the server removes us at %d s)\n",
-                g_afk.idle / 1000.0, static_cast<int>(kKickMs / 1000));
+            TO1_LOG("afk: no input for %.0f s - warning shown (the server removes us at %d s; joypad sources seen %u, pad inputs so far %u, Steam Input reads %u / answer changes %u)\n",
+                g_afk.idle / 1000.0, static_cast<int>(kKickMs / 1000),
+                padAct.sourcesSeen, padAct.activityCount,
+                padAct.steamReads, padAct.steamFlips);
         }
         if (g_afk.warn && g_afk.idle / 10000 != g_afk.loggedS) {
             g_afk.loggedS = g_afk.idle / 10000;

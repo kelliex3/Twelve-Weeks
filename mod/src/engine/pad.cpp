@@ -3,6 +3,7 @@
 #include <winsock2.h>       // keep before windows.h (pulled in by engine/memory.hpp et al.)
 
 #include "pad.hpp"
+#include "pad-act.hpp"
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
 
@@ -43,6 +44,7 @@ namespace engine::pad {
             std::atomic<int>          learnLog{ 0 };
             uint32_t                  entryCount = 0;
             uint32_t                  entries[kMaxEntries][4]{};
+            activity::AnswerSlot      si[2]{};   // Steam Input answer baseline per joypad
         };
 
     namespace {
@@ -60,10 +62,16 @@ namespace engine::pad {
         constexpr uint8_t kReaderPrologue[] = {
             0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55 };
 
+        // Steam Input command reader (ext PADINJ_SI_RVA / its one call site). The ext
+        // re-pointed that call at a thunk; this port verifies the same pinned prologue
+        // and puts a SafetyHook inline detour on the function entry instead, so the
+        // command answer is observable whether the site encodes a call or a jump.
+        constexpr uint32_t kSteamRva = 0x1591190u;
+        constexpr uint8_t kSteamPrologue[] = {
+            0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x18, 0x55, 0x56, 0x57, 0x41, 0x54 };
+
         constexpr size_t kPadSize      = 0x540;
         constexpr size_t kBtnOffset    = 0x528;
-        constexpr float  kStick        = 0.3f;
-        constexpr int    kMaxPads      = 8;
         constexpr int    kMaxWatches   = 48;
         constexpr int    kMaxSlots     = 8;
         constexpr uint64_t kMinPressMs = 20;
@@ -84,14 +92,8 @@ namespace engine::pad {
             bool                  blockable = false;
         };
 
-        struct PadTrack {
-            const void* pad = nullptr;
-            uint64_t    btn = 0;
-        };
-
         CommandWatch     g_watches[kMaxWatches];
         InjectSlot       g_slots[kMaxSlots];
-        PadTrack         g_tracks[kMaxPads];
 
         std::atomic<int>      g_state{ 0 };       // 0 untried, 1 installed, -1 failed
         uint8_t*              g_exe = nullptr;
@@ -101,11 +103,28 @@ namespace engine::pad {
         std::vector<safetyhook::MidHook> g_updateHooks;
         std::vector<safetyhook::MidHook> g_readerHooks;
         std::vector<safetyhook::MidHook> g_readerReturnHooks;
+        SafetyHookInline      g_steamHook;        // optional Steam Input command reader
+        std::atomic<bool>     g_steamHooked{ false };
 
         CommandWatch*             g_meleeWatch = nullptr;
         std::atomic<CommandWatch*> g_dodgeWatches[3]{};
 
-        std::atomic<uint64_t> g_actMs{ 0 };
+        // Build 199 padact: any (joypad, Pad) pair is a real input source. The core is
+        // touched only on the game thread (the Update / Steam Input hooks); the facts
+        // read by other threads are atomics published from those hooks.
+        activity::Sources     g_padact;
+        std::atomic<uint64_t> g_actMs{ 0 };        // last real pad activity OR Steam Input flip
+        std::atomic<int>      g_actSlot{ -1 };
+        std::atomic<uint32_t> g_actCount{ 0 };
+        std::atomic<uint32_t> g_sourcesSeen{ 0 };
+        std::atomic<uint32_t> g_siReads{ 0 };
+        std::atomic<uint32_t> g_siFlips{ 0 };
+        std::atomic<void*>    g_firstSiJoypad{ nullptr };
+        std::atomic<int>      g_siLog{ 0 };
+        std::atomic<void*>    g_firstActJoypad{ nullptr };
+        std::atomic<void*>    g_firstActPad{ nullptr };
+        std::atomic<int>      g_actLog{ 0 };
+
         std::atomic<void*>    g_primaryJoypad{ nullptr };
         std::atomic<uint64_t> g_primaryJoypadMs{ 0 };
         std::atomic<uint64_t> g_activityUntil{ 0 };
@@ -291,29 +310,12 @@ namespace engine::pad {
             }
         }
 
-        bool SawInput(const void* pad)
+        CommandWatch* FindWatch(uint64_t sid)
         {
-            if (!pad)
-                return false;
-            const uint64_t bm = LoadU64(static_cast<const uint8_t*>(pad) + kBtnOffset);
-            const float* f = static_cast<const float*>(pad);
-            const bool moved =
-                std::fabs(f[0]) > kStick || std::fabs(f[1]) > kStick ||
-                std::fabs(f[2]) > kStick || std::fabs(f[3]) > kStick;
-
-            PadTrack* free = nullptr;
-            for (PadTrack& t : g_tracks) {
-                if (t.pad == pad) {
-                    const bool edge = bm != t.btn;
-                    t.btn = bm;
-                    return edge || moved;
-                }
-                if (!t.pad && !free)
-                    free = &t;
-            }
-            (free ? free : &g_tracks[0])->pad = pad;
-            (free ? free : &g_tracks[0])->btn = bm;
-            return moved;
+            for (CommandWatch& w : g_watches)
+                if (w.sid == sid)
+                    return &w;
+            return nullptr;
         }
 
         uint64_t DodgeEntryMask(CommandWatch* w)
@@ -451,10 +453,34 @@ namespace engine::pad {
         {
             void* jp = reinterpret_cast<void*>(ctx.rcx);
             uint8_t* pad = reinterpret_cast<uint8_t*>(ctx.rdx);
-            if (SawInput(pad))
-                g_actMs.store(GetTickCount64(), std::memory_order_relaxed);
-
             const uint64_t now = GetTickCount64();
+
+            // Every Joypad::Update call is a real-input source, whatever joypad it is
+            // for. Read the device BEFORE Apply() so a dev bot's injected press never
+            // masquerades as player pad activity.
+            if (jp && Readable(pad, kPadSize)) {
+                const uint64_t bm = LoadU64(pad + kBtnOffset);
+                const float* f = reinterpret_cast<const float*>(pad);
+                if (activity::Note(g_padact, jp, pad, bm, f, now)) {
+                    g_actMs.store(now, std::memory_order_relaxed);
+                    g_actSlot.store(g_padact.activitySlot, std::memory_order_relaxed);
+                    g_actCount.store(g_padact.activityCount, std::memory_order_relaxed);
+                    if (!g_actLog.load(std::memory_order_relaxed)) {
+                        void* expected = nullptr;
+                        if (g_firstActJoypad.compare_exchange_strong(expected, jp,
+                                std::memory_order_relaxed)) {
+                            g_firstActPad.store(pad, std::memory_order_relaxed);
+                            g_actLog.store(1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+                uint32_t seen = 0;
+                for (const activity::Source& s : g_padact.slots)
+                    if (s.seen)
+                        ++seen;
+                g_sourcesSeen.store(seen, std::memory_order_relaxed);
+            }
+
             ObserveReal(jp, pad, now);
             if (jp != g_primaryJoypad.load(std::memory_order_relaxed))
                 g_updateOther.fetch_add(1, std::memory_order_relaxed);
@@ -473,10 +499,7 @@ namespace engine::pad {
             const uint8_t* entries =
                 reinterpret_cast<const uint8_t*>(*reinterpret_cast<uintptr_t*>(ctx.rsp + 0x20));
 
-            CommandWatch* found = nullptr;
-            for (CommandWatch& w : g_watches) {
-                if (w.sid == sid) { found = &w; break; }
-            }
+            CommandWatch* found = FindWatch(sid);
             t_pendingReadWatch = found;
             if (!found)
                 return;
@@ -501,6 +524,36 @@ namespace engine::pad {
             t_pendingReadWatch = nullptr;
             if (ctx.rax)
                 w->readsTrue.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Steam Input command path (ext padinj_si_hook). In pad mode the engine reads
+        // commands through Steam Input actions and never calls the reader we hook for
+        // learning. A changed answer on a watched command is a real press / release, so
+        // it stamps AFK activity even if Steam Input never fills the engine Pad. The
+        // Answer baselines are game-thread only, like the reader hook's Learn table.
+        uint8_t __fastcall SteamCommandHook(void* jp, void* cmd, uint64_t sid, uint64_t r9)
+        {
+            const uint8_t answer = g_steamHook.fastcall<uint8_t>(jp, cmd, sid, r9);
+            g_siReads.fetch_add(1, std::memory_order_relaxed);
+
+            if (jp && !g_firstSiJoypad.load(std::memory_order_relaxed)) {
+                void* expected = nullptr;
+                if (g_firstSiJoypad.compare_exchange_strong(expected, jp,
+                        std::memory_order_relaxed))
+                    g_siLog.store(1, std::memory_order_relaxed);
+            }
+
+            CommandWatch* w = FindWatch(sid);
+            if (!w)
+                return answer;
+            w->readsAll.fetch_add(1, std::memory_order_relaxed);
+            if (answer)
+                w->readsTrue.fetch_add(1, std::memory_order_relaxed);
+            if (activity::Answer(w->si, jp, answer != 0)) {
+                g_siFlips.fetch_add(1, std::memory_order_relaxed);
+                g_actMs.store(GetTickCount64(), std::memory_order_relaxed);
+            }
+            return answer;
         }
 
         uint8_t* NoFocusAddress()
@@ -577,6 +630,25 @@ namespace engine::pad {
             return false;
         }
 
+        WatchDefaults();
+
+        // Optional Steam Input command path. The ext patch had its own near thunk plus
+        // a single pinned call site; the mod already has a generic inline detour, so
+        // hooking the verified function entry is enough and needs no fixed-VA patch.
+        uint8_t* steam = g_exe + kSteamRva;
+        if (Readable(steam, sizeof kSteamPrologue) &&
+            std::memcmp(steam, kSteamPrologue, sizeof kSteamPrologue) == 0 &&
+            IsExecutablePtr(steam)) {
+            g_steamHook = safetyhook::create_inline(steam,
+                reinterpret_cast<void*>(&SteamCommandHook));
+            g_steamHooked.store(static_cast<bool>(g_steamHook), std::memory_order_relaxed);
+            TO1_LOG("[padinj] Steam Input command reader (exe+0x%X) %s\n",
+                kSteamRva, g_steamHooked.load(std::memory_order_relaxed)
+                    ? "hooked" : "inline hook failed - answer flips unavailable");
+        } else {
+            TO1_LOG("[padinj] Steam Input command reader prologue differs - answer flips unavailable\n");
+        }
+
         const auto updateSites = FindCallSites(g_updateFn);
         const auto readerSites = FindCallSites(g_readerFn);
         TO1_LOG("[padinj] %s at %p, %zu call sites; reader at %p, %zu call sites\n",
@@ -587,8 +659,6 @@ namespace engine::pad {
             TO1_LOG("[padinj] not enough call sites (need 5 update + 1 reader) - virtual pad off\n");
             return false;
         }
-
-        WatchDefaults();
 
         int readerHooks = 0;
         for (uint8_t* site : readerSites) {
@@ -626,8 +696,9 @@ namespace engine::pad {
         }
 
         g_state.store(1, std::memory_order_relaxed);
-        TO1_LOG("[padinj] installed - %d Joypad::Update sites, %d reader sites (+%zu return probes)\n",
-            updateHooks, readerHooks, g_readerReturnHooks.size());
+        TO1_LOG("[padinj] installed - %d Joypad::Update sites, %d reader sites (+%zu return probes), Steam Input %s\n",
+            updateHooks, readerHooks, g_readerReturnHooks.size(),
+            g_steamHooked.load(std::memory_order_relaxed) ? "on" : "off");
         return true;
     }
 
@@ -669,6 +740,20 @@ namespace engine::pad {
                 TO1_LOG("%s\n", buf);
         }
 
+        if (g_siLog.exchange(0, std::memory_order_relaxed) == 1) {
+            TO1_LOG("[padinj] commands are read on the Steam Input path (exe+0x%X, joypad %p) - the command reader learns nothing there; changed answers count as AFK input\n",
+                kSteamRva, g_firstSiJoypad.load(std::memory_order_relaxed));
+        }
+        if (g_actLog.exchange(0, std::memory_order_relaxed) == 1) {
+            void* jp = g_firstActJoypad.load(std::memory_order_relaxed);
+            void* learned = g_primaryJoypad.load(std::memory_order_relaxed);
+            TO1_LOG("[padinj] first pad activity in Joypad::Update - joypad %p%s, pad %p (padact slot %d)\n",
+                jp, jp == learned ? " (the learned joypad)"
+                   : learned ? " (not the learned joypad)" : " (nothing learned)",
+                g_firstActPad.load(std::memory_order_relaxed),
+                g_padact.activitySlot);
+        }
+
         const uint64_t now = GetTickCount64();
         if (g_activityUntil.load(std::memory_order_relaxed) &&
             now - g_lastHeartbeatMs.load(std::memory_order_relaxed) >= 1500) {
@@ -689,6 +774,20 @@ namespace engine::pad {
     uint64_t ActivityMs()
     {
         return g_actMs.load(std::memory_order_relaxed);
+    }
+
+    PadActivity Activity()
+    {
+        PadActivity out;
+        out.lastMs = g_actMs.load(std::memory_order_relaxed);
+        out.sourceSlot = g_actSlot.load(std::memory_order_relaxed);
+        out.activityCount = g_actCount.load(std::memory_order_relaxed);
+        out.sourcesSeen = g_sourcesSeen.load(std::memory_order_relaxed);
+        out.steamReads = g_siReads.load(std::memory_order_relaxed);
+        out.steamFlips = g_siFlips.load(std::memory_order_relaxed);
+        out.steamJoypad = g_firstSiJoypad.load(std::memory_order_relaxed);
+        out.steamHooked = g_steamHooked.load(std::memory_order_relaxed);
+        return out;
     }
 
     uint32_t Applied()
