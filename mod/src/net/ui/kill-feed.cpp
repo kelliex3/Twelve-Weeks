@@ -1,4 +1,5 @@
 #include "kill-feed.hpp"
+#include "radar-box.hpp"
 #include "net-common.hpp"
 #include "net-player.hpp"
 #include "match.hpp"
@@ -178,18 +179,23 @@ void DrawRadar()
     float yaw = atan2f(fwd.x, fwd.z);
     float c = cosf(yaw), s = sinf(yaw);
 
-    // translucent background
+    // translucent background. With the t2rRbx page widgets the GUI pak's
+    // radarVig carries the disc (as in the ext); with an old pak our own glyph
+    // disc stays behind the stock dots.
+    const bool iconsOwnRadar = net::ui::radar_box::Active();
     uint32_t radarBGColor = _rgba(0, 0, 0, 160);
 
-    if (net::gui2::GetRadarMode() == net::gui2::RadarMode::Square)
-    {
-        DebugDrawCommon::DrawRectangle(RADAR_LEFT, RADAR_TOP, RADAR_RIGHT, RADAR_BOTTOM,
-            radarBGColor);
-    }
-    else
-    {
-        auto radarCircleBgSz = DebugDrawCommon::GetTextWidthHeight(kBgGlyph, 8.5f);
-        DebugDrawCommon::DrawTextPrintV(RADAR_CX - radarCircleBgSz.x * 0.5f, RADAR_CY - radarCircleBgSz.y * 0.5f, 8.5f, radarBGColor, "%s", kBgGlyph);
+    if (!iconsOwnRadar) {
+        if (net::gui2::GetRadarMode() == net::gui2::RadarMode::Square)
+        {
+            DebugDrawCommon::DrawRectangle(RADAR_LEFT, RADAR_TOP, RADAR_RIGHT, RADAR_BOTTOM,
+                radarBGColor);
+        }
+        else
+        {
+            auto radarCircleBgSz = DebugDrawCommon::GetTextWidthHeight(kBgGlyph, 8.5f);
+            DebugDrawCommon::DrawTextPrintV(RADAR_CX - radarCircleBgSz.x * 0.5f, RADAR_CY - radarCircleBgSz.y * 0.5f, 8.5f, radarBGColor, "%s", kBgGlyph);
+        }
     }
 
 
@@ -247,10 +253,20 @@ void DrawRadar()
         float radarY = RADAR_CY - relZ / UNITS_PER_PX;
 
         // out of range -> clamp to the rim, kept RADAR_DOT inside the edge
+        const bool pinned = dx * dx + dz * dz > RADAR_RANGE * RADAR_RANGE;
         auto pos = ClampPositionRadarIconToBorder(dx, dz, relX, relZ, radarX, radarY);
 
         radarX = pos.first;
         radarY = pos.second;
+
+        // The ext's blip hook recorded centres in its 1280x720 text space.
+        // The native radar has the same 75 px disc radius, so only the centre
+        // changes; the owner places the pooled t2rRbx widgets from that centre.
+        const float bx = net::ui::radar_box::core::kRadarCx +
+                         (radarX - RADAR_CX);
+        const float by = net::ui::radar_box::core::kRadarCy +
+                         (radarY - RADAR_CY);
+        if (net::ui::radar_box::FeedBlip(bx, by, pinned)) continue;
 
         auto    boxSize = DebugDrawCommon::GetTextWidthHeight(kSupplyBoxGlyph, SUPPLYBOX_BLIP_FONT);
         DebugDrawCommon::DrawTextPrintV(radarX - boxSize.x * 0.5f, radarY - boxSize.y * 0.5f,

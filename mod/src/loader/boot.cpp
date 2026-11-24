@@ -24,6 +24,8 @@
 #include "net/ui/kick-note.hpp"
 #include "net/ui/launch-notice.hpp"
 #include "net/ui/kill-feed-icons.hpp"
+#include "net/ui/prompt-anim.hpp"
+#include "net/ui/sbteam.hpp"
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
 #include "net/ui/denynote.hpp"
@@ -201,6 +203,7 @@ namespace boot {
 		net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio
 		net::audio::music_sight::Install();   // gated native MusicSlotSeen / Cos samplers
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
+		net::ui::prompt_anim::Tick(now);    // one shared pad / key snapshot for self-drawn prompts
 		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
 		{
 			static bool hooksInstalled = false;
@@ -222,6 +225,7 @@ namespace boot {
 		menu::loadseq::Tick(now);           // TWELVE WEEKS entry sequence (connecting page)
 		net::ui::death_ui::Tick(now);       // victim death screen (ported from tools/ext/death_ui.c)
 		net::ui::killfeed::Tick(now);       // icon kill feed (hud-root widgets)
+		net::ui::sbteam::Tick(now);         // place-coloured scoreboard bands (no block swap)
 		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
 		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
 		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)

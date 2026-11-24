@@ -7,6 +7,9 @@
 #include "net-patches.hpp"
 #include "kill-feed.hpp"
 #include "net/ui/kill-feed-icons.hpp"
+#include "net/ui/prompt-anim.hpp"
+#include "net/ui/radar-box.hpp"
+#include "net/ui/sbteam.hpp"
 #include "net/ui/kick-note.hpp"
 #include "net/ui/launch-notice.hpp"
 #include "menu/loadseq.hpp"
@@ -1653,9 +1656,13 @@ namespace net::replication {
         if (!s_debugMenuOpen && !TIME::IS_GAME_PAUSED() && !net::gui2::PauseMenuOpen() && !net::gui2::ScoreboardShowing()) {
             net::gui2::Spawn();
             net::gui2::RefreshWidgets();
+            const uint64_t hudNow = ::GetTickCount64();
+            net::ui::radar_box::BeginFrame(hudNow);  // resolve t2rRbx widgets, clear this frame's blips
             if (!net::ui::killfeed::Active()) DrawKillFeed();
             net::ui::killfeed::Draw();  // icon row names, drawn under the HUD widgets
             DrawRadar();
+            net::ui::radar_box::EndFrame(hudNow);    // place crate / arc widgets from those blips
+            net::ui::prompt_anim::Draw(hudNow);      // self-drawn key prompts (no winmm hook)
             net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
             net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
         }
@@ -2128,6 +2135,9 @@ namespace net::replication {
         net::ui::launch_notice::ResetRuntime();  // keeps the once-per-run latch
         menu::loadseq::Reset();
         net::ui::killfeed::Reset();
+        net::ui::prompt_anim::Reset();
+        net::ui::radar_box::Reset();
+        net::ui::sbteam::Reset();
         net::match::melee_bridge::Reset();
         net::match::downed_bridge::Reset();
         net::netsmooth::bridge::ResetAll();
