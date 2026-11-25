@@ -20,15 +20,18 @@ Wire (t2r-launcher, its own short TCP connection):
 In-game chat (the game's own sub calls, same op):
   S_PSAY 15  arg = text of a party chat line     -> state + "pchat" (last 20 lines); err noparty | bad | rate
   S_PCHAT 16 arg = "<last id seen>" (poll, 2 s)  -> {"ok","err","pchat":{"lines":[{"id","name","t","me","age"}],"last":id}} only (no database, no state)
- S_LSAY 18 arg = text of a LOBBY line (the players of the last match's lobby, SOCIAL.lobby_of) -> {"ok","err","pchat","lk"}; err nolobby | bad | rate
+  S_LSAY 18  arg = text of a LOBBY line (the players of the last match's lobby, SOCIAL.lobby_of) -> {"ok","err","pchat","lk"}; err nolobby | bad | rate
   S_LCHAT 19 arg = "<last id seen>" (poll, 2 s, MP menu / FIND MATCH) -> {"ok","err","pchat","lk"} (lk = the lobby's key: another number = a new lobby)
   S_MLOG 17  arg = "<m|t>\n<text>" (match / team line, the report log copy; the line itself travels peer to peer) -> {"ok","err"} only
+  S_ACHAT 22 arg = "<last id seen>" (poll, 2 s in a match) -> {"ok","err","achat":{"lines":[{"id","name","t","age"}],"last":id}}: lines an admin
+             typed into the token's match from the admin site (admin_say, daemon POST /chat/say). Older daemons answer "bad" (the ext ignores it).
   _state also carries "recent": the newest 10 private conversations [{"id","name","t","me","age","unread"}], newest first.
 In game the same events reach the player as notice-poll lines (kind p, op 0xBA/0xBB: notes_for).
 """
 import collections
 import hashlib
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -37,10 +40,13 @@ import time
 
 OP_REQ, OP_REPLY = 0xD8, 0xD9
 ACCT_CACHE_S = 10.0     # online_map: a token's account (s:<steamid> once its helper linked, else t:<hash>) is re-read at most this often
-S_STATE, S_SEARCH, S_ADD, S_ACCEPT, S_REMOVE, S_INVITE, S_JOIN, S_DECLINE, S_LEAVE, S_KICK, S_PROMOTE, S_READY, S_MSG, S_CHAT, S_PSAY, S_PCHAT, S_MLOG, S_LSAY, S_LCHAT = range(1, 20)
+S_STATE, S_SEARCH, S_ADD, S_ACCEPT, S_REMOVE, S_INVITE, S_JOIN, S_DECLINE, S_LEAVE, S_KICK, S_PROMOTE, S_READY, S_MSG, S_CHAT, S_PSAY, S_PCHAT, S_MLOG, S_LSAY, S_LCHAT, S_MUTE = range(1, 21)
+S_ACHAT = 22                   # (21 is kept for another sub)
 SUB_NAMES = {S_STATE: "state", S_SEARCH: "search", S_ADD: "add", S_ACCEPT: "accept", S_REMOVE: "remove", S_INVITE: "invite", S_JOIN: "join",
              S_DECLINE: "decline", S_LEAVE: "leave", S_KICK: "kick", S_PROMOTE: "promote", S_READY: "ready", S_MSG: "msg", S_CHAT: "chat",
-             S_PSAY: "psay", S_PCHAT: "pchat", S_MLOG: "mlog", S_LSAY: "lsay", S_LCHAT: "lchat"}
+             S_PSAY: "psay", S_PCHAT: "pchat", S_MLOG: "mlog", S_LSAY: "lsay", S_LCHAT: "lchat", S_MUTE: "mute", S_ACHAT: "achat"}
+ACHAT_KEEP_S = 7200.0          # admin match lines are dropped this long after the newest one of their match
+ADMIN_NAME_LEN = 24            # the "As:" name of an admin line (the ext's chat name limit)
 LCHAT_IDLE_S = 900.0           # a lobby's lines are dropped this long after its newest one
 WRITE_SUBS = frozenset((S_ADD, S_ACCEPT, S_REMOVE, S_INVITE, S_JOIN, S_DECLINE, S_LEAVE, S_KICK, S_PROMOTE, S_READY, S_MSG, S_PSAY))
 PRESENCE_TTL = 60.0            # a launcher / game seen this recently is online
@@ -68,6 +74,14 @@ MSG_KEEP = 100
 MSG_AGE_S = 30 * 86400
 CHAT_SHOW = 60                 # messages one S_CHAT reply carries
 CHAT_BYTES = 24000             # ... and at most this much text (the 0xD9 frame length is a u16)
+# Chat moderation: mutes.txt next to the database (the admin site writes it, like bans.txt), one account per line:
+#   <account> <until>  # reason        account = "s:<steam id>" (a bare 7656... id works too) or "t:<install hash>"; until = unix time, 0 = for good
+# A muted account's PARTY / LOBBY lines and friend messages are refused ("muted"); its MATCH / TEAM log copies are still logged (marked muted).
+# Every chat reply carries "mute": 0 = not muted, -1 = for good, else seconds left (the 202 ext shows YOU ARE MUTED and does not open the chat).
+# S_MUTE asks only that. Every chat line (match / team / party / lobby; never friend messages) also goes to chat_log for the admin site's CHAT page.
+MUTE_RELOAD_S = 5.0            # mutes.txt is re-checked (its write time) at most this often
+CHATLOG_AGE_S = 14 * 86400     # chat_log rows older than this are deleted (once an hour)
+CHATLOG_FLUSH_S = 5.0          # buffered chat_log rows are written at least this often
 _CTRL = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
 
 # in-game lines (kind p of the notice poll), English / Polish: {n} = a player name
@@ -324,9 +338,9 @@ class Parties:
             (self.ready.add if on else self.ready.discard)(token)
         return None
 
-    # --- a daemon restart: the parties lived in memory only, so a deploy restart dropped a party in the middle of its match and after the
-    # match each member searched alone. The daemon now writes them into its live state (live-matches.json, every 10 s and at shutdown) and puts
-    # them back at start.
+    # --- a daemon restart (Discord: "Staying with party when leaving postgame would be nice"): the parties lived in memory only, so the deploy
+    # restart at 23:44 on dropped a party of 4 in the middle of its match; after the match each member searched alone. The daemon now writes
+    # them into its live state (live-matches.json, every 10 s and at shutdown) and puts them back at start.
     RESTORE_GRACE = 300.0                      # a restored member is kept this long while its game / launcher reconnects (gc would drop it at the first pass)
 
     def export(self):
@@ -504,16 +518,24 @@ class Social:
         self.lrate = {}                # account -> [times of match / team log lines]
         self.pchat = {}                # party id -> [party chat lines] (memory only, like the parties)
         self.lchat = {}                # lobby key -> [LOBBY chat lines] (memory only)
+        self.achat = {}                # match id -> [lines an admin typed into that match's chat] (memory only)
         self.lobby_of = None           # set by the daemon: token -> its lobby's key (the requeue group = the last match id) or None
-        # last party / lobby chat line id (global, increasing). Each client keeps the highest id it has seen and skips lines at or below it,
-        # so a counter that restarted at 0 with the server hid every new line. Seeded from the clock (10 ids per second), so ids keep rising
-        # across restarts and stay inside a 32-bit int for years.
+        # last party / lobby chat line id (global, increasing). it started at 0 on every daemon restart, while each client keeps the
+        # highest id it has seen and skips lines at or below it: after a restart every new party line (own ones too) stayed hidden.
+        # Seeded from the clock (10 ids per second since 2023-11), so ids keep rising across restarts and stay inside a 32-bit int until 2030.
         self.pseq = max(0, int(time.time()) - 1700000000) * 10
         self.mlog = collections.deque(maxlen=MLOG_KEEP)    # (ts, chan, account, name, text) of the newest match / team lines
         self._mgc_at = 0.0
+        self.mute_path = None          # set by the daemon: mutes.txt next to the database (None = nobody is muted)
+        self.match_of = None           # set by the daemon: token -> its match id or None (the chat_log room of MATCH / TEAM lines)
+        self._mutes = {}               # account -> (until, reason)
+        self._mute_chk = (0.0, None)   # (time of the last check, mutes.txt write time)
+        self.clog = []                 # chat_log rows waiting for the database (ts, kind, room, acct, name, body, muted)
+        self._clog_at = 0.0
+        self._clog_gc = 0.0
         self.qnote = {}                # party id -> time of the last "leader searches" note
         self._om = (0.0, {}, set())
-        self._acct_c = {}              # token -> (time, account): online_map rebuilt every account each second (4.5 % of the daemon)
+        self._acct_c = {}              # token -> (time, account): online_map rebuilt every account each second (4.5 % of the daemon, )
         self._ensured = False          # the social tables exist (_ensure ran 7 CREATE ... IF NOT EXISTS on every launcher poll)
         self._tick_at = 0.0
         self._pt_at = 0.0
@@ -591,6 +613,87 @@ class Social:
         c.execute("CREATE TABLE IF NOT EXISTS social_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT, b TEXT, ts REAL, body TEXT, rd INT DEFAULT 0)")
         c.execute("CREATE INDEX IF NOT EXISTS social_msgs_to ON social_msgs(b, rd)")
         c.execute("CREATE INDEX IF NOT EXISTS social_msgs_pair ON social_msgs(a, b, id)")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, kind TEXT, room TEXT, acct TEXT, name TEXT, body TEXT, "
+                  "muted INT DEFAULT 0)")
+        c.execute("CREATE INDEX IF NOT EXISTS chat_log_ts ON chat_log(ts)")
+        c.execute("CREATE INDEX IF NOT EXISTS chat_log_acct ON chat_log(acct, ts)")
+
+    # --- chat moderation (mutes.txt + chat_log)
+    def _mutes_now(self):
+        """{account: (until, reason)} from mutes.txt, re-read when its write time changes (checked at most every MUTE_RELOAD_S)."""
+        path = self.mute_path
+        if not path:
+            return {}
+        now = self.h.now()
+        at, mt = self._mute_chk
+        if now - at < MUTE_RELOAD_S and at:
+            return self._mutes
+        try:
+            m = os.stat(path).st_mtime
+        except OSError:
+            m = None
+        if m != mt or not at:
+            out = {}
+            if m is not None:
+                try:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            head, _, why = line.partition("#")
+                            parts = head.split()
+                            if not parts:
+                                continue
+                            key = parts[0]
+                            if key.isdigit() and len(key) == 17:
+                                key = "s:" + key
+                            try:
+                                until = float(parts[1]) if len(parts) > 1 else 0.0
+                            except ValueError:
+                                until = 0.0
+                            out[key] = (until, why.strip())
+                except OSError:
+                    out = self._mutes
+            self._mutes = out
+        self._mute_chk = (now, m)
+        return self._mutes
+
+    def mute_left(self, me):
+        """0 = not muted, -1 = muted for good, else whole seconds left."""
+        e = self._mutes_now().get(me)
+        if not e:
+            return 0
+        until = e[0]
+        if until <= 0:
+            return -1
+        left = int(until - self.h.now())
+        return left if left > 0 else 0
+
+    def _log_line(self, kind, room, me, name, body, muted=0):
+        with self.lock:
+            self.clog.append((self.h.now(), kind, str(room or ""), me, name, body, 1 if muted else 0))
+
+    def _clog_flush(self, c=None, force=False):
+        """Write the buffered chat_log rows (inside handle()'s transaction, or an own connection from the quick path)."""
+        now = self.h.now()
+        with self.lock:
+            if not self.clog or (not force and c is None and now - self._clog_at < CHATLOG_FLUSH_S and len(self.clog) < 40):
+                return
+            rows, self.clog = self.clog, []
+            self._clog_at = now
+        try:
+            if c is None:
+                with self.h.db() as c2:
+                    self._clog_write(c2, rows, now)
+            else:
+                self._clog_write(c, rows, now)
+        except sqlite3.Error as ex:
+            self.h.log("SOCIAL chat_log error", repr(ex))
+
+    def _clog_write(self, c, rows, now):
+        self._ensure(c)
+        c.executemany("INSERT INTO chat_log(ts, kind, room, acct, name, body, muted) VALUES(?, ?, ?, ?, ?, ?, ?)", rows)
+        if now - self._clog_gc > 3600.0:
+            self._clog_gc = now
+            c.execute("DELETE FROM chat_log WHERE ts < ?", (now - CHATLOG_AGE_S,))
 
     def _adopt(self, c, token, key):
         """The token's Steam id became known: the rows of its old install account move to the Steam account (only when there are some)."""
@@ -610,9 +713,10 @@ class Social:
             c.commit()
             return True
         except sqlite3.Error as ex:
-            # This commit can hit "database is locked" while the DB backup holds its read lock. A failed COMMIT leaves the transaction open
-            # with sqlite's PENDING lock, which blocks every new reader; handle() then needed a read (online_map -> steamid) that waited on that
-            # same lock, so the whole daemon queued behind it until a restart. Roll back: the locks go at once; the adopt is retried next poll.
+            # 08:13 outage: this commit hit "database is locked" (the DB backup held its read lock for 14 s). The error was swallowed and the
+            # failed COMMIT left the transaction open with sqlite's PENDING lock, which blocks every new reader. handle() then needed a read
+            # (online_map -> steamid) that waited on that same lock, so the whole daemon queued behind it until a restart (15 min down).
+            # Roll back: the locks go at once; the adopt is retried on the next poll (_adopt_once).
             try:
                 c.rollback()
             except sqlite3.Error:
@@ -801,8 +905,10 @@ class Social:
 
     def handle(self, token, lang, sub, arg=""):
         """One launcher request -> the reply dict (always a fresh state plus ok / err)."""
-        if sub in (S_PCHAT, S_MLOG, S_LSAY, S_LCHAT):       # polled every 2 s in matches: no database, no state (LOBBY lines: memory only too)
-            return self._quick(token, sub, arg)
+        if sub in (S_PCHAT, S_MLOG, S_LSAY, S_LCHAT, S_MUTE, S_ACHAT):   # polled every 2 s in matches: no database, no state (LOBBY lines: memory only too)
+            res = self._quick(token, sub, arg)
+            self._clog_flush()
+            return res
         res = {"ok": 1, "err": ""}
         try:
             with self.h.db() as c:
@@ -833,6 +939,8 @@ class Social:
                     self.p.leave(token)
                 elif sub == S_READY:
                     err = self.p.set_ready(token, arg.strip() != "0")
+                elif sub in (S_MSG, S_PSAY) and self.mute_left(me):
+                    err = "muted"
                 elif sub == S_MSG:
                     key, _, text = (arg or "").partition("\n")
                     err = self._msg(c, me, key.strip(), text, self.h.name(token) or token_name_fallback(token))
@@ -854,6 +962,8 @@ class Social:
                 if err:
                     res["ok"], res["err"] = 0, err
                 res.update(self._state(c, token, me, lang))
+                res["mute"] = self.mute_left(me)
+                self._clog_flush(c, force=True)
         except sqlite3.Error as ex:
             self.h.log("SOCIAL db error", repr(ex))
             res = {"ok": 0, "err": "db"}
@@ -879,6 +989,7 @@ class Social:
             lst = self.pchat.setdefault(pid, [])
             lst.append({"id": self.pseq, "from": me, "name": name, "t": body, "ts": self.h.now()})
             del lst[:-PCHAT_KEEP]
+        self._log_line("party", pid, me, name, body)
         return None
 
     def _pchat_view(self, token, me, since):
@@ -893,8 +1004,49 @@ class Social:
         return {"lines": [{"id": x["id"], "name": x["name"], "t": x["t"], "me": x["from"] == me, "age": max(0, int(now - x["ts"]))} for x in lines],
                 "last": lst[-1]["id"] if lst else since}
 
+    def admin_say(self, mid, name, text, who=""):
+        """An admin site line for match `mid`.
+        Kept in memory; every client of that match fetches it with S_ACHAT and shows it on MATCH in the admin colour.
+        Returns (line id, None) or (None, error code). `who` = the admin site login, for the log only."""
+        name = " ".join(_CTRL.sub(" ", name or "").split()).replace("<", "").replace(">", "").replace("|", "")[:ADMIN_NAME_LEN]
+        body = self._clean(text)
+        mid = str(mid or "").strip()
+        if not mid:
+            return None, "no match"
+        if not name:
+            return None, "no name"
+        if not body:
+            return None, "empty text"
+        now = self.h.now()
+        with self.lock:
+            self.pseq += 1
+            lid = self.pseq
+            lst = self.achat.setdefault(mid, [])
+            lst.append({"id": lid, "name": name, "t": body, "ts": now})
+            del lst[:-PCHAT_KEEP]
+            for k in [k for k, v in self.achat.items() if not v or now - v[-1]["ts"] > ACHAT_KEEP_S]:
+                del self.achat[k]
+        self._log_line("match", mid, "admin:" + (str(who or "")[:40] or "site"), name, body)
+        self.h.log("CHAT", "admin", mid, repr(name), repr(body), "by", who or "?")
+        return lid, None
+
+    def _achat_view(self, token, since):
+        """{"lines": admin lines of the token's match newer than `since` (oldest first), "last": highest id}; not in a match = nothing."""
+        try:
+            mid = self.match_of(token) if self.match_of else None
+        except Exception:                  # noqa: BLE001 - the chat never breaks on the lookup
+            mid = None
+        if not mid:
+            return {"lines": [], "last": since}
+        now = self.h.now()
+        with self.lock:
+            lst = list(self.achat.get(str(mid), ()))
+        lines = [x for x in lst if x["id"] > since][-PCHAT_SHOW:]
+        return {"lines": [{"id": x["id"], "name": x["name"], "t": x["t"], "age": max(0, int(now - x["ts"]))} for x in lines],
+                "last": lst[-1]["id"] if lst else since}
+
     def _lobby_chat(self, token, me, sub, arg):
-        """S_LSAY / S_LCHAT: the LOBBY channel of the token's lobby (lobby_of); the reply has the party chat's shape + "lk"."""
+        """S_LSAY / S_LCHAT : the LOBBY channel of the token's lobby (lobby_of); the reply has the party chat's shape + "lk"."""
         try:
             key = self.lobby_of(token) if self.lobby_of else None
         except Exception:                  # noqa: BLE001 - the chat never breaks on the lookup
@@ -911,9 +1063,12 @@ class Social:
             body = self._clean(arg or "")
             if not body:
                 return {"ok": 0, "err": "bad", "lk": lk}
+            if self.mute_left(me):
+                return {"ok": 0, "err": "muted", "lk": lk}
             if self._limited(me, self.mrate, MSG_PER_MIN):
                 return {"ok": 0, "err": "rate", "lk": lk}
             name = self.h.name(token) or token_name_fallback(token)
+            self._log_line("lobby", lk, me, name, body)
             with self.lock:
                 self.pseq += 1
                 lst = self.lchat.setdefault(key, [])
@@ -929,15 +1084,27 @@ class Social:
                           "last": lst[-1]["id"] if lst else since}}
 
     def _quick(self, token, sub, arg):
-        """S_PCHAT / S_MLOG: the cheap path (no database, no state, no last-seen row)."""
+        """S_PCHAT / S_MLOG / S_LSAY / S_LCHAT / S_MUTE: the cheap path (no database, no state, no last-seen row); every reply carries "mute"."""
         self.touch(token)
         me = self.acct(token)
+        res = self._quick1(token, me, sub, arg)
+        res["mute"] = self.mute_left(me)
+        return res
+
+    def _quick1(self, token, me, sub, arg):
+        if sub == S_MUTE:
+            e = self._mutes_now().get(me)
+            return {"ok": 1, "err": "", "why": (e[1][:120] if e and self.mute_left(me) else "")}
         if sub == S_PCHAT:
             s = (arg or "").strip()
             since = int(s) if s.isdigit() and len(s) < 15 else 0
             return {"ok": 1, "err": "", "pchat": self._pchat_view(token, me, since)}
         if sub in (S_LSAY, S_LCHAT):
             return self._lobby_chat(token, me, sub, arg)
+        if sub == S_ACHAT:
+            s = (arg or "").strip()
+            since = int(s) if s.isdigit() and len(s) < 15 else 0
+            return {"ok": 1, "err": "", "achat": self._achat_view(token, since)}
         chan, _, text = (arg or "").partition("\n")
         chan = chan.strip()
         body = self._clean(text)
@@ -946,10 +1113,17 @@ class Social:
         if self._limited(me, self.lrate, MSG_PER_MIN * 2):
             return {"ok": 0, "err": "rate"}
         name = self.h.name(token) or token_name_fallback(token)
+        muted = 1 if self.mute_left(me) else 0
         with self.lock:
             self.mlog.append((self.h.now(), chan, me, name, body))
-        self.h.log("CHAT", "match" if chan == "m" else "team", me, name, repr(body))
-        return {"ok": 1, "err": ""}
+        self.h.log("CHAT", "match" if chan == "m" else "team", me, name, repr(body), *(("(muted)",) if muted else ()))
+        room = None
+        try:
+            room = self.match_of(token) if self.match_of else None
+        except Exception:                  # noqa: BLE001 - the log never breaks the chat
+            room = None
+        self._log_line("match" if chan == "m" else "team", room, me, name, body, muted)
+        return {"ok": 0, "err": "muted"} if muted else {"ok": 1, "err": ""}
 
     def _adopt_once(self, c, token, key):
         if key.startswith("s:") and self.seen_w.get(("adopt", token)) is None:

@@ -4820,6 +4820,7 @@ class MatchMaker:
         self._rq_go = []       # (persistent lobby) the released groups of the current try_form pass: [(mid, searching, still on the screens)]
         self._rq_logged = 0.0
         self.book = lobbybook.LobbyBook(MATCH_SIZE, log=log)   # (LOBBY_BOOK) the search lobbies
+        self._party_split_log = {}                              # (lobby, missing mates) -> last log time (wait line)
         # join in progress (T2R_JIP=1, re/join-in-progress.md)
         self.departed_vol = set()  # tokens that left their running match on purpose (clean op 0x02): not pulled back into it
         self.departed_t = {}   # token -> time it left its running match (a slot is handed on only after JIP_REUSE_S)
@@ -4980,6 +4981,12 @@ class MatchMaker:
             for m in self._book_unit(t):
                 if m not in inc and m not in self.book.of and m != t:
                     res.add(m)
+        # the incoming side's party mates that are in no lobby yet need their seats too (a merge took a party of 4 in as 3
+        # into a lobby of 5, which then started with 8 and without the party leader)
+        for t in inc:
+            for m in self._book_unit(t):
+                if m not in inc and m not in lb.members and m not in self.book.of:
+                    res.add(m)
         return MATCH_SIZE - len(res)
 
     def _book_jip_hold(self, token, unit, now):
@@ -5026,12 +5033,14 @@ class MatchMaker:
                 bk.back(t)
                 continue
             src = None
+            unit = self._book_unit(t)
+            if t in tick and len(unit) > 1 and any(self.rq.mid_of(u) != self.rq.mid_of(t) for u in unit):
+                tick.discard(t)                                       # a party formed since that match: a new search
             if t in tick:
                 nm = self.rq.next_of(t)
                 if nm and nm in self.matches and nm not in self.ended:
                     continue                                          # its lobby formed its next match meanwhile: it joins that one (jip_pass)
                 src = self.rq.mid_of(t)
-            unit = self._book_unit(t)
             solo = len(unit) == 1 or all(u in self.queue for u in unit)
             solo = solo and not full and self._book_jip_hold(t, unit, now)
             lid, why = bk.place(t, unit, self._book_fits, self._book_cap, now, src=src, solo=solo, at=self.queue.get(t, now),
@@ -5043,9 +5052,24 @@ class MatchMaker:
         for a, b in bk.merge_pass(self._book_fits, self._book_cap, now):
             log("LOBBY-BOOK: lobby", b, "merged into", a, [tag(x) for x in bk.members(a)])
         rset = set(ready)
+        pset = set(pub)
         for lb in bk.launch_order():
             mem = list(lb.members)
             if not mem or lb.away or lb.hold or now < lb.wait_until or any(t not in rset for t in mem):
+                continue
+            # a party starts together. A searching mate of a member that is not in this lobby: no start; a mate sitting in
+            # another lobby leaves it, so that the next pass places it with its party (place(): the same lobby, else the party moves)
+            miss = sorted({m for t in mem for m in self._book_unit(t) if m not in mem and m in pset})
+            if miss:
+                for m in miss:
+                    if bk.lobby_of(m):
+                        bk.remove(m, "its party is in lobby %s" % lb.lid)
+                if len(self._party_split_log) > 500:
+                    self._party_split_log.clear()
+                k = (lb.lid, tuple(miss))
+                if self._party_split_log.get(k, 0) < now - 30:
+                    self._party_split_log[k] = now
+                    log("LOBBY-BOOK: lobby", lb.lid, "waits for party mate(s)", [tag(m) for m in miss], "(a party starts together)")
                 continue
             sub = sorted(mem, key=lambda t: self.queue.get(t, now))
             mid, players = self._form_pick(sub, held, now, online, lb)
@@ -6795,6 +6819,15 @@ def _lobby_chat_key(tok):
         return None
     return MM.rq.mid_of(tok) if (REQUEUE and LOBBY_KEEP) else None
 SOCIAL.lobby_of = _lobby_chat_key
+SOCIAL.mute_path = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "mutes.txt")   # chat mutes (the admin site writes it, like bans.txt)
+def _chat_match_of(tok):
+    """The match id of a MATCH / TEAM chat line (the admin CHAT page groups by it)."""
+    try:
+        with MM.lock:
+            return MM._mid_locked(tok)
+    except Exception:                              # noqa: BLE001 - the chat log never breaks the queue
+        return None
+SOCIAL.match_of = _chat_match_of
 
 def party_op(pl):
     """Op 0xDA -> reply frame (0xDB)."""
@@ -10842,6 +10875,15 @@ def admin_server():
                     return self._send(200, {"ok": True, "rules": team_rules_text(), "preview": teams_preview()})
                 if self.path == "/kick":
                     return self._send(200, admin_kick(body.get("pid"), body.get("reason") or ""))
+                if self.path == "/chat/say":
+                    # admin site: a line typed into a running match's chat "As:" <name>; clients fetch it with S_ACHAT
+                    mid = str(body.get("mid") or "")
+                    with MM.lock:
+                        live = mid in MM.matches
+                    if not live:
+                        return self._send(200, {"ok": False, "error": "match not running"})
+                    lid, err = SOCIAL.admin_say(mid, str(body.get("name") or ""), str(body.get("text") or ""), str(body.get("who") or ""))
+                    return self._send(200, {"ok": True, "id": lid} if lid else {"ok": False, "error": err})
                 if self.path == "/handover":
                     # A/B test aid (hm-peer0 fix): start a planned host handover of match `mid` (default: the only live one) to `slot` now,
                     # without the re-pick's ping / age rules. Needs T2R_HOST_REPICK=2 and the admin secret like every admin call.
