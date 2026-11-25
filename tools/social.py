@@ -505,7 +505,10 @@ class Social:
         self.pchat = {}                # party id -> [party chat lines] (memory only, like the parties)
         self.lchat = {}                # lobby key -> [LOBBY chat lines] (memory only)
         self.lobby_of = None           # set by the daemon: token -> its lobby's key (the requeue group = the last match id) or None
-        self.pseq = 0                  # last party chat line id (global, increasing)
+        # last party / lobby chat line id (global, increasing). Each client keeps the highest id it has seen and skips lines at or below it,
+        # so a counter that restarted at 0 with the server hid every new line. Seeded from the clock (10 ids per second), so ids keep rising
+        # across restarts and stay inside a 32-bit int for years.
+        self.pseq = max(0, int(time.time()) - 1700000000) * 10
         self.mlog = collections.deque(maxlen=MLOG_KEEP)    # (ts, chan, account, name, text) of the newest match / team lines
         self._mgc_at = 0.0
         self.qnote = {}                # party id -> time of the last "leader searches" note

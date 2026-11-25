@@ -165,6 +165,7 @@ FILL_WAIT = float(os.environ.get("T2R_FILL_WAIT", "15"))   # s without a new arr
 # is not full (fewer players than MATCH_SIZE) instead of waiting for a new one. Needs the matching t2r-ext (it reports the match
 # clock over op 0xE3 and adds the joiner to the roster of the players already in the match).
 JIP = os.environ.get("T2R_JIP", "1") == "1"
+JIP_HOST_CAP = os.environ.get("T2R_JIP_HOST_CAP", "1") != "0"   # no join in progress past what the host's lag record can carry (0 = old)
 # WAVE RESPAWN (default ON since, T2R_WAVE_RESPAWN=0 = off): every client's respawn countdown ends at the next wave of the shared match clock
 # (5-15 s wait, 2013 Supply_Raid.wiki). The setting rides on the 0xE5 reply (jip_roster_op) as one trailing byte, so clients that poll in a match
 # follow it; a client that never gets it (old server / no poll) runs the default (on).
@@ -3059,6 +3060,44 @@ def session_reattach(conn, addr, st):
     conn.sendall(auth_reply_open(shown, msg(0x16, struct.pack("<I", max(1, PRES.count())))))
     log("REATTACH", addr, tag(tok_), "match", mid, "session socket back after %.1f s" % (time.time() - lost[0]) if lost else "(replaced a half-open socket)")
     evt("session-back", mid, tag(tok_), "session socket re-attached after %.1f s" % (time.time() - lost[0]) if lost else "(replaced a half-open socket)")
+    if lost and lost[1] == mid:
+        reattach_missed_start(tok_, mid, lost[0], conn)
+    return True
+
+REATTACH_START_DELAY_S = 2.0
+
+def reattach_missed_start(tok_, mid, lost_at, conn):
+    """A session socket that died on the loading screen missed the match's GAME-START (0x0a): it went out to the dead socket, the socket
+    came back seconds later and no 0x0a ever came, so the client waited on the loading screen until the player closed the game. A start
+    that went out while the socket was down is sent again to the re-attached socket. Only then: a client already in the match must not get a second 0x0a. Sent after
+    REATTACH_START_DELAY_S, once the ext has set winmm's session state back to 4 (300 ms after the connect)."""
+    js = JIP_STARTED.get(tok_)
+    with MM.lock:
+        if js and js[0] == mid:
+            t_start = js[1]                                  # a joiner: its own GAME-START
+        elif tok_ in MM.joining:
+            t_start = None                                   # a joiner whose own GAME-START has not gone out yet: maybe_game_start sends it
+        else:
+            t_start = MM.started_t.get(mid) if mid in MM.started else None
+    if t_start is None or t_start < lost_at:
+        return False
+
+    def _go():
+        with MM.lock:
+            running = mid in MM.launched and mid not in MM.ended and tok_ not in MM.departed.get(mid, ())
+        if not running or MM.mid_of(tok_) != mid or SESSIONS.conn(tok_) is not conn:
+            log("REATTACH start: not re-sent to", tag(tok_), "match", mid, "(left / ended / socket replaced)")
+            return
+        try:
+            conn.sendall(msg(0x0a, b"\x01"))
+        except OSError as e:
+            log("REATTACH start: send to", tag(tok_), "failed", repr(e))
+            return
+        log("REATTACH start: GAME-START 0x0a re-sent to", tag(tok_), "match", mid,
+            "(it went out %.1f s after the socket was lost)" % (t_start - lost_at))
+        evt("session-back-start", mid, tag(tok_), "GAME-START re-sent: it went out while the session socket was down")
+
+    threading.Timer(REATTACH_START_DELAY_S, _go).start()
     return True
 
 # --------------------------------------------------- client / server version check
@@ -3283,8 +3322,26 @@ def version_refusal(token):
         pass
     return srv_text("update_refusal", lang_of(token))
 
-CLIENT_VERSIONS_MAX = 2000
+# The table sat at its cap of 2000 entries and every new player pushed the OLDEST entry out. A launch with an unchanged version did
+# not move its entry, so the oldest entries were the regulars, evicted while their game ran; their next search was refused
+# "(version) None" until they restarted the game.
+# Now: least recently launched goes first (version_op moves a token to the newest end), a token with a live session or in the
+# search / a match is never evicted, and the cap is 10000 (the per-address new-identity limit still guards against token floods).
+CLIENT_VERSIONS_MAX = 10000
 LINUX_CLIENTS_MAX = 500
+def _versions_evict_one():
+    """Drop the least recently launched token that is not online (no session socket, not searching, not in a match)."""
+    for t in list(CLIENT_VERSIONS)[:64]:
+        try:
+            online = SESSIONS.conn(t) is not None or t in MM.queue or MM.in_match(t)     # (version_op runs without MM.lock: in_match takes it)
+        except Exception:                           # noqa: BLE001 - an eviction check never breaks a version report
+            online = False
+        if not online:
+            CLIENT_VERSIONS.pop(t, None)
+            return t
+    t = next(iter(CLIENT_VERSIONS), None)            # 64 oldest all online: the oldest goes (the table never grows past the cap)
+    CLIENT_VERSIONS.pop(t, None)
+    return t
 _save_due = [0.0]
 def _save_soon():
     """Debounced: the version / Linux tables are written at most every 5 s by the status loop (used to be one whole-file rewrite per request)."""
@@ -3313,8 +3370,14 @@ def version_op(pl, addr=None):
         if CLIENT_VERSIONS.get(tok) != ver:
             evt("client-version", tag(tok), ver, "server", srv)
             if tok not in CLIENT_VERSIONS and len(CLIENT_VERSIONS) >= CLIENT_VERSIONS_MAX:
-                CLIENT_VERSIONS.pop(next(iter(CLIENT_VERSIONS)), None)      # oldest entry out
+                _versions_evict_one()
+            CLIENT_VERSIONS.pop(tok, None)
             CLIENT_VERSIONS[tok] = ver
+            _save_soon()
+        elif next(reversed(CLIENT_VERSIONS), None) != tok:
+            # An unchanged version used to stay where it was, so the table's "oldest" entries were the longest-known
+            # players, not the least recently seen. Each launch now moves the token to the newest end (the json keeps the order).
+            CLIENT_VERSIONS[tok] = CLIENT_VERSIONS.pop(tok)
             _save_soon()
     ok = (not SERVER_VERSION) or ver == SERVER_VERSION
     if not ok:
@@ -4655,6 +4718,23 @@ def party_lead_searching(m):
 
 
 # ---------------------------------------------------------------- matchmaking
+_JIP_HV = {}          # (host token, players) -> (time, (rank, text)): the join check runs for every searcher x running match on each poll
+JIP_HV_S = 10.0
+def jip_host_verdict(host, n):
+    """HOSTCAP.verdict(host, n), cached JIP_HV_S seconds; (1, error) when the lookup fails (never blocks a join on an error)."""
+    now = time.time()
+    e = _JIP_HV.get((host, n))
+    if e and now - e[0] < JIP_HV_S:
+        return e[1]
+    try:
+        v = HOSTCAP.verdict(host, n)
+    except Exception as ex:                    # noqa: BLE001
+        v = (1, "lookup failed %r" % (ex,))
+    if len(_JIP_HV) > 2000:
+        _JIP_HV.clear()
+    _JIP_HV[(host, n)] = (now, v)
+    return v
+
 class MatchMaker:
     """Queue -> match. A match starts when MATCH_SIZE players are queued, or when at
     least MIN_PLAYERS are queued and nobody new has joined for FILL_WAIT seconds (twice
@@ -5632,6 +5712,12 @@ class MatchMaker:
                     why_not.append("%s: %d seat(s) kept for its lobby members still on the post-match screens" % (mid, len(_kept))); continue
             if len(active) + (1 if back else need) > MATCH_SIZE:         # (fuzz seed 2: a leaver coming back counts as one more player - its slot is departed, so it is not in `active`; the match was full already: 7 v MATCH_SIZE 6)
                 continue                                           # full (for this many players)
+            if not back and JIP_HOST_CAP and hostcap.MODE >= 2:
+                # A host that lagged before with fewer players got filled to 8 by joins in progress: pings of several seconds for everyone, no re-pick
+                # target. A join is refused when the host's record says it lagged below what one more player needs (verdict rank 2).
+                rk, txt = jip_host_verdict(pl[hslot], len(active) + need)
+                if rk >= 2:
+                    why_not.append("%s: host %s cannot carry %d players (%s)" % (mid, tag(pl[hslot]), len(active) + need, txt)); continue
             key = frozenset(pl)
             if (RELAY_MATCH_MAX > 0 and not back and MATCH_P2P.get(key) is False and has_helper(token)
                     and len(active) + need > RELAY_MATCH_MAX):
@@ -7540,8 +7626,10 @@ def clan_why_deliberate(why):
 
 _CLAN_LOST_COUNTED = set()   # (token, mid) already counted against CLAN_LOST_EXCUSE_MAX
 
-def clan_leave_excuse(token, mid, why):
-    """None = a deliberate leave of a running match that counts as 'left early'; else the reason it is excused (crash / timeout / ...)."""
+def clan_leave_excuse(token, mid, why, at=None):
+    """None = a deliberate leave of a running match that counts as 'left early'; else the reason it is excused (crash / timeout / ...).
+    at = when the player really left (its session socket dropped); the verdict of a lost session comes SESSION_GRACE_S later, and the start /
+    end grace windows are measured from the real departure, not from that timeout."""
     if CLAN_NO_PENALTY:
         return "no clan penalties on this server (T2R_CLAN_NO_PENALTY)"
     if not clan_why_deliberate(why):
@@ -7578,12 +7666,17 @@ def clan_leave_excuse(token, mid, why):
         cv = tv = None
     if cv and tv and cv != tv:
         return "playing an older build after an update was published (%s, current %s)" % (cv, tv)
-    now = time.time()
+    now = at or time.time()
     with MM.lock:
         st_t = MM.started_t.get(mid)
         ck = MM.clock.get(mid)
     if st_t and mid not in RESTORED_T and now - st_t < CLAN_START_GRACE_S:      # (a restored match has no true start time)
         return "left %.0f s after the match start (< %.0f s: could not reach the host / bad start)" % (now - st_t, CLAN_START_GRACE_S)
+    # A join in progress has the same bad-start window from ITS start: a joiner whose game never reached the host ("Could not reach host")
+    # and who closed it seconds after its own GAME-START got a left-early day.
+    js = JIP_STARTED.get(token)
+    if js and js[0] == mid and 0 <= now - js[1] < CLAN_START_GRACE_S:
+        return "left %.0f s after its join-in-progress start (< %.0f s: could not reach the host / bad start)" % (now - js[1], CLAN_START_GRACE_S)
     if ck:
         left = ck[0] - (now - ck[3])
         if ck[2] or (now - ck[3] < 60 and left < CLAN_END_GRACE_S):
@@ -7598,7 +7691,7 @@ def leave_running_match(token, why):
     match-end result found no players and a later 'already in a match' check blocked nobody but also
     recorded nothing. Returns True when the match was kept for others."""
     GL.release(token)                       # a gun limit it held (tools/gunlimit.py) is free for its team at once
-    SESS_LOST.pop(token, None)
+    _lost = SESS_LOST.pop(token, None)
     all_players = MM.players_of(token)
     migrating = bool(HM.enabled and HM.has(token))
     was_host = (HM.host_token(token) == token) if migrating else bool(all_players and all_players[0] == token)
@@ -7610,10 +7703,13 @@ def leave_running_match(token, why):
             with HM.lock:
                 hm = HM.matches.get(pre_mid)
                 host_lost = bool(hm and (hm.get("lost") or hm.get("pending")) and not hm.get("given_up"))
-        CLAN_LEFT_AT[(token, pre_mid)] = time.time()
-        _why_ex = clan_leave_excuse(token, pre_mid, why)
-        if _why_ex is None and ((lastd and lastd[1] != token and time.time() - lastd[0] <= CLAN_EXCUSE_S) or host_lost):
-            _why_ex = ("host lost (migration pending)" if host_lost else "%.0f s after %s left" % (time.time() - lastd[0], tag(lastd[1])))
+        # a lost session is removed SESSION_GRACE_S (60 s) after its socket dropped; every window below is measured from the drop
+        _at = _lost[0] if _lost and _lost[1] == pre_mid and "session lost" in (why or "") else None
+        _t = _at or time.time()
+        CLAN_LEFT_AT[(token, pre_mid)] = _t
+        _why_ex = clan_leave_excuse(token, pre_mid, why, _at)
+        if _why_ex is None and ((lastd and lastd[1] != token and _t - lastd[0] <= CLAN_EXCUSE_S) or host_lost):
+            _why_ex = ("host lost (migration pending)" if host_lost else "%.0f s after %s left" % (_t - lastd[0], tag(lastd[1])))
         if _why_ex is None and migrating:
             # 07a228ac: the host hitched, the others moved on without it, its ext heard 'replaced as host - leaving the match' and sent the
             # 0x02 itself: that leave was the server's decision, not the player's
@@ -7629,7 +7725,7 @@ def leave_running_match(token, why):
         else:
             CLAN_EXCUSED.discard((token, pre_mid))
             log("CLAN leave", tag(token), "mid", pre_mid, "deliberate (%s) - counts as left early unless a later excuse applies" % why)
-        CLAN_LAST_DEPART[pre_mid] = (time.time(), token)
+        CLAN_LAST_DEPART[pre_mid] = (_t, token)
     if migrating:
         HM.depart(token, why)
     mid = MM.depart(token, voluntary=why.startswith("left"))
