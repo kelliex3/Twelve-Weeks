@@ -1,0 +1,42 @@
+# secrets / config (the bot token lives in config.json)
+config.json
+config.json.*
+*.bak*
+*.pre-*
+.env
+.env.*
+*.token
+*secret*
+*.pem
+*.key
+
+# environment, caches, logs
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.out
+backups/
+
+# runtime state written by the bot (Discord ids, player names, report codes)
+channels.json
+live_channels.json
+bug_desk.json
+known_issues.json
+report_codes.json
+og.json
+og_members.json
+look.json
+posts.json
+entry-*.json
+
+# patch-note post files (dated, quote players)
+discord-*.json
+
+# heavy art (kept out of git; copy by hand next to the bot)
+art/choose-your-faction.png
+art/rules.png
+art/welcome-guide.png
+
+# fonts we may not redistribute
+welcome-art/fonts/

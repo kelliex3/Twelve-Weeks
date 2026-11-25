@@ -1,0 +1,26 @@
+{
+  "token": "PASTE-THE-BOT-TOKEN-HERE",
+  "guild_id": "123456789012345678",
+  "downloads": [
+    ["Windows launcher", "https://example.invalid/download/Launcher.exe"],
+    ["Linux / Steam Deck (AppImage)", "https://example.invalid/download/Launcher.AppImage"]
+  ],
+  "live_counts": {
+    "enabled": false,
+    "category": "LIVE PLAYERS",
+    "position": 0,
+    "status_file": "~/t2r-live/data/t2r-status.json",
+    "channels": [
+      ["supply-raid", "Supply Raid: {n} in match"],
+      ["interrogation", "Interrogation: {n} in match"],
+      ["lobby", "In lobby: {n}"],
+      ["launcher", "Launcher open: {n}"]
+    ]
+  },
+  "bug_desk": {
+    "enabled": false,
+    "reports_dir": "~/t2r-live/update-data/reports",
+    "delete_help": false,
+    "general_automod": true
+  }
+}

@@ -1,0 +1,18 @@
+# Template systemd unit. Replace BOTUSER and BOTDIR, then:
+#   sudo cp twelveweeks-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now twelveweeks-bot
+[Unit]
+Description=Twelve Weeks Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=BOTUSER
+WorkingDirectory=BOTDIR
+ExecStart=BOTDIR/.venv/bin/python -u twelveweeks_bot.py run
+Restart=always
+RestartSec=10
+StandardOutput=append:BOTDIR/bot.out
+StandardError=append:BOTDIR/bot.out
+
+[Install]
+WantedBy=multi-user.target
