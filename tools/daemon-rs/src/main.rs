@@ -12,12 +12,18 @@ mod lobbybook;
 mod log;
 mod map_packs;
 mod modeq;
+mod names;
+mod notices;
 mod net;
 mod py;
 mod pyfmt;
+mod rankbadge;
 mod requeue;
 mod rnd;
+mod roles;
 mod selftest;
+mod social;
+mod social_selftest;
 mod udp;
 mod util;
 
