@@ -351,7 +351,8 @@ impl Relay {
             if self.seen_once(Seen::Addr(addr, 0x03), 2) {
                 dlog!("UDP", PyAddr(addr), format!("03-keepalive {}B", n), hex_sp(&data[..n.min(16)]));
             }
-            self.relay_table(Table::Ka, data, addr, now, net);
+            // (live daemon.py 11-24, fra1 far over its transfer pool) a keepalive is no longer copied to every other keepalive socket:
+            // n players = n x (n - 1) packets, ~40 GB a day. The game only accepts the 0x04 pong above; a copied 0x03 was dropped anyway.
         } else if n >= 6 && op == 0x00 {
             let sid = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
             let slot = data[5];

@@ -57,6 +57,7 @@ pub struct Shared {
     report_limit: RateLimiter,
     clip_limit: RateLimiter,
     clip_lock: Mutex<()>,
+    cache: Mutex<std::collections::HashMap<String, (Instant, Arc<Encoded>)>>,
 }
 
 fn client_ip(req: &Request, peer: &SocketAddr) -> (String, bool) {
@@ -80,6 +81,53 @@ fn base_url(sh: &Shared, req: &Request, peer: &SocketAddr) -> String {
 
 fn send_reply(s: &mut TcpStream, r: &Reply, head: bool) -> io::Result<()> {
     send_json(s, r.code, &r.body, head)
+}
+
+/// An API reply encoded once: the plain JSON and, from 1024 bytes up, its gzip (server.py gzip_cached: level 6, header mtime 0).
+pub struct Encoded {
+    code: u16,
+    plain: Vec<u8>,
+    gz: Option<Vec<u8>>,
+}
+
+fn encode(r: Reply) -> Encoded {
+    let plain = r.body.into_bytes();
+    let gz = if plain.len() >= 1024 {
+        let mut e = flate2::GzBuilder::new().mtime(0).write(Vec::with_capacity(plain.len() / 3), flate2::Compression::new(6));
+        e.write_all(&plain).ok().and_then(|_| e.finish().ok())
+    } else {
+        None
+    };
+    Encoded { code: r.code, plain, gz }
+}
+
+/// (11-24 bandwidth, live server.py _json) JSON goes out gzipped when the caller accepts it: Cloudflare and Caddy always do. Every reply
+/// says Vary: Accept-Encoding so a cache in between keeps the two forms apart.
+fn send_encoded(s: &mut TcpStream, req: &Request, e: &Encoded, head: bool) -> io::Result<()> {
+    let gz = e.gz.is_some() && req.header("accept-encoding").map_or(false, |v| v.to_ascii_lowercase().contains("gzip"));
+    let body: &[u8] = if gz { e.gz.as_deref().unwrap_or(&[]) } else { &e.plain };
+    let extra = if gz { "Cache-Control: no-cache\r\nVary: Accept-Encoding\r\nContent-Encoding: gzip\r\n" } else { "Cache-Control: no-cache\r\nVary: Accept-Encoding\r\n" };
+    http::send_body(s, e.code, "application/json", extra, body, head)
+}
+
+/// (11-25 live server.py reply cache) the polled replies every open launcher asks for again and again, encoded once per TTL. Key = the
+/// request target (path + query) plus the base URL the manifest embeds.
+fn cached(sh: &Shared, key: String, ttl: f64, build: impl FnOnce() -> Reply) -> Arc<Encoded> {
+    let now = Instant::now();
+    if let Some((t, e)) = sh.cache.lock().unwrap().get(&key) {
+        if now.duration_since(*t).as_secs_f64() < ttl {
+            return e.clone();
+        }
+    }
+    let e = Arc::new(encode(guarded(sh, build)));
+    if e.code < 500 {
+        let mut c = sh.cache.lock().unwrap();
+        if c.len() > 4000 {
+            c.retain(|_, (t, _)| now.duration_since(*t).as_secs_f64() < 30.0);
+        }
+        c.insert(key, (now, e.clone()));
+    }
+    e
 }
 
 fn guarded(sh: &Shared, f: impl FnOnce() -> Reply) -> Reply {
@@ -254,23 +302,23 @@ fn get(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr) -> io::
         let r = guarded(sh, || sh.api.part1_maps(&base, &sid));
         return send_reply(s, &r, head);
     }
-    let r = match path {
+    let e = match path {
         "/manifest.json" => {
             let base = base_url(sh, req, peer);
-            guarded(sh, || sh.api.manifest(&q, &base))
+            cached(sh, format!("{} {}", req.target, base), 10.0, || sh.api.manifest(&q, &base))
         }
-        "/news.json" => guarded(sh, || sh.api.news()),
+        "/news.json" => cached(sh, "/news.json".into(), 10.0, || sh.api.news()),
+        "/clanfeed.json" => cached(sh, req.target.clone(), 20.0, || sh.api.clanfeed(&q)),
         "/status.json" => {
             let (ip, real) = client_ip(req, peer);
-            guarded(sh, || sh.api.status(if real { Some(&ip) } else { None }))
+            Arc::new(encode(guarded(sh, || sh.api.status(if real { Some(&ip) } else { None }))))
         }
-        "/versions.json" => guarded(sh, || sh.api.versions(&q)),
-        "/clan.json" => guarded(sh, || sh.api.clan(&q)),
-        "/clanfeed.json" => guarded(sh, || sh.api.clanfeed(&q)),
-        "/ban-check" => guarded(sh, || sh.api.ban_check(&q, &req.target)),
-        _ => api::reply(404, &json!({"error": "not found"})),
+        "/versions.json" => Arc::new(encode(guarded(sh, || sh.api.versions(&q)))),
+        "/clan.json" => Arc::new(encode(guarded(sh, || sh.api.clan(&q)))),
+        "/ban-check" => Arc::new(encode(guarded(sh, || sh.api.ban_check(&q, &req.target)))),
+        _ => Arc::new(encode(api::reply(404, &json!({"error": "not found"})))),
     };
-    send_reply(s, &r, head)
+    send_encoded(s, req, &e, head)
 }
 
 fn plain<'a>(etag: &'a str, missing: &'a str) -> FileReply<'a> {
@@ -421,6 +469,7 @@ fn main() {
         report_limit: RateLimiter::new(reports::RATE_N, reports::RATE_WINDOW),
         clip_limit: RateLimiter::new(reports::CLIP_RATE_N, reports::RATE_WINDOW),
         clip_lock: Mutex::new(()),
+        cache: Mutex::new(std::collections::HashMap::new()),
     });
     if let Some(sf) = sh.cfg.status_file.clone() {
         let out = sf.parent().map(|p| p.to_path_buf()).unwrap_or_default().join("t2r-launchers.json");
