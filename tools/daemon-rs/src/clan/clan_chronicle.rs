@@ -1041,7 +1041,8 @@ fn day_rows_body(st: &mut Value, newc: &Value, r: &Value, matchv: &Value, rng: &
             }
         }
     }
-    let arc_rows = clan_arcs::run(d, st, newc, r, matchv, rng)?;
+    let mut arc_rows = clan_arcs::run(d, st, newc, r, matchv, rng)?;
+    let arc_at = out.len();
     out.extend(arc_rows.iter().cloned());
     {
         let cs = ch_state(st);
@@ -1057,7 +1058,7 @@ fn day_rows_body(st: &mut Value, newc: &Value, r: &Value, matchv: &Value, rng: &
         d.spot.extend(ids);
     }
     d.sync_alive(st);
-    let sg_rows: Vec<Value> = match ext::saga::run(d, st, newc, r, matchv, rng, &loot, &died_now, &arc_rows) {
+    let sg_rows: Vec<Value> = match ext::saga::run(d, st, newc, r, matchv, rng, &loot, &died_now, &mut arc_rows) {
         Ok(v) => v,
         Err(ex) => {
             if strict {
@@ -1068,6 +1069,10 @@ fn day_rows_body(st: &mut Value, newc: &Value, r: &Value, matchv: &Value, rng: &
         }
     };
     d.sync_alive(st);
+    // the saga ties a sentence to some arc rows in place (the Python rows are shared with `out`)
+    for (i, row) in arc_rows.iter().enumerate() {
+        out[arc_at + i] = row.clone();
+    }
     out.extend(sg_rows.iter().cloned());
     let mut plan: Vec<String> = Vec::new();
     if has_map && sg_rows.is_empty() {
