@@ -15,6 +15,7 @@ import shutil
 import socket
 import sqlite3
 import sys
+import subprocess
 import threading
 import time
 import urllib.error
@@ -764,6 +765,95 @@ class Admin:
                                                       image=x.get("kind") == "screenshot", video=x.get("kind") == "video")
                                                 for x in m.get("files", [])]}
 
+    # Bug-report files can live on a storage box (tools/update_server/report_offload.py moves them; <report>/store.json says which box and
+    # which files). A moved file is copied back into a small local cache on first use. T2R_REPORT_BOXES = the boxes JSON file the mover uses.
+    REPORT_CACHE_MAX = int(os.environ.get("T2R_REPORT_CACHE_MB", "800")) << 20
+    _report_fetch_lock = threading.Lock()
+
+    def _report_boxes(self):
+        path = os.environ.get("T2R_REPORT_BOXES", "")
+        if not path:
+            return None
+        try:
+            with open(os.path.expanduser(path), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def _report_cache_dir(self):
+        # never under update-data: that folder is what the update server serves
+        return os.environ.get("T2R_REPORT_CACHE") or os.path.expanduser("~/.cache/t2r-report-cache")
+
+    def _report_cache_trim(self, keep):
+        root = self._report_cache_dir()
+        ents = []
+        for dp, _dn, fn in os.walk(root):
+            for f in fn:
+                p = os.path.join(dp, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                ents.append((st.st_atime, st.st_size, p))
+        total = sum(e[1] for e in ents)
+        for _t, size, p in sorted(ents):
+            if total <= self.REPORT_CACHE_MAX:
+                break
+            if p == keep:
+                continue
+            try:
+                os.remove(p)
+                total -= size
+            except OSError:
+                pass
+
+    def report_local_path(self, d, name):
+        """Readable local path of files/<name> of report folder d: the file itself, or a cached copy fetched from its storage box; None if
+        neither works. name must already be a listed file name of the report (callers check meta.json)."""
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            return None
+        p = os.path.join(d, "files", name)
+        if os.path.isfile(p):
+            return p
+        try:
+            with open(os.path.join(d, "store.json"), encoding="utf-8") as f:
+                st = json.load(f)
+            want = int(st["files"][name])
+            boxname = st["box"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        folder = os.path.basename(os.path.normpath(d))
+        cp = os.path.join(self._report_cache_dir(), folder, name)
+        with self._report_fetch_lock:
+            try:
+                if os.path.getsize(cp) == want:
+                    os.utime(cp)
+                    return cp
+            except OSError:
+                pass
+            cfg = self._report_boxes()
+            box = next((b for b in (cfg or {}).get("boxes", []) if b.get("name") == boxname), None)
+            if not box:
+                return None
+            os.makedirs(os.path.dirname(cp), exist_ok=True)
+            tmp = cp + ".part"
+            ssh = "ssh -i %s -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=%s -o ConnectTimeout=10" % (
+                os.path.expanduser(cfg.get("key", "~/.ssh/t2r_reports")), os.path.expanduser(cfg.get("known_hosts", "~/.ssh/known_hosts_reports")))
+            try:
+                r = subprocess.run(["rsync", "-t", "--timeout=60", "-e", ssh, "%s:%s/files/%s" % (box["host"], folder, name), tmp],
+                                   capture_output=True, timeout=300)
+                if r.returncode != 0 or os.path.getsize(tmp) != want:
+                    raise OSError("fetch failed")
+                os.replace(tmp, cp)
+            except (OSError, subprocess.SubprocessError):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                return None
+            self._report_cache_trim(cp)
+            return cp
+
     IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}
 
     def report_video(self, code, name):
@@ -776,7 +866,9 @@ class Admin:
         ent = next((x for x in m.get("files", []) if x.get("name") == name and x.get("kind") == "video"), None)
         if not ent:
             return None
-        p = os.path.join(d, "files", name)
+        p = self.report_local_path(d, name)
+        if not p:
+            return None
         try:
             with open(p, "rb") as fh:
                 h = fh.read(64)
@@ -800,8 +892,11 @@ class Admin:
         d, m = f
         if not any(x.get("name") == name and x.get("kind") == "screenshot" for x in m.get("files", [])):
             return None
+        p = self.report_local_path(d, name)
+        if not p:
+            return None
         try:
-            with open(os.path.join(d, "files", name), "rb") as fh:
+            with open(p, "rb") as fh:
                 data = fh.read(8 * 1024 * 1024 + 1)
         except OSError:
             return None
@@ -819,7 +914,9 @@ class Admin:
         d, m = f
         if name not in {x["name"] for x in m.get("files", [])}:
             return None
-        p = os.path.join(d, "files", name)
+        p = self.report_local_path(d, name)
+        if not p:
+            return None
         try:
             size = os.path.getsize(p)
             with open(p, "rb") as fh:
