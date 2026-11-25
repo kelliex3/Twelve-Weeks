@@ -8,6 +8,7 @@
 #include "kill-feed.hpp"
 #include "net/ui/kill-feed-icons.hpp"
 #include "net/ui/prompt-anim.hpp"
+#include "net/ui/prompt-producer.hpp"
 #include "net/ui/radar-box.hpp"
 #include "net/ui/sbteam.hpp"
 #include "net/ui/kick-note.hpp"
@@ -23,6 +24,8 @@
 #include "requeue.hpp"
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
+#include "net/match/melee-pullout-bridge.hpp"
+#include "net/gift/gift.hpp"
 #include "engine/frame.hpp"
 #include "engine/text-input.hpp"
 #include "gameplay/melee-hit-react.hpp"
@@ -1662,6 +1665,7 @@ namespace net::replication {
             net::ui::killfeed::Draw();  // icon row names, drawn under the HUD widgets
             DrawRadar();
             net::ui::radar_box::EndFrame(hudNow);    // place crate / arc widgets from those blips
+            net::ui::prompt_producer::Tick(hudNow);  // native Show() feeds (dodge window, supply box)
             net::ui::prompt_anim::Draw(hudNow);      // self-drawn key prompts (no winmm hook)
             net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
             net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
@@ -1807,7 +1811,20 @@ namespace net::replication {
                     sender.name, senderSlot);
             }
 
-            net::engine::FireAttack(local, attacker, evt.weaponSID, evt.weaponAmmoSID, evt.damage);
+            // Native downed cutover: a would-kill hit becomes a 50 hp down, a lethal hit
+            // while down only feeds the existing Death-edge path, and pool hits are
+            // absorbed by the downed core. Everything else keeps the original hit path.
+            const auto damageDecision = net::match::downed_bridge::NoteLocalDamage(
+                senderSlot, evt.weaponSID, evt.damage, evt.lethalClaim != 0);
+            float applyDamage = damageDecision.applyDamage;
+            if (applyDamage <= 0.0f)
+                applyDamage = 0.0f;
+            if (applyDamage > 0.0f)
+                net::engine::FireAttack(local, attacker, evt.weaponSID,
+                                        evt.weaponAmmoSID, applyDamage);
+            if (damageDecision.outcome ==
+                net::match::downed_bridge::DamageOutcome::kDowned)
+                net::match::downed_bridge::CommitDownPool();
 
             // Victim side of the hit-reaction core: with no private clip table PickClip fails,
             // so this records the graze / no-reaction bookkeeping and sends the landed/pain
@@ -2039,6 +2056,15 @@ namespace net::replication {
             break;
         }
 
+        // Crafter gift stock / give / ACK. The bridge yields entirely while the
+        // legacy ext owns the same three bytes.
+        case NEVT_GIFT_STOCK:
+        case NEVT_GIFT:
+        case NEVT_GIFT_ACK: {
+            net::gift::OnEvent(senderSlot, type, data, size);
+            break;
+        }
+
         // ---- reserved ext melee opcodes ---------------------------------------------------
         // One live bridge fans these out to the ported cores; its still-gated branches (MV3,
         // PSYNC) no-op, so an ext client on the wire keeps its own behaviour (no cutover).
@@ -2062,18 +2088,24 @@ namespace net::replication {
             net::ui::killfeed::OnPeerWeapon(senderSlot, data, size);
             break;
 
-        // bridge no-ops while disabled, so ext clients see the wire exactly as before.
+        // Native downed bridge yields completely while the ext is loaded. The ext's
+        // killfeed sees the same wire: MSG_DOWNED [state][downer] and MSG_REVIVE
+        // [revived slot], where the sender is the reviver.
         case NEVT_DOWNED:
-        case NEVT_REVIVE: {
+        case NEVT_REVIVE:
+        case NEVT_REACH: {
             net::match::downed_bridge::OnEvent(senderSlot, type, data, size);
-            // ext killfeed also watches the same wire for the down / revive rows.
-            // MSG_DOWNED body: [state][downer][...]; 0xFE downer on an up means revived.
-            if (type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2 && data[0] == 1)
+            if (type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2 && data[0] == 1) {
                 net::ui::killfeed::NoteDownBegin(senderSlot, data[1]);
-            else if ((type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2
-                      && data[0] == 0 && data[1] == 0xFE)
-                     || type == static_cast<uint8_t>(NEVT_REVIVE))
+            }
+            else if (type == static_cast<uint8_t>(NEVT_DOWNED) && size >= 2
+                     && data[0] == 0 && data[1] == 0xFE) {
                 net::ui::killfeed::NoteDownEnd(senderSlot);
+            }
+            else if (type == static_cast<uint8_t>(NEVT_REVIVE) && size >= 1 &&
+                     data[0] < kMaxNetPlayers) {
+                net::ui::killfeed::NoteDownEnd(data[0]);
+            }
             break;
         }
 
@@ -2136,10 +2168,13 @@ namespace net::replication {
         menu::loadseq::Reset();
         net::ui::killfeed::Reset();
         net::ui::prompt_anim::Reset();
+        net::ui::prompt_producer::Reset();
         net::ui::radar_box::Reset();
         net::ui::sbteam::Reset();
         net::match::melee_bridge::Reset();
+        net::match::melee_pullout_bridge::Reset();
         net::match::downed_bridge::Reset();
+        net::gift::Reset();
         net::netsmooth::bridge::ResetAll();
         net::match::liveness::Reset();
         net::clan::Reset();

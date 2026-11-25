@@ -19,6 +19,12 @@ namespace net::ui::radar_box::core {
     inline constexpr float kPinD       = 62.5f;      // blips at/over this are on the rim
     inline constexpr float kClampD     = 60.0f;      // keep the icon inside the ring
 
+    // Port of tools/ext/nrbox.c's BXF_LEVEL / BXF_BACK: a box more than 2.0 m
+    // above / below our feet is another floor; 15 cm of hysteresis keeps a box
+    // on a stair landing from flickering between states.
+    inline constexpr float kFloorLevel = 2.0f;
+    inline constexpr float kFloorBack  = 1.85f;
+
     enum class Floor : uint8_t { Same = 0, Up = 1, Down = 2 };
 
     struct Blip {
@@ -101,6 +107,49 @@ namespace net::ui::radar_box::core {
     inline int StateSlot(Floor f) noexcept
     {
         return f == Floor::Same ? 0 : f == Floor::Up ? 1 : 2;
+    }
+
+    // Port of NrboxFloorUpdate's state step (tools/ext/nrbox.c): `dy` is box Y
+    // minus our feet Y, in metres. Entering another floor needs > 2.0 m; leaving
+    // it needs < 1.85 m. `enabled == false` (the read-only ext opt-out, or
+    // unreadable positions) forces every box back to the plain crate.
+    inline Floor FloorFromDelta(float dy, Floor prev, bool enabled) noexcept
+    {
+        if (!enabled || !std::isfinite(dy)) return Floor::Same;
+        const float ady = std::fabs(dy);
+        const bool other = prev == Floor::Same ? ady > kFloorLevel
+                                               : ady >= kFloorBack;
+        if (!other) return Floor::Same;
+        return dy > 0.0f ? Floor::Up : Floor::Down;
+    }
+
+    // The two rim-arc banks from radar_box_widgets.py: t2rRbxA (white, same
+    // floor) and t2rRbxG (grey, another floor). The floor is resolved before
+    // arc selection so a pinned box on another floor uses the grey bank.
+    inline constexpr int kArcBankSame   = 0;
+    inline constexpr int kArcBankOther  = 1;
+    inline constexpr int kArcBanks      = 2;
+
+    inline int ArcBank(Floor f) noexcept
+    {
+        return f == Floor::Same ? kArcBankSame : kArcBankOther;
+    }
+
+    struct ArcState {
+        int  index = -1;   // -1 = no arc (in range, or the pak has no arcs)
+        int  bank  = kArcBankSame;
+        bool visible = false;
+    };
+
+    inline ArcState ArcFor(const Blip& b, bool arcsAvailable,
+                           bool cw = true) noexcept
+    {
+        ArcState out;
+        if (!arcsAvailable || !b.pinned) return out;
+        out.index = ArcIndex(b.x, b.y, cw);
+        out.bank = ArcBank(IconState(b.floor, true));
+        out.visible = out.index >= 0;
+        return out;
     }
 
 } // namespace net::ui::radar_box::core

@@ -42,8 +42,10 @@ namespace net::match::melee_bridge {
     void Tick();
 
     // Called from net-replication's HandleNetEvent for the reserved melee opcodes. Each branch
-    // feeds the matching core's Receive/Recv*; the MV3 / PSYNC wire cores stay gated (their
-    // engine-free cores need an Mv3nIo / placement bridge that is not ported yet).
+    // feeds the matching core's Receive/Recv*; NEVT_MEX family 5 (the ext's pull-out QTE) is
+    // fanned to melee-pullout-bridge::OnEvent, every other family still reaches the exchange
+    // core. The MV3 / PSYNC wire cores stay gated (their engine-free cores need an Mv3nIo /
+    // placement bridge that is not ported yet).
     void OnEvent(uint8_t sender, uint8_t type, const uint8_t* data, uint8_t size);
 
     // Called from net-replication's ResetRuntime (session reset / leaving the match).

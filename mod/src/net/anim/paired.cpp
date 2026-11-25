@@ -63,6 +63,36 @@ namespace net::anim::paired {
         g_ps.killS = killS;
     }
 
+    void BeginPulloutAttacker(int attSlot, int vicSlot, uint64_t vicSid,
+                              uint64_t uid, uint64_t move)
+    {
+        g_ps = State{};
+        g_ps.role = 1;
+        g_ps.kind = kCtxdown;
+        g_ps.uid = static_cast<uint32_t>(uid ? uid : ++g_counter);
+        g_ps.att = attSlot;
+        g_ps.vic = vicSlot;
+        g_ps.entAtt = SID("player");
+        g_ps.entVic = vicSid;
+        g_ps.flags = 0;                 // the counter, not a lethal execution
+        g_ps.move = move;
+    }
+
+    void BeginPulloutVictim(int attSlot, int vicSlot, uint64_t attSid,
+                            uint64_t uid, uint64_t move)
+    {
+        g_ps = State{};
+        g_ps.role = 2;
+        g_ps.kind = kCtxdown;
+        g_ps.uid = static_cast<uint32_t>(uid ? uid : ++g_counter);
+        g_ps.att = attSlot;
+        g_ps.vic = vicSlot;
+        g_ps.entAtt = attSid;
+        g_ps.entVic = SID("player");
+        g_ps.flags = 0;
+        g_ps.move = move;
+    }
+
     void End(bool aborted)
     {
         if (aborted && g_abortFn)

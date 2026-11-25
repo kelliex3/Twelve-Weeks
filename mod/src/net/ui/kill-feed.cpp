@@ -266,7 +266,11 @@ void DrawRadar()
                          (radarX - RADAR_CX);
         const float by = net::ui::radar_box::core::kRadarCy +
                          (radarY - RADAR_CY);
-        if (net::ui::radar_box::FeedBlip(bx, by, pinned)) continue;
+        // The owner resolves the crate's floor from the world-Y delta to our
+        // feet (ext nrbox.c: 2.0 m to enter, 1.85 m to leave the other floor).
+        if (net::ui::radar_box::FeedBlip(bx, by, pinned,
+                static_cast<uint64_t>(box.boxSID),
+                boxTrans.Position.y, me.Position.y)) continue;
 
         auto    boxSize = DebugDrawCommon::GetTextWidthHeight(kSupplyBoxGlyph, SUPPLYBOX_BLIP_FONT);
         DebugDrawCommon::DrawTextPrintV(radarX - boxSize.x * 0.5f, radarY - boxSize.y * 0.5f,

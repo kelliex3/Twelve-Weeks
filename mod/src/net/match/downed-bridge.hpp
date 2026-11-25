@@ -2,33 +2,43 @@
 
 #include <cstdint>
 
-// Gated integration seam for the ported downed core (net/match/downed-state.*). This is the
+// Integration seam for the ported downed core (net/match/downed-state.*). This is the
 // single place that installs its sink and fans the frame tick / net-event dispatch / session
 // reset out to it, mirroring net/match/melee-bridge.*.
 //
-// IMPORTANT: kEnabled is false. Nothing here runs in a shipping build, so the ext remains the
-// behaviour owner and no t2r-*.txt cutover is flipped. The call sites in boot::FrameTick and
-// net-replication are unconditional and cheap: every bridge function no-ops while disabled.
+// The bridge is now the NATIVE owner when t2r-ext.dll is absent. boot::ExtLoaded() is the
+// only cutover: every producer, send and engine effect here no-ops while the legacy ext is
+// loaded, so the ext keeps its own wire / state and nothing is sampled or written twice.
+// No t2r-*.txt toggle is flipped and no low 0..18 net event is touched.
 //
-// The installed sink is deliberately INERT: the real clock / frame counter / local slot /
-// match-liveness are supplied so the core's bookkeeping is consistent, but the wire send,
-// health read, skill multipliers and every engine / award / camera / animation effect are
-// no-ops or conservative defaults. Even when enabled this is a shadow: it tracks state without
-// changing gameplay, pending the real producers (hit reception, UC4 reach, puppet handling,
-// HUD bar and the ext's send trampoline).
-//
-// Wire IDs are the exact ext bytes reserved in net-protocol.hpp (NEVT_DOWNED 0x43,
-// NEVT_REVIVE 0x44); no low 0..18 event is touched.
+// Wire IDs are the ext's exact bytes reserved in net-protocol.hpp: NEVT_DOWNED 0x43,
+// NEVT_REVIVE 0x44 ([u8 revived slot]) and NEVT_REACH 0x47 ([downed][on][secs x10][pair]).
 
 namespace net::match::downed_bridge {
 
-    // Master gate. false = the whole bridge is dormant (the current, review-first state).
-    inline constexpr bool kEnabled = false;
+    // Master gate. The native producers live in this module; the legacy ext still wins
+    // whenever it is loaded.
+    inline constexpr bool kEnabled = true;
 
     void Install();
     void Tick();
     void OnEvent(uint8_t sender, uint8_t type, const uint8_t* data, uint8_t size);
     void Reset();
     bool Installed() noexcept;
+
+    // Called by the local damage receiver before it applies the engine hit. The decision
+    // keeps native death UI authority: a would-kill hit becomes a 50 hp down, a lethal hit
+    // while down hands off to the single existing Death-edge death path, and everything else
+    // passes through untouched.
+    enum class DamageOutcome : uint8_t { kNormal, kDowned, kDying, kIgnored };
+
+    struct DamageDecision {
+        DamageOutcome outcome = DamageOutcome::kNormal;
+        float         applyDamage = 0.0f;  // damage the caller may still feed to FireAttack
+    };
+
+    DamageDecision NoteLocalDamage(uint8_t attacker, uint64_t weapon, float damage,
+                                   bool lethalClaim);
+    void CommitDownPool();  // re-assert the 50 hp pool after the clamped engine hit
 
 } // namespace net::match::downed_bridge

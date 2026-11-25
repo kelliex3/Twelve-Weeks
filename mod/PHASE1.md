@@ -341,7 +341,7 @@ be pattern-matched; on a mismatch the unfocused-window input helper is simply di
 dodge-input rule.
 
 **AFK watchdog (ported).** `net/match/afk.*` mirrors every gate in ext `afk.c`:
-live match / match over, downed / dead (`player-status` reads the dormant downed core), the
+live match / match over, downed / dead (`player-status` reads the native downed core), the
 15-frame `character-is-dead?` poll, and the three in-play menus — backpack, GEAR UP page
 (`gui2::GearUpOpen()` checks the `to1/gearup13` top page only, so gearup13 itself stays
 unported) and the player menu. `Tick()` / `Draw()` are wired in the frame and HUD paths and
@@ -639,7 +639,7 @@ live match, up, and the bag is active (or still inside the 1.2 s stow / intro wi
 `t2r-bp-hold-old.txt` is present), `player-disable-move-stick` / `-jump` / `-roll` run every
 frame; closing the menu hands the stick straight back. `t2r-bp-menu-move.txt` restores the old
 MP behaviour. The ext's speed log is replaced by the menu state (the mod has no momentum reader)
-and the downed gate reads the dormant downed core like every other consumer.
+and the downed gate reads the native downed core like every other consumer.
 
 **Gap.** No pattern resolution (the RVAs are pinned); no shared helper for "call an exe RVA" (every
 caller does its own `GetModuleHandleW` + cast). A game update silently disables the prologue-checked
@@ -724,7 +724,7 @@ return conservative defaults. The ext copy still owns those effects; no ext cuto
 
 ---
 
-## 11. Downed state core (ported, gated)
+## 11. Downed state core (ported, native)
 
 `net/match/downed-state.{hpp,cpp}` ports the core 2013 downed behaviour from `t2r-ext.c`
 (`feature_downed`, the `DownedSet` / `RevivedRecv` / `RvSet` / `RvProg` helpers and the
@@ -734,7 +734,9 @@ the engine:
 - **State and wire** — down / dying / up, the send epoch (`++` on every transition), the downer
   slot (0xFE = revived, not a death), and the exact ext wire layouts: `MSG_DOWNED` 6 bytes
   `[state][downer][knockDir+1][supine/dieDir+1][bleed+0.5][epoch]` and `MSG_REVIVE` 1 byte
-  `[who]`, reserved as `NEVT_DOWNED 0x43` / `NEVT_REVIVE 0x44`.
+  `[target]` (the revived slot, sent by the reviver), reserved as `NEVT_DOWNED 0x43` /
+  `NEVT_REVIVE 0x44`, plus `NEVT_REACH 0x47`
+  `[downed][on][secs x10][pair]`.
 - **Pool and hit rules** — 50 hp downed pool (Fortitude II bonus via `DownHpMul`), 1 s down
   protection that ignores ordinary damage but never the 1e6 execution marker, and hits while
   downed shortening the remaining bleed-out by `damage / pool x base seconds` (floored at
@@ -752,18 +754,20 @@ the engine:
   "downed" after our own `MSG_REVIVE`, and per-slot bleed / fall direction / supine / death
   direction for the (gated) visual consumers.
 
-**Integration seam (landed, dormant).** `net/match/downed-bridge.*` installs one inert sink and
-fans out the frame tick (`boot::FrameTick`), the two reserved `NEVT_*` receive cases
-(`net-replication::HandleNetEvent`) and the session reset (`net-replication::ResetRuntime`). Its
-clock / frame counter / local slot / match liveness are real; wire send, health read, skill
-multipliers and every engine / award / camera / animation effect are no-ops or conservative
-defaults. The master gate `downed_bridge::kEnabled` is **false**, so the ext remains the
-behaviour owner and no ext cutover is flipped. The remaining path to cutover: port the hit
-reception / UC4 reach producers, puppet handling, HUD bar and the send trampoline, enable the
-bridge per producer, then disable the matching ext path via its toggle. The PCM audio modules
+**Integration seam (landed, native).** `net/match/downed-bridge.*` is the owner when t2r-ext.dll
+is absent: it installs real wire / damage-decision / health-pool / kill-feed sinks and fans out
+the frame tick (`boot::FrameTick`), the reserved `NEVT_DOWNED` / `NEVT_REVIVE` / `NEVT_REACH`
+receive cases (`net-replication::HandleNetEvent`) and the session reset
+(`net-replication::ResetRuntime`). Local damage is routed through `DamageDecision()` /
+`NoteLocalDamage()` into the down pool, the down row is mirrored to the kill feed, the reviver
+produces `NEVT_REACH` from the shared E / interact edge, and death-UI keeps its own `NoteEdge()`
+authority. Every producer, send and engine effect no-ops while the ext is loaded, so the ext
+keeps its own state / wire and no ext cutover is flipped. `downed_bridge::kEnabled` is **true**.
+The remaining unported consumers: fall / get-up animations, supine detection, camera, HUD bar,
+puppet handling, gore / hitbox, skills and awards. The PCM audio modules
 `downed_music.c` / `downed_vox.c` are separate inventory rows and stay unported.
 `player_status::LocalDowned` / `PuppetDowned` now read this core instead of hard-false stubs,
-so every existing consumer inherits a correct gate as soon as the bridge is enabled.
+so every existing consumer follows the live down state.
 
 **Dying distinction (ported, producer gated).** The ext's other down-state latches are carried
 in the same core: `g_downDying` (a lethal hit / bleed-out while down, set before the wire goes
@@ -946,11 +950,11 @@ cores (`kick_note_core_test`, `launch_notice_core_test`, `kill_feed_core_test`,
 
 **Three more ext modules are now native** (same gates, no ext-owned residual on these surfaces):
 
-- **SP key prompt animation (`prompt_anim.c`)** — `net/ui/prompt-anim.cpp/.hpp` owns the two self-drawn prompt slots through `net/ui/prompt-anim-core.hpp`: 0.12 s key grow, grey-to-white letter, 0.1 s fade-out, 1.5x contracting wait ring, 0.18 s mash flash, clockwise hold fill and the ext's two-frame slot lifetime. Drawing uses the mod's own `DebugDrawCommon` text path; the E/Y letter and mash edge come from the already-shared `engine::window` / `engine::pad` samplers, so there is no winmm hook, VA detour or second keyboard hook. `prompt_anim::Show()` is the producer seam: the ext's `g_wpg` / `g_wpr` writers (interactable request, melee pullout, duel pin, gift) are still ext-owned and have no native producer here, so the owner is inert until one calls `Show()` — that gap is not papered over. `prompt_anim::Project()` offers the native world-to-screen anchor. `t2r-prompt-anim-old.txt` keeps old texts and `t2r-wp-selfdraw.txt` stays the regular-prompt opt-in; both are read-only.
-- **Radar supply boxes (`radar_box.c`)** — `net/ui/radar-box.cpp/.hpp` + `net/ui/radar-box-core.hpp` drive 12 pooled `t2rRbx*` crates, optional `t2rRbxU/D` floor arrows and 60 `t2rRbxA/G` rim arcs from the mod's own `DrawRadar()` centres (`kill-feed.cpp` now feeds `FeedBlip()` and stops drawing its glyph disc / box dot while the widgets are live). The ext's 3x pivot, 60-unit clamp, page-with-hud-root fallback (including its 300-frame race window) and fade rule are preserved; no blip detour or winmm disc VA patch is used. Native floor records do not exist, so crates stay plain unless a future producer supplies `core::Floor`; the read-only `t2r-old-radar-box.txt` / `t2r-radar-box-race-old.txt` opt-outs are honoured and no toggle is flipped.
+- **SP key prompt animation (`prompt_anim.c`)** — `net/ui/prompt-anim.cpp/.hpp` owns the two self-drawn prompt slots through `net/ui/prompt-anim-core.hpp`: 0.12 s key grow, grey-to-white letter, 0.1 s fade-out, 1.5x contracting wait ring, 0.18 s mash flash, clockwise hold fill and the ext's two-frame slot lifetime. Drawing uses the mod's own `DebugDrawCommon` text path; the E/Y letter and mash edge come from the already-shared `engine::window` / `engine::pad` samplers, so there is no winmm hook, VA detour or second keyboard hook. `prompt_anim::Show()` is now fed by `net/ui/prompt-producer.cpp/.hpp`, which reads only native state: slot 0 follows the live melee-dodge window (`gameplay::melee_dodge::Window` / `WindowEnd`, anchored on the peer puppet via `prompt_anim::Project()`) with the ext's capped elapsed-share fill — the native core has no separate lead-in, so the ring contracts onto the key as the dodge deadline arrives; slot 1 follows the nearest openable supply box inside the 1.5 m interact reach and stays behind the existing `t2r-wp-selfdraw.txt` opt-in because the engine's own interactable prompt is still the default. The four dedicated label writers are now ported in `net/ui/prompt-label-core.hpp`: pullout's `...wait` / `ESCAPE!` / `Too early` / `Too late` (600 ms lead, 400 ms window, 1200 ms linger), duel-pin's ring / `ESCAPE!` / 150 ms `Too late` (fed by the live melee-exchange defender window through the same dodge window), gift's `Give gift` / `Can't carry more` with the ext's 1.5 x 1.2 m reach and cached LOS, and revive's idle / 0..1 hold from the ported `RvProg`. `prompt_anim::PressEdge()` reuses the one shared pad / key edge for early-press burn; the regular slot falls back to slot 0 when `t2r-wp-selfdraw.txt` is absent because there is no engine-widget writer here. Pullout facts now arrive from the native family-5 bridge (`NotePullout`), gift / stock-room facts from the native gift bridge (`NoteGiftCarried` / `SetGiftPeerRoom`), and revive from the native downed bridge's `RvProg`; each feed still yields while t2r-ext.dll is loaded, so no state is guessed. No new hook, detour, wire opcode or toggle. `t2r-prompt-anim-old.txt` keeps old texts; both sidecar files are read-only.
+- **Radar supply boxes (`radar_box.c`)** — `net/ui/radar-box.cpp/.hpp` + `net/ui/radar-box-core.hpp` drive 12 pooled `t2rRbx*` crates, optional `t2rRbxU/D` floor arrows and 60 `t2rRbxA/G` rim arcs from the mod's own `DrawRadar()` centres (`kill-feed.cpp` now feeds `FeedBlip()` and stops drawing its glyph disc / box dot while the widgets are live). The ext's 3x pivot, 60-unit clamp, page-with-hud-root fallback (including its 300-frame race window) and fade rule are preserved; no blip detour or winmm disc VA patch is used. Box floor state is now native: a port of `tools/ext/nrbox.c`'s `NrboxFloorUpdate` (2.0 m to enter another floor, 1.85 m to leave, from box Y minus our feet Y), keyed by box SID so the distance-sorted box list cannot mix states. `t2rRbxU/D` show the grey above/below crate and pinned boxes choose the white (`t2rRbxA`) or grey (`t2rRbxG`) rim-arc bank from that floor; the read-only `t2r-old-radar-box.txt`, `t2r-radar-box-race-old.txt` and `t2r-no-box-floor.txt` opt-outs are honoured and no toggle is flipped.
 - **Scoreboard team bands (`sbteam.c`)** — `net/ui/sbteam.cpp/.hpp` + `net/ui/sbteam-core.hpp` show `sbBlue` / `sbRed` in place of the two stock bands on both the ESC and end-of-match scoreboards. The ext's 474-unit physical block swap is intentionally not applied: `net-gui2.cpp::RefreshScoreboard()` already fills display block 0 with our team, so a swap would put the enemy on top. No settext hook (the widget observer remains search-rows'), no pivot writes, and `t2r-no-sbteam.txt` is only read. An old GUI pak without the bands leaves the stock scoreboard untouched.
 
-Like the previous four, all three yield while the legacy `t2r-ext.dll` is loaded, are ticked from `boot.cpp` / the HUD draw block, and reset from `net-replication.cpp::ResetRuntime()`. Widget JSON still lives in `tools/features/*_widgets.py` outside the repo, so widget writes remain inert until a GUI pak carries them; there is no local game build or newer daemon for a live A/B. Standalone C++17 tests pass for all three pure cores (`prompt_anim_core_test`, `radar_box_core_test`, `sbteam_core_test`).
+Like the previous four, all three yield while the legacy `t2r-ext.dll` is loaded, are ticked from `boot.cpp` / the HUD draw block, and reset from `net-replication.cpp::ResetRuntime()`. Widget JSON still lives in `tools/features/*_widgets.py` outside the repo, so widget writes remain inert until a GUI pak carries them; there is no local game build or newer daemon for a live A/B. Standalone C++17 tests pass for all five pure cores (`prompt_anim_core_test`, `prompt_producer_core_test`, `prompt_label_core_test`, `radar_box_core_test`, `sbteam_core_test`).
 
 **Already-ported rows with new work** (FEATURES.md per-row notes): `afk`, `padinject`, `backpack`,
 `friends13`, `kicknote`, `customize_compose`, `interrogation`, `interrogation_hud`, `itemspots`,
@@ -1016,7 +1020,7 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/engine/vfx.hpp` + `.cpp` | **new** — particle spawn + compute-entry / retry (ext `CfxSpawnRaw` / `ArmorFxSpawn` / `CfxRetryTick`) |
 | `mod/src/gameplay/melee2013.hpp` + `.cpp` | **new** — 2013 melee move table (ext `MELEE2013` / `MxMove` / `MxByMove`) |
 | `mod/src/gameplay/ctxdown.hpp` + `.cpp` + `ctxdown-rows/*.h` | **new** — contextual-down pair table (ext `ctxdown.c` `CD_PAIRS` + `mduel_*` / `pullout_rows.h`) |
-| `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset) |
+| `mod/src/net/anim/paired.hpp` + `.cpp` | **new** — psync paired-move surface + abort hook (ext `paired.c` `g_ps` subset), plus `BeginPulloutAttacker` / `BeginPulloutVictim` for the pull-out ctxdown pair |
 | `mod/src/net/match/bloodbuild.hpp` + `.cpp` | **new** — per-life blood / dirt build-up (ext `bloodbuild.c`) |
 | `mod/src/net/audio/bladesfx.hpp` + `.cpp` | **new** — TLOU2 blade cues (ext `blade_sfx.h`) |
 | `mod/src/net/audio/music-tier.hpp` + `.cpp` | extend — combat music tier STATE + floors + `g_msDead` (ext `MusicEvent` / `FeatureCombatMusic`), injectable sight / forward-cone samplers, all enemy-aware event inputs (hit / spot / shot / fire / down / revive / stun) and event-value helpers; playback stays in the ext |
@@ -1046,7 +1050,16 @@ which is the Phase-2 cutover pattern in miniature.
 | `mod/src/net/match/downed-state.hpp` + `.cpp` | **new** — pure 2013 downed core (ext `feature_downed` / `DownedSet` / `RvProg` / `MSG_DOWNED` / `MSG_REVIVE`): state + epoch, the dying latches (`g_downDying` / `g_uc4DyingUntil`) + 0/1/2 `LocalState()` / `PuppetDownState()`, pool / protection / bleed-out clock, multi-reviver aggregate, peer reorder guard, exact wire layouts, behind `DownedSink` |
 | `mod/src/net/online/jip-report.hpp` + `.cpp` | extend — 0xE5 roster-shadow merge + 0xA7 own-team swap parse + ghost-peer reaper cores (observation-only; engine writes / peer drops / 0x10 gated false) |
 | `mod/src/net/game/player-status.hpp` + `.cpp` | extend — `MatchLive()` reads the shared engine liveness latch; `LocalDownState()` / `PuppetDownState()` expose the 0/1/2 dying distinction to `bloodbuild.cpp` |
-| `mod/src/net/match/downed-bridge.hpp` + `.cpp` | **new** — gated integration seam for the downed core: inert sink + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == false` |
+| `mod/src/net/match/downed-bridge.hpp` + `.cpp` | **new** — native owner of the downed core when the ext is absent: wire / damage / health-pool / kill-feed sinks + `NEVT_REACH` revive producer + boot tick / net-event dispatch / session reset fan-out; master gate `kEnabled == true`, every producer / send / effect yields while `boot::ExtLoaded()` |
+| `mod/src/gameplay/melee-pullout-core.hpp` | **new** — pure pull-out rules (ext `melee_pullout.c`): family-5 INTRO/RES/END/CAM bytes, 600/400/30 ms counter window, burnt-press / fail verdict, 2.5 m / 55 deg behind cone, cooldowns and fail damage; plus the table-free procedural SP camera (`SpCamera` / `PcpAt` / `Smooth01`, ext inline PCP_* tables) and the deterministic `PulloutPairPose`; header-only for the standalone test |
+| `mod/src/net/match/melee-pullout-bridge.hpp` + `.cpp` | **new** — native family-5 pull-out owner: wire sends, shared F / melee latch and prompt `PressEdge`, counter verdict, fail blow, prompt feed; `NEVT_MEX` fan-out in `melee-bridge.cpp`; CAM byte 1 starts the native SP camera on both screens, the drag / outcome pair is placed deterministically from the victim root + yaw via `paired::BeginPullout*`, and a successful counter plays the ext's exact supine: direct `GoProne(mode 3, 1, 0, -1, 0)`, two signature-guarded VA detours (`SetSupine` 0xa68270 / `GoProne` 0xcdcf90) for the 1500 ms supine hold / 4000 ms watch, one 400 ms supine retry, and the 650 / 900 ms camera aim-point / override seam; a build mismatch falls back to script-only; `PostNetTick()` writes camera / placement after replication. Authored cam-track headers and psync apReference channels are absent (procedural / deterministic stand-ins). Yields while the ext is loaded |
+| `mod/src/net/ui/prompt-label-core.hpp` | **new** — pure label state machines for pullout / duel-pin / gift / revive (ext `prompt_anim.c` writers); header-only for the standalone test |
+| `mod/src/net/ui/prompt-producer-core.hpp` + `prompt-producer.hpp`/`.cpp` | **new** — native `prompt_anim::Show()` producers: dodge / exchange windows, pullout / pin / gift / revive labels and supply-box interact, fed by the native bridges; no new hook or sampler |
+| `mod/src/net/gift/gift-core.hpp` | **new** — pure gift rules (ext `gift.c`): fixed 3/3/3/4 caps, room mask and staleness, giver / receiver reach, pending and rate timing, plus `CraftCounter` (every 3rd craft-menu quantity edge earns a gift, one skip for a received box); header-only for the standalone test |
+| `mod/src/net/gift/gift.hpp` + `.cpp` | **new** — native gift owner: exact 0x53/0x56/0x57 wire, stock broadcast, give / ACK with real inventory calls and LOS / reach gates, flat +100 parts, prompt feeds; `PollCraft()` calls `NoteCrafted` on every craft-menu quantity edge with the cadence from the launcher's saved active loadout (Crafter III = every 2nd, II / unknown = every 3rd; ext-written `t2r-loadout.json` is only a stale fallback) and `NoteGiftKind` on a rising gift-item 0 -> 1 edge; no strict skill gate and no zero-delta craft detection; yields while the ext is loaded |
+| `mod/tests/melee_pullout_core_test.cpp` | **new** — standalone C++17 harness for the pull-out wire / window / press / geometry / damage / SP camera / pair-pose rules; no game headers |
+| `mod/tests/prompt_label_core_test.cpp` + `prompt_producer_core_test.cpp` | **new** — standalone C++17 harnesses for the prompt label / producer cores; no game headers |
+| `mod/tests/gift_core_test.cpp` | **new** — standalone C++17 harness for the gift caps / mask / staleness / reach / craft-counter rules; no game headers |
 | `mod/src/net/match/hit-rel.hpp` + `.cpp` | **new** — reliable one-shot hit core (ext hitrel section): seq / retransmits / ACK / dedupe ring, behind `HitRelSink` |
 | `mod/src/gameplay/melee-dodge.hpp` + `.cpp` | extend — pure dodge timing / state core (ext `melee_dodge.c`) + tell narrowing, exchange / duel window overrides, `GeometryOk` and late-press hold (`g_mdh`), behind `DodgeSink` |
 | `mod/src/gameplay/melee-tell.hpp` + `.cpp` | **new** — pure windup-tell contact / window core (ext `melee_tell.c`: `MtellWinMs` / `MtellReactMs`, `MtellTc` / `MtellSpeed` / `MtellNoteContact`); cue audio / clips gated |

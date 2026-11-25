@@ -18,6 +18,14 @@ namespace net::ui::radar_box {
     void BeginFrame(uint64_t now);   // call just before DrawRadar()
     bool FeedBlip(float x, float y, bool pinned,
                   core::Floor floor = core::Floor::Same);  // true = glyph suppressed
+
+    // Native supply-box feed: the owner resolves the box's floor from its world
+    // Y against the player's feet with the ext's 2.0 / 1.85 m hysteresis, keyed
+    // by box SID so a re-sorted box list never mixes two boxes' states. The
+    // read-only t2r-no-box-floor.txt opt-out is honoured.
+    bool FeedBlip(float x, float y, bool pinned, uint64_t boxSid,
+                  float boxY, float playerY);
+
     void EndFrame(uint64_t now);     // call just after DrawRadar()
     bool Active();                   // widgets own the blips (disc / dots suppressed)
     void Reset();

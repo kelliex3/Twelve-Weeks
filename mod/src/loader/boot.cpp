@@ -44,7 +44,9 @@
 #include "net/match/afk.hpp"
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
+#include "net/match/melee-pullout-bridge.hpp"
 #include "net/match/downed-bridge.hpp"
+#include "net/gift/gift.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "net/chat/chat.hpp"
@@ -198,13 +200,17 @@ namespace boot {
 		engine::menu_input::BeginFrame(now);  // one hook-free menu sampler (kick / launch notices)
 		net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
 		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
-		net::match::downed_bridge::Install(); // gated inert sink for the downed core; no-op while kEnabled == false
-		net::match::downed_bridge::Tick();    // bleed-out / revive / peer state (dormant until enabled)
 		net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio
 		net::audio::music_sight::Install();   // gated native MusicSlotSeen / Cos samplers
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
 		net::ui::prompt_anim::Tick(now);    // one shared pad / key snapshot for self-drawn prompts
 		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
+		net::match::downed_bridge::Install(); // native sink; yields entirely while the ext is loaded
+		net::match::downed_bridge::Tick();    // downed state + revive reach, after shared input is settled
+		net::match::melee_pullout_bridge::Install(); // native family-5 pull-out owner (ext wins when loaded)
+		net::match::melee_pullout_bridge::Tick();    // shared F / melee latch + counter edge + wire
+		net::gift::Install();             // native gift stock / hand-out owner (ext wins when loaded)
+		net::gift::Tick();                // stock broadcast, ACK, inventory and prompt feeds
 		{
 			static bool hooksInstalled = false;
 			if (!hooksInstalled) {
@@ -218,6 +224,7 @@ namespace boot {
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
 		NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
+		net::match::melee_pullout_bridge::PostNetTick(); // SP camera / pair placement after replication
 		// Native menu / HUD owners. Each yields while the legacy ext is loaded so
 		// the ext cannot push the same page or sample the same click twice.
 		net::ui::launch_notice::Tick(now);  // once-per-run notice under the entry title

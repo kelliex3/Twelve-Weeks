@@ -68,6 +68,13 @@ namespace net::anim::paired {
     // `vicSlot` is our own slot (the ext tracks it in g_ps.vic; -1 when unknown).
     void BeginVictim(int attSlot, int vicSlot, uint64_t attSid, uint64_t move, float killS);
 
+    // The pull-out bridge publishes its contextual-down pair the same way,
+    // with no lethal flag: `move` is SID(pu-drag-|pu-ok-|pu-fail-*).
+    void BeginPulloutAttacker(int attSlot, int vicSlot, uint64_t vicSid,
+                              uint64_t uid, uint64_t move);
+    void BeginPulloutVictim(int attSlot, int vicSlot, uint64_t attSid,
+                            uint64_t uid, uint64_t move);
+
     // The move is over here (either role). `aborted` is true when it ended before its kill
     // frame (a dodge / a gone puppet / a timeout), so a consumer can cancel what it queued
     // for the move -- the ext's paired.c calls the abort handler (psync_abort) in that case.

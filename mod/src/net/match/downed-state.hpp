@@ -20,14 +20,15 @@
 //
 // This is the PURE core. Everything that touches the engine, transport, other features or
 // the game's data is behind DownedSink; with no sink installed the module is inert. The
-// integration seam is net/match/downed-bridge.* (master gate false), so the ext stays the
-// behaviour owner and no t2r-*.txt cutover is flipped. Wire IDs are reserved in
+// integration seam is net/match/downed-bridge.*; it is native-owned when t2r-ext.dll is
+// absent and yields completely while the ext is loaded. No t2r-*.txt cutover is flipped.
+// Wire IDs are reserved in
 // net-protocol.hpp at their exact ext values; no low 0..18 event is touched.
 //
 // Wire (ext layout, payload after the message id):
 //   MSG_DOWNED [u8 state 0 up/1 down/2 dying][u8 downer 0xFE = revived, not a death]
 //              [u8 knockDir + 1][u8 supine / dieDir + 1][u8 bleedSecs + 0.5][u8 epoch]
-//   MSG_REVIVE [u8 who]  (the reviver's slot; sent to everyone, not just the victim)
+//   MSG_REVIVE [u8 target] (the revived slot, sent by the reviver to everyone)
 
 namespace net::match::downed {
 
@@ -75,7 +76,7 @@ namespace net::match::downed {
         virtual float    BleedMul() = 0;                 // Fortitude x Heavy Hands; 1 = none
         virtual float    DownHpMul() = 0;                // Fortitude II pool bonus; 1 = none
         virtual void     SendDowned(const uint8_t body[6]) = 0; // to 0xff (all peers)
-        virtual void     SendRevive(uint8_t who) = 0;          // to 0xff
+        virtual void     SendRevive(uint8_t target) = 0;       // [u8 target] to 0xff
         virtual void     Log(const char* text) = 0;
 
         // Engine / other-feature effects (gated until their producers land).
@@ -133,8 +134,9 @@ namespace net::match::downed {
     void     SetLocalReviver(uint8_t slot, float secs);
     void     ClearLocalReviver();
     bool     BeingRevived() noexcept;
-    // ext MSG_REVIVE receive / RevivedRecv: someone completed the revive on us.
-    void     ReceiveRevive(uint8_t from);
+    // ext MSG_REVIVE receive / RevivedRecv: the sender (reviver) completed the revive on
+    // `target`. Every client closes the target's down row; only the target heals.
+    void     ReceiveRevive(uint8_t target, uint8_t reviver);
     // ext's reviver-side completion: books the down closed and broadcasts MSG_REVIVE.
     void     CompleteRevive(uint8_t target, uint8_t reviver);
 

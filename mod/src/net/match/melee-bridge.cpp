@@ -14,6 +14,7 @@
 #include "net/game/net-replication.hpp"
 #include "net/match/hit-rel.hpp"
 #include "net/match/match-liveness.hpp"
+#include "net/match/melee-pullout-bridge.hpp"
 #include "net/match/net-player.hpp"
 #include "gameplay/melee-dodge.hpp"
 #include "gameplay/melee-duel.hpp"
@@ -400,7 +401,13 @@ namespace net::match::melee_bridge {
             gameplay::melee_hit_react::Receive(sender, data, size);
             break;
         case NEVT_MEX:
-            gameplay::melee_exchange::Receive(sender, data, size);
+            // The ext multiplexes the pull-out QTE into MSG_MEX family 5. Fan
+            // those bodies to the native pull-out owner; every other family
+            // (the exchange window) still goes to the exchange core.
+            if (size >= 2 && data[0] == 5 && data[1] >= 11 && data[1] <= 14)
+                net::match::melee_pullout_bridge::OnEvent(sender, data, size);
+            else
+                gameplay::melee_exchange::Receive(sender, data, size);
             break;
         case NEVT_ARMOR_HIT:
             // A plain armour hit. Applying it lives behind HitRelSink::ApplyArmor (a no-op);
@@ -427,6 +434,7 @@ namespace net::match::melee_bridge {
         gameplay::melee_tell::Reset();
         gameplay::melee_hit_react::Reset();
         gameplay::melee_exchange::OnLeftMatch();
+        net::match::melee_pullout_bridge::Reset();
     }
 
     bool Installed() noexcept { return g_installed; }

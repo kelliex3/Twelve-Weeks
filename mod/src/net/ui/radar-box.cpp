@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace net::ui::radar_box {
 
@@ -47,6 +48,11 @@ namespace net::ui::radar_box {
         Blip    gBlips[core::kIcons];
         int     gN = 0;
         bool    gActive = false;
+
+        // Per-box floor state, keyed by box SID: the native box list is sorted
+        // by distance every frame, so an index would mix two boxes' hysteresis.
+        std::unordered_map<uint64_t, Floor> gFloors;
+        int     gArcCount = -1;
 
         bool Disabled()
         {
@@ -184,19 +190,43 @@ namespace net::ui::radar_box {
         return true;
     }
 
+    bool FeedBlip(float x, float y, bool pinned, uint64_t boxSid,
+                  float boxY, float playerY)
+    {
+        Floor floor = Floor::Same;
+        if (boxSid) {
+            const auto it = gFloors.find(boxSid);
+            const Floor prev = it == gFloors.end() ? Floor::Same : it->second;
+            const float dy = boxY - playerY;
+            floor = core::FloorFromDelta(dy, prev,
+                                         engine::flag::Absent("t2r-no-box-floor.txt"));
+            gFloors[boxSid] = floor;
+            if (floor != prev)
+                TO1_LOG("box floor: box %llu radar icon -> %s (dy %+.2f m)\n",
+                    static_cast<unsigned long long>(boxSid),
+                    floor == Floor::Up ? "grey crate + arrow UP (box above us)"
+                    : floor == Floor::Down ? "grey crate + arrow DOWN (box below us)"
+                    : "plain crate (our floor / off)",
+                    static_cast<double>(dy));
+        }
+        return FeedBlip(x, y, pinned, floor);
+    }
+
     void EndFrame(uint64_t now)
     {
         (void)now;
         if (!gActive) return;
 
-        bool wantArc[2][core::kArcSteps]{};
+        bool wantArc[core::kArcBanks][core::kArcSteps]{};
+        int nArc = 0;
         for (int i = 0; i < gN; ++i) {
             Blip& b = gBlips[i];
             const Floor state = core::IconState(b.floor, g.floor);
             if (b.pinned && g.arcs) {
-                const int k = core::ArcIndex(b.x, b.y);
-                wantArc[state == Floor::Same ? 0 : 1][k] = true;
-                continue;   // a pinned box shows an arc, not a crate
+                const core::ArcState arc = core::ArcFor(b, g.arcs);
+                if (arc.visible) wantArc[arc.bank][arc.index] = true;
+                ++nArc;     // a pinned box shows an arc, not a crate
+                continue;
             }
             core::ClampIcon(b.x, b.y, g.onPage);
             const int slot = core::StateSlot(state);
@@ -215,7 +245,7 @@ namespace net::ui::radar_box {
         for (int i = gN; i < core::kIcons; ++i) HideCrate(i);
 
         const float al = core::IconAlpha(1.0f, 1.0f, g.onPage, false);
-        for (int c = 0; c < 2; ++c)
+        for (int c = 0; c < core::kArcBanks; ++c)
             for (int k = 0; k < core::kArcSteps; ++k) {
                 if (!g.arcs) break;
                 const bool want = wantArc[c][k];
@@ -225,6 +255,10 @@ namespace net::ui::radar_box {
                 }
                 if (want) engine::widget::Alpha(g.arc[c][k], al);
             }
+        if (nArc != gArcCount) {
+            gArcCount = nArc;
+            TO1_LOG("box arcs: %d out-of-range box(es) on the rim\n", nArc);
+        }
     }
 
     bool Active()
@@ -248,6 +282,8 @@ namespace net::ui::radar_box {
         for (auto& a : g.arc) a.fill(0);
         for (int& v : g.vis) v = -1;
         std::memset(g.av, 0, sizeof g.av);
+        gFloors.clear();
+        gArcCount = -1;
     }
 
 } // namespace net::ui::radar_box

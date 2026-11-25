@@ -330,7 +330,7 @@ namespace {
     void ClearHolds(uint8_t target)
     {
         if (target < kMaxPeers)
-            std::memset(g_holds[target], 0, sizeof g_holds[target]);
+            std::fill_n(g_holds[target], kMaxPeers, Hold{});
     }
 
     int ReviveRank(uint8_t target, uint8_t reviver)
@@ -395,16 +395,20 @@ namespace {
         return g_localReviver < kMaxPeers;
     }
 
-    void ReceiveRevive(uint8_t from)
+    void ReceiveRevive(uint8_t target, uint8_t reviver)
     {
-        ClearHolds(Local());
-        if (!g_down)
+        if (target >= kMaxPeers)
+            return;
+        ClearHolds(target);
+        g_peers[target].revivedFrame = Frame();
+        g_peers[target].state = kStateUp;
+        if (target != Local() || !g_down)
             return;
         if (g_sink)
             g_sink->Log("downed: revive received");
-        EndDown(End::kRevived, from);
+        EndDown(End::kRevived, kRevivedDowner);
         if (g_sink)
-            g_sink->OnRevived(from);
+            g_sink->OnRevived(reviver);
     }
 
     void CompleteRevive(uint8_t target, uint8_t reviver)
@@ -414,10 +418,12 @@ namespace {
         g_peers[target].revivedFrame = Frame();
         g_peers[target].state = kStateUp;
         ClearHolds(target);
+        // The wire byte is the REVIVED slot, not the sender. Net-session stamps the
+        // reviver as the event's sender; every receiver uses that for credit / trust.
         if (g_sink)
-            g_sink->SendRevive(reviver);
+            g_sink->SendRevive(target);
         if (target == Local() && g_down)
-            ReceiveRevive(reviver);
+            ReceiveRevive(target, reviver);
     }
 
     uint8_t BuildDowned(uint8_t out[6], uint8_t state, uint8_t downer,
@@ -622,8 +628,9 @@ namespace {
         g_localReviver = kMaxPeers;
         g_localReviverSecs = 0.0f;
         g_localReviverMs = 0;
-        std::memset(g_peers, 0, sizeof g_peers);
-        std::memset(g_holds, 0, sizeof g_holds);
+        std::fill_n(g_peers, kMaxPeers, Peer{});
+        for (auto& row : g_holds)
+            std::fill_n(row, kMaxPeers, Hold{});
     }
 
     void ResetPerLife()
@@ -641,7 +648,7 @@ namespace {
         g_peers[slot] = Peer{};
         for (uint8_t target = 0; target < kMaxPeers; ++target)
             g_holds[target][slot] = Hold{};
-        std::memset(g_holds[slot], 0, sizeof g_holds[slot]);
+        std::fill_n(g_holds[slot], kMaxPeers, Hold{});
         if (g_localReviver == slot)
             ClearLocalReviverHold();
     }

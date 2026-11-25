@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace {
 
@@ -69,6 +70,55 @@ namespace {
         }
     }
 
+    void FloorTests()
+    {
+        Check(FloorFromDelta(0.0f, Floor::Same, true) == Floor::Same &&
+              FloorFromDelta(2.0f, Floor::Same, true) == Floor::Same &&
+              FloorFromDelta(-2.0f, Floor::Same, true) == Floor::Same,
+              "within 2.0 m is our floor (the ext's BXF_LEVEL)");
+        Check(FloorFromDelta(2.01f, Floor::Same, true) == Floor::Up &&
+              FloorFromDelta(-2.01f, Floor::Same, true) == Floor::Down,
+              "more than 2.0 m above / below selects the arrow direction");
+        Check(FloorFromDelta(1.9f, Floor::Up, true) == Floor::Up &&
+              FloorFromDelta(-1.9f, Floor::Down, true) == Floor::Down,
+              "1.9 m keeps the previous other-floor state (15 cm hysteresis)");
+        Check(FloorFromDelta(1.84f, Floor::Up, true) == Floor::Same &&
+              FloorFromDelta(-1.84f, Floor::Down, true) == Floor::Same,
+              "below 1.85 m returns to the plain crate (BXF_BACK)");
+        Check(FloorFromDelta(5.0f, Floor::Same, false) == Floor::Same,
+              "the ext opt-out disables the floor state");
+        Check(FloorFromDelta(std::numeric_limits<float>::quiet_NaN(),
+                             Floor::Up, true) == Floor::Same,
+              "a bad Y delta falls back to the plain crate");
+    }
+
+    void ArcStateTests()
+    {
+        Check(ArcBank(Floor::Same) == kArcBankSame &&
+              ArcBank(Floor::Up) == kArcBankOther &&
+              ArcBank(Floor::Down) == kArcBankOther,
+              "white arc for our floor, grey arc for another floor");
+
+        Blip inRange;
+        inRange.x = kRadarCx + 40.0f; inRange.y = kRadarCy;
+        Check(!ArcFor(inRange, true).visible,
+              "an in-range box has no rim arc");
+
+        Blip pinned;
+        pinned.x = kRadarCx + 70.0f; pinned.y = kRadarCy;
+        pinned.pinned = true;
+        const ArcState white = ArcFor(pinned, true);
+        Check(white.visible && white.index == 15 && white.bank == kArcBankSame,
+              "a pinned box on our floor lights the east white arc");
+        pinned.floor = Floor::Up;
+        const ArcState grey = ArcFor(pinned, true);
+        Check(grey.visible && grey.index == white.index &&
+              grey.bank == kArcBankOther,
+              "the same box one floor up uses the grey bank at the same bearing");
+        Check(!ArcFor(pinned, false).visible,
+              "an old pak without arcs leaves a pinned crate alone");
+    }
+
     void StateTests()
     {
         Check(IconState(Floor::Up, false) == Floor::Same &&
@@ -96,6 +146,8 @@ int main()
 {
     AnchorTests();
     ArcTests();
+    FloorTests();
+    ArcStateTests();
     StateTests();
     if (fails) {
         std::printf("%d failure(s)\n", fails);

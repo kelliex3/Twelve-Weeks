@@ -194,13 +194,18 @@ enum NetEventType : uint8_t {
     // Pinned to the ext's own byte 0x5B so the two transports interoperate during the cutover.
     NEVT_BACKPACK = 0x5B,
 
-    // ---- reserved ext opcodes (melee + downed) ------------------------------------------
+    // ---- reserved ext opcodes (melee + downed + gift) ------------------------------------
     // These are the ext's own peer-message bytes, pinned here at their EXACT values so the
     // two transports interoperate during the cutover (never renumber the low 0..18 events
-    // above). A feature module owns the payload layout; the entries are reservations while
-    // that module's wire bridge is still gated (see FEATURES.md / PHASE1.md).
+    // above). This registry is the single source of truth; each feature module owns its
+    // payload layout and dispatches its bytes from a native bridge that no-ops while
+    // t2r-ext.dll is loaded (see FEATURES.md / PHASE1.md).
     NEVT_DOWNED      = 0x43,   // ext MSG_DOWNED: [u8 state][u8 downer][u8 knockDir+1][u8 mix][u8 bleed+0.5][u8 epoch] (net/match/downed-state.hpp)
-    NEVT_REVIVE      = 0x44,   // ext MSG_REVIVE: [u8 who] -- a teammate completed the revive
+    NEVT_REVIVE      = 0x44,   // ext MSG_REVIVE: [u8 target] -- sent by the reviver, names the revived slot
+    // ext MSG_UC4_REACH 0x47: [u8 downed target][u8 1 reaching / 0 stopped][u8 revive secs x10]
+    // [u8 psync pair]. Broadcast by the reviver; the downed player pauses its bleed-out and
+    // every client's revive ring reads the aggregated hold from it.
+    NEVT_REACH       = 0x47,
     // ext MSG_STUNNED 0x45: the sender's local stun lock started. The receiver stamps the
     // peer-stun rising edge that feeds the music "enemy stunned" (5.0) input. Pinned to the
     // ext's exact byte for cutover interop.
@@ -230,6 +235,12 @@ enum NetEventType : uint8_t {
     // ext's v1 layout; a line too long for the native event's 255-byte size byte uses the
     // native v2 fragment layout defined there.
     NEVT_CHAT_C7     = 0xC7,   // [u8 ver][u8 chan][u16 seq][u16 bytes][UTF-8 text]
+
+    // Crafter gift stock / hand-out (tools/ext/gift.c), pinned to the ext's exact bytes.
+    // Stock is broadcast to everyone; a give and its answer are direct to one slot.
+    NEVT_GIFT       = 0x53,   // [u8 kind]                 giver -> receiver
+    NEVT_GIFT_STOCK = 0x56,   // [u8 roomMask & 0xF]       to 0xff
+    NEVT_GIFT_ACK   = 0x57,   // [u8 1 taken / 0 refused]  receiver -> giver
 };
 
 // ---- other wire opcodes introduced by the ext -> mod port -------------------------------

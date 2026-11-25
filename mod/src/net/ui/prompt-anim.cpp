@@ -62,7 +62,7 @@ namespace net::ui::prompt_anim {
             return engine::flag::Present("t2r-prompt-anim-old.txt");
         }
 
-        bool RegularOptIn()
+        bool RegularSlotEnabled()
         {
             return engine::flag::Present("t2r-wp-selfdraw.txt");
         }
@@ -246,11 +246,21 @@ namespace net::ui::prompt_anim {
         gIn.padPress = engine::pad::MeleeEdge(gEdge, now, false, false) > 0;
     }
 
+    bool PressEdge() noexcept
+    {
+        return gIn.keyPress || gIn.padPress;
+    }
+
+    bool RegularOptIn() noexcept
+    {
+        return RegularSlotEnabled();
+    }
+
     void Draw(uint64_t now)
     {
         if (boot::ExtLoaded() || OldTexts()) return;
         DrawSlot(0, now);
-        if (RegularOptIn()) DrawSlot(1, now);
+        if (RegularSlotEnabled()) DrawSlot(1, now);
     }
 
     bool Active()
