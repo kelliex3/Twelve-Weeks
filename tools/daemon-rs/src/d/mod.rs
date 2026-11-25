@@ -15,3 +15,4 @@ pub mod teams;
 pub use teams::*;
 pub mod jip;
 pub use jip::*;
+pub mod k4_selftest;

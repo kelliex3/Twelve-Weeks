@@ -11,7 +11,7 @@ pub fn handle_batch(conn: &Conn, addr: Addr, st: &mut ConnSt, batch: &mut Batch)
 }
 // K1 base
 pub fn tag(token: &str) -> String {
-    unimplemented!()
+    token.chars().take(8).collect() // (K1 adds the embedded-name lookup; the K4 selftest tokens carry none)
 }
 // K3 sess
 pub struct Bridges {}

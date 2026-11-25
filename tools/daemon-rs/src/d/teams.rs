@@ -19,7 +19,7 @@ pub const SKILL_A: f64 = 0.36;
 pub const SKILL_B: f64 = 0.245;
 pub const SKILL_NEW: f64 = SKILL_A + SKILL_B * 1.0;
 pub const SKILL_CACHE_S: f64 = 300.0;
-static SKILL_CACHE: LazyLock<Mutex<HashMap<String, (f64, f64)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static SKILL_CACHE: LazyLock<Mutex<HashMap<String, (f64, f64)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static SKILL_INDEX: AtomicBool = AtomicBool::new(false);
 
 fn team_balance_on() -> bool {
@@ -112,7 +112,7 @@ fn mtime(p: &PathBuf) -> Option<f64> {
     Some(m.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
 }
 
-static TOP_CACHE: LazyLock<Mutex<(Option<f64>, HashSet<String>)>> = LazyLock::new(|| Mutex::new((None, HashSet::new())));
+pub static TOP_CACHE: LazyLock<Mutex<(Option<f64>, HashSet<String>)>> = LazyLock::new(|| Mutex::new((None, HashSet::new())));
 
 /// Python `str.splitlines()`
 pub fn py_splitlines(s: &str) -> Vec<String> {
@@ -198,7 +198,7 @@ pub fn top_players(tokens: &[String]) -> HashSet<String> {
     out
 }
 
-static RULES_CACHE: LazyLock<Mutex<(Option<f64>, Vec<(String, String)>)>> = LazyLock::new(|| Mutex::new((None, Vec::new())));
+pub static RULES_CACHE: LazyLock<Mutex<(Option<f64>, Vec<(String, String)>)>> = LazyLock::new(|| Mutex::new((None, Vec::new())));
 
 // py: daemon.py:5985 team_rules_text
 pub fn team_rules_text() -> String {
@@ -355,11 +355,29 @@ pub fn rule_team_for(token: &str, teams_of: &IndexMap<String, i64>, rg: &RuleGro
 }
 
 fn wsum(skill: Option<&HashMap<String, f64>>, top: &HashSet<String>, g: &[String]) -> f64 {
-    let mut s = 0.0;
-    for x in g {
-        s += skill.and_then(|m| m.get(x)).copied().unwrap_or(SKILL_NEW) + if top.contains(x) { 0.5 } else { 0.0 };
+    py_sum(&g.iter().map(|x| skill.and_then(|m| m.get(x)).copied().unwrap_or(SKILL_NEW) + if top.contains(x) { 0.5 } else { 0.0 }).collect::<Vec<_>>())
+}
+
+/// Python 3.12 `sum()` of floats (Neumaier compensated summation, starting from the int 0)
+pub fn py_sum(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
     }
-    s
+    let mut f = 0.0 + xs[0];
+    let mut c = 0.0f64;
+    for &x in &xs[1..] {
+        let t = f + x;
+        if f.abs() >= x.abs() {
+            c += (f - t) + x;
+        } else {
+            c += (x - t) + f;
+        }
+        f = t;
+    }
+    if c != 0.0 && c.is_finite() {
+        f += c;
+    }
+    f
 }
 
 // py: daemon.py:6076 split_teams
@@ -399,10 +417,7 @@ pub fn split_teams(
             }
             let rg: &[(String, Vec<String>)] = groups_rules.map(|v| v.as_slice()).unwrap_or(&[]);
             let w: HashMap<&String, f64> = players.iter().map(|t| (t, sk.get(t).copied().unwrap_or(SKILL_NEW) + if top.contains(t) { 0.5 } else { 0.0 })).collect();
-            let mut tot = 0.0;
-            for t in players {
-                tot += w[t];
-            }
+            let tot = py_sum(&players.iter().map(|t| w[t]).collect::<Vec<_>>());
             let parties: Vec<&Vec<String>> = groups.iter().filter(|g| g.len() > 1 && g.len() <= cap).collect();
             let mut best: Option<Vec<usize>> = None;
             let mut best_c = 0.0;
@@ -436,12 +451,7 @@ pub fn split_teams(
                             pen += 500.0;
                         }
                     }
-                    let mut sa = 0.0;
-                    for (i, t) in players.iter().enumerate() {
-                        if a.contains(&i) {
-                            sa += w[t];
-                        }
-                    }
+                    let sa = py_sum(&players.iter().enumerate().filter(|(i, _)| a.contains(i)).map(|(_, t)| w[t]).collect::<Vec<_>>());
                     let cost = pen + (2.0 * sa - tot).abs();
                     if best.is_none() || cost < best_c - 1e-9 {
                         best_c = cost;
@@ -581,8 +591,8 @@ pub fn team_order(players: &[String]) -> Vec<String> {
         }
     }
     if let Some(sk) = &sk {
-        let s0: f64 = t0.iter().map(|x| sk[x]).fold(0.0, |a, b| a + b);
-        let s1: f64 = t1.iter().map(|x| sk[x]).fold(0.0, |a, b| a + b);
+        let s0: f64 = py_sum(&t0.iter().map(|x| sk[x]).collect::<Vec<_>>());
+        let s1: f64 = py_sum(&t1.iter().map(|x| sk[x]).collect::<Vec<_>>());
         let f = |team: &[String]| team.iter().map(|x| format!("{} {}{}", tag(x), py::fixed(sk[x], 2), if top.contains(x) { " TOP" } else { "" })).collect::<Vec<_>>().join(",");
         dlog!(format!("TEAMS balanced: {} v {} | {} v {}", py::fixed(s0, 2), py::fixed(s1, 2), f(&t0), f(&t1)));
     }
@@ -688,13 +698,7 @@ pub fn host_swap_pick(host: &str, big: &[String], small: &[String], players: &[S
             }
         }
     }
-    let sumw = |v: &[String]| {
-        let mut s = 0.0;
-        for x in v {
-            s += wv(x);
-        }
-        s
-    };
+    let sumw = |v: &[String]| py_sum(&v.iter().map(|x| wv(x)).collect::<Vec<_>>());
     let bests = || big.iter().map(|x| oi(worst_ping(x, players))).collect::<Vec<_>>().join(",");
     match best {
         None => {

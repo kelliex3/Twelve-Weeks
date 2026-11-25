@@ -324,11 +324,7 @@ impl MMState {
                 let sk = player_skill(&all);
                 let mut tot = [0.0f64; 2];
                 for side in 0..2usize {
-                    for (k, t) in &tin {
-                        if *k == side as i64 {
-                            tot[side] += sk[t];
-                        }
-                    }
+                    tot[side] = py_sum(&tin.iter().filter(|(k, _)| *k == side as i64).map(|(_, t)| sk[t]).collect::<Vec<_>>());
                 }
                 if (tot[0] - tot[1]).abs() > 1e-6 {
                     let weak: i64 = if tot[0] < tot[1] { 0 } else { 1 };

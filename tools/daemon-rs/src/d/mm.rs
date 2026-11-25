@@ -1115,7 +1115,7 @@ impl MatchMaker {
     }
 
     // py: daemon.py:5542 drop
-    pub fn drop(&self, mid: &str) {
+    pub fn drop_mid(&self, mid: &str) {
         let mut g = self.lock.lock();
         if g.matches.contains_key(mid) {
             g.forget_locked(mid);
