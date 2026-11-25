@@ -784,13 +784,18 @@ def _cache_put(cache, token, value, gen=None, key=None):
 # and a start-up check that restores it when t2r.db is empty or corrupt. (Clans, names, loadouts, stats all live in t2r.db.)
 BAK_PATH = DB_PATH + ".bak"
 
-def _db_ok(path):
+# A backup of a large DB on a small server (1 vCPU / 1 GB) took minutes when it ran every 5 min with a full integrity_check: requests waited
+# on the lock, the connection cap filled and players lost the server. Now every 30 min, and the copy is checked with quick_check
+# (same page / record checks, without the index cross-check that read the whole file again).
+DB_BACKUP_S = float(os.environ.get("T2R_DB_BACKUP_S", "1800"))
+
+def _db_ok(path, quick=False):
     try:
         if os.path.getsize(path) == 0:
             return False
         c = sqlite3.connect(path)
         try:
-            return c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            return c.execute("PRAGMA quick_check" if quick else "PRAGMA integrity_check").fetchone()[0] == "ok"
         finally:
             c.close()
     except (OSError, sqlite3.Error):
@@ -800,9 +805,9 @@ def db_guard():
     """At start: restore t2r.db from the backup when it is missing its data (zeroed / corrupt). Returns a status string."""
     if not os.path.exists(DB_PATH):
         return "no db yet"
-    if _db_ok(DB_PATH):
+    if _db_ok(DB_PATH, quick=True):
         return "ok"
-    if _db_ok(BAK_PATH):
+    if _db_ok(BAK_PATH, quick=True):
         ro_close_all()
         bad = DB_PATH + ".corrupt-%d" % int(time.time())
         os.replace(DB_PATH, bad)
@@ -833,7 +838,7 @@ def db_backup():
                     dst.close()
             finally:
                 src.close()
-        if not _db_ok(tmp):
+        if not _db_ok(tmp, quick=True):
             os.remove(tmp)
             return False
         with open(tmp, "rb+") as f:
@@ -9808,7 +9813,7 @@ def status_loop():
     last_bak = 0.0
     while True:
         time.sleep(10)
-        if time.time() - last_bak > 300:                 # rolling db backup every 5 min
+        if time.time() - last_bak > DB_BACKUP_S:         # rolling db backup (every 30 min)
             last_bak = time.time()
             if os.path.exists(DB_PATH) and db_backup():
                 log("DB backup ok")
