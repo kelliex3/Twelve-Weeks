@@ -1,9 +1,17 @@
 #![allow(dead_code)]
+mod c_util;
 mod clock;
+mod gen_modes;
+mod gunlimit;
+mod interrogation;
+mod lobbybook;
+mod map_packs;
+mod modeq;
 mod log;
 mod net;
 mod py;
 mod pyfmt;
+mod requeue;
 mod rnd;
 mod selftest;
 mod udp;
