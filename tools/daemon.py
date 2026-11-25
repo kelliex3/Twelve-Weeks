@@ -7053,6 +7053,10 @@ def hostcap_repick_log(mid, players, alive, hslot, scores, act, what):
         verd = "no change"
     log("HOST-REPICK", mid, "cap: host %s %s; %s" % (tag(players[hslot]), cur[1], verd))
 
+# A host can freeze for every player again and again (each freeze shorter than T2R_HM_MIN_SILENT_S, so never a host loss) and stay host.
+# FREEZE_N freeze episodes within FREEZE_WINDOW_S make it a bad host for the re-pick (targets rank <= 1). 0 = off.
+FREEZE_N = int(os.environ.get("T2R_HOST_FREEZE_N", "3"))
+FREEZE_WINDOW_S = float(os.environ.get("T2R_HOST_FREEZE_WINDOW_S", "300"))
 SAT_TARGET_RANK = int(os.environ.get("T2R_HOST_SAT_TARGET_RANK", "1"))   # highest hostcap rank a saturated host may hand over to (0 = proven only, the old rule)
 
 def repick_cap(mid, players, alive, hslot):
@@ -7075,6 +7079,8 @@ def repick_cap(mid, players, alive, hslot):
         # proven host left the lobby lagging until the host left. A saturated link now moves: a proven target first, else one that never lagged
         # at this lobby size (rank 1, SAT_TARGET_RANK), never a lagged one (rank 2).
         bad, max_rank = "%s link saturated (%s; %s)" % (tag(h), why, vs[hslot][1]), SAT_TARGET_RANK
+    elif n >= 3 and FREEZE_N > 0 and HM.freezes(mid, hslot, FREEZE_WINDOW_S) >= FREEZE_N:
+        bad, max_rank = "%s froze for every player %d times in %d s (%s)" % (tag(h), HM.freezes(mid, hslot, FREEZE_WINDOW_S), FREEZE_WINDOW_S, vs[hslot][1]), 1
     if not bad:
         if hostcap.MODE >= 2 and n >= hostmig.REPICK_PROVEN_N > 0:
             # no capacity problem, but a ping-only handover in a big lobby may only go to a proven target (hostmig REPICK_PROVEN_N)
@@ -7087,6 +7093,8 @@ def repick_cap(mid, players, alive, hslot):
         return None
     return {"host_bad": bad, "rank": {s: v[0] for s, v in vs.items()}, "text": {s: v[1] for s, v in vs.items()}, "max_rank": max_rank,
             "saturated": bool(sat)}
+
+REPICK_BLIND = {}                                  # mid -> blind slots last logged (repick_tick)
 
 def repick_tick():
     """Every REPICK_INTERVAL s per running match: score every player as host on the live measured pings and, when the best is clearly
@@ -7120,13 +7128,20 @@ def repick_tick():
                 "- not a candidate, scored as a peer with its known pings")
         toks = [players[s] for s in alive]
         pool = host_pool(toks)[0]
+        # ONE player with no ping to anybody (no Steam helper data) made every candidate's key
+        # unknown -> 'hold: pings unknown' for the whole match, the capacity override included. Such a peer is skipped like a stale one.
+        blind = {o for o in alive if all(pair_ping(players[o], players[q]) is None for q in alive if q != o)} if len(alive) >= 3 else set()
+        if blind and len(blind) < len(alive) - 1 and REPICK_BLIND.get(mid) != sorted(blind):
+            REPICK_BLIND[mid] = sorted(blind)
+            log("HOST-REPICK", mid, "no ping data for", ", ".join("slot %d %s" % (b, tag(players[b])) for b in sorted(blind)), "- scored without it")
+        skip = stale | blind if len(blind) < len(alive) - 1 else stale
         scores = {}
         for s in alive:
             t = players[s]
-            if (t not in pool or s in stale) and s != hslot:
+            if (t not in pool or s in skip) and s != hslot:
                 continue
             pings = [pair_ping(t, players[o]) for o in alive if o != s]
-            pings = [v for o, v in zip([o for o in alive if o != s], pings) if not (v is None and o in stale)]   # a stale peer's unknown ping is skipped
+            pings = [v for o, v in zip([o for o in alive if o != s], pings) if not (v is None and o in skip)]   # a stale / blind peer's unknown ping is skipped
             scores[s] = None if (not pings or None in pings) else hostmig.host_key(pings, perf_penalty(t))
         with MM.lock:
             ck = MM.clock.get(mid)
@@ -7157,6 +7172,8 @@ def repick_tick():
                 evt("host-repick", mid, "handover to", tag(players[what]))
                 REPICK.migrated(mid, frozenset(alive))
     live = set(HM.mids())                                 # a match that left HM (ended / reaped) is never visited above again: its records went on growing
+    for mid in [m for m in list(REPICK_BLIND) if m not in live]:
+        REPICK_BLIND.pop(mid, None)
     for mid in set([m for m in list(REPICK.recs) if m not in live] + [m for m in list(REPICK.last_text) if m not in live] + [m for m in list(REPICK.base) if m not in live]):
         REPICK.forget(mid)
 

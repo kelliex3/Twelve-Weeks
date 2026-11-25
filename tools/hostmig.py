@@ -655,6 +655,9 @@ class HostMigration:
         if all_silent and self.min_silent > 0 and now - m["silent_since"] < self.min_silent and not self._host_dead(m, h):
             if not m.get("min_silent_logged"):
                 m["min_silent_logged"] = 1
+                fz = m.setdefault("freezes", [])          # one entry per freeze episode of THIS host (HostMigration.freezes, daemon repick_cap)
+                fz.append((h, now))
+                del fz[:-20]
                 self.log("HOSTMIG", mid, f"every player reports host slot {h} silent, but its link to the server is up - waiting until the silence lasts {self.min_silent:.0f} s (a hitch is no host loss)")
             all_silent = False
         lone = (now - m["silent_since"] >= self.lone_wait and
@@ -669,6 +672,17 @@ class HostMigration:
 
     # ------------------------------------------------------------ planned handover (HostRepick)
     HANDOVER_TIMEOUT = 30.0     # prepare phase abort (the ext polls every 10 s as a client until it hears state 3)
+
+    def freezes(self, mid, host_slot, window_s):
+        """Freeze episodes of host_slot in the last window_s seconds: every other player reported the host silent while its link to the
+        server stayed up (the min_silent wait above). A host can freeze for everyone again and again, each freeze shorter than
+        min_silent, and so never count as lost."""
+        with self.lock:
+            m = self.matches.get(mid)
+            if not m:
+                return 0
+            now = self.now()
+            return sum(1 for h, t in m.get("freezes", ()) if h == host_slot and now - t <= window_s)
 
     def roster(self, mid):
         """Alive slots of a match (frozenset), None when unknown."""
@@ -850,10 +864,19 @@ class HostMigration:
             except Exception:
                 return 0
 
+        # One survivor with no ping to anybody (no Steam helper data) made every key unknown, so the pick fell back to slot order and could
+        # put the match on a host far from someone. A candidate with no ping to any other candidate is left out of the others' keys (it cannot
+        # be judged either way) and is not picked while a judged one exists.
+        blind = set()
+        if self.ping and len(cands) > 2:
+            blind = {c for c in cands if all(self.ping(m["players"][c], m["players"][o]) is None for o in cands if o != c)}
+            if len(blind) >= len(cands) - 1:
+                blind = set()
+
         def key(s):
-            if self.ping and len(cands) > 1:
-                p = [self.ping(m["players"][s], m["players"][o]) for o in cands if o != s]
-                if None not in p:
+            if self.ping and len(cands) > 1 and s not in blind:
+                p = [self.ping(m["players"][s], m["players"][o]) for o in cands if o != s and o not in blind]
+                if p and None not in p:
                     return host_key(p, pen(s)) + (s,)
             return (1e9 + pen(s), 1e9, s)
         return min(cands, key=key)
@@ -896,7 +919,10 @@ REPICK_MAX = _envi("T2R_HOST_REPICK_MAX", 2)                # per match; the 2nd
 # (live handover on: a host change only for a clear gain): the capacity target is confirmed on a second check (30 s later) and its worst
 # ping may not be worse than the lagging host's (was 1 check, up to 150 ms worse).
 REPICK_CAP_CONFIRM = _envi("T2R_HOST_REPICK_CAP_CONFIRM", 2)        # same capacity target on this many consecutive checks
-REPICK_CAP_MAX_WORSE_MS = _envi("T2R_HOST_REPICK_CAP_WORSE_MS", 0)  # the target's worst ping may be at most this much above the lagging host's
+# A lagging host used to be kept whenever it had the lowest worst ping, which it usually has (it was picked for ping). The target may be
+# up to 25 ms worse, but never above the match ping limit (REPICK_CAP_LIMIT_MS) unless the lagging host is already above it.
+REPICK_CAP_MAX_WORSE_MS = _envi("T2R_HOST_REPICK_CAP_WORSE_MS", 25)  # the target's worst ping may be at most this much above the lagging host's
+REPICK_CAP_LIMIT_MS = _envi("T2R_PING_MATCH_MS", 175)                # ... and at most this (or the host's own worst, when higher)
 # A PING-only handover ("a better connection") in an 8 player lobby put the match on a host whose upload could not carry
 # the ~2.3 MB/s the relay needs there: five peers fell silent within seconds, the server counted them gone and the match emptied. In a lobby this big a
 # handover that is only about ping goes to a target hostcap has PROVEN (rank 0) for this size; the capacity override above is unchanged.
@@ -1048,7 +1074,7 @@ class HostRepick:
         if cap and cap.get("host_bad"):
             rank = cap.get("rank") or {}
             alts = [p for p in cands if p != host and rank.get(p, 1) <= cap.get("max_rank", 1)
-                    and (cur is None or cands[p][0] <= cur[0] + REPICK_CAP_MAX_WORSE_MS)]
+                    and (cur is None or (cands[p][0] <= cur[0] + REPICK_CAP_MAX_WORSE_MS and cands[p][0] <= max(cur[0], REPICK_CAP_LIMIT_MS)))]
             if alts:
                 best = min(alts, key=lambda p: (rank.get(p, 1), cands[p]))
                 tgt, n = r["streak"]
