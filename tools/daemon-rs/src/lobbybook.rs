@@ -193,7 +193,10 @@ impl LobbyBook {
         self.lobbies.values().find(|lb| lb.src.as_deref() == Some(mid) && lb.mid.is_none()).map(|lb| lb.lid.clone())
     }
 
-    // py: lobbybook.py:119 place
+    // py: lobbybook.py:123 place
+    /// `near(members, newcomers)` (optional): same region group (or unknown) - region first, never a block: a returner whose post-match
+    /// lobby is mostly of another region takes an open lobby of its own region when one fits, else its post-match lobby as before;
+    /// among the other lobbies the same-region ones come first.
     #[allow(clippy::too_many_arguments)]
     pub fn place(
         &mut self,
@@ -205,12 +208,13 @@ impl LobbyBook {
         src: Option<&str>,
         solo: bool,
         at: Option<f64>,
-    ) -> (String, &'static str) {
+        mut near: Option<Fits>,
+    ) -> (String, String) {
         let now = now.unwrap_or_else(|| self.now());
         if let Some(lid) = self.of.get(token).cloned() {
             if let Some(lb) = self.lobbies.get_mut(&lid) {
                 lb.away.shift_remove(token);
-                return (lid, "back");
+                return (lid, "back".into());
             }
         }
         let mut unit_v: Vec<String> = vec![token.to_string()];
@@ -226,7 +230,7 @@ impl LobbyBook {
             };
             if room {
                 self.add(&ml, token, now, at);
-                return (ml, "party");
+                return (ml, "party".into());
             }
             let nb = self.new_lobby(now, None, None);
             let movers: Vec<String> = unit_v.iter().filter(|x| self.of.get(*x).map(|s| s.as_str()) == Some(ml.as_str())).cloned().collect();
@@ -240,7 +244,7 @@ impl LobbyBook {
                 }
             }
             dlog!(format!("LOBBY-BOOK: party of {} moved to a new lobby {} (no room in {})", tag8(token), nb, ml));
-            return (nb, "party-moved");
+            return (nb, "party-moved".into());
         }
         let need = unit_v.len() as i64;
         let lf = self.left.get(token).cloned();
@@ -258,48 +262,72 @@ impl LobbyBook {
                 && lb.members.len() as i64 + need <= cap(this, lb, &unit_v)
                 && fits(&lb.members.clone(), &unit_v)
         };
+        let mut near_ok = |this: &LobbyBook, lid: &str| -> bool {
+            match near.as_mut() {
+                None => true,
+                Some(nf) => this.lobbies.get(lid).is_some_and(|lb| nf(&lb.members.clone(), &unit_v)),
+            }
+        };
+        // best_open: the fullest, oldest open lobby (same region first); `skip_src` = not the post-match lobby of that match
+        let best_open = |this: &LobbyBook, skip_src: Option<&str>, same_only: bool,
+                             ok: &mut dyn FnMut(&LobbyBook, Option<&str>) -> bool,
+                             near_ok: &mut dyn FnMut(&LobbyBook, &str) -> bool| -> Option<String> {
+            let mut best: Option<((i64, i64, f64), String)> = None;
+            let ids: Vec<String> = this.lobbies.keys().cloned().collect();
+            for id in ids {
+                let Some(lb) = this.lobbies.get(&id) else { continue };
+                if (skip_src.is_some() && lb.src.as_deref() == skip_src) || !ok(this, Some(&id)) {
+                    continue;
+                }
+                let nr = near_ok(this, &id);
+                if same_only && !nr {
+                    continue;
+                }
+                let lb = &this.lobbies[&id];
+                let k = (if nr { 0 } else { 1 }, -(lb.members.len() as i64), lb.created);
+                let better = match &best {
+                    None => true,
+                    Some((bk, _)) => k.0 < bk.0 || (k.0 == bk.0 && (k.1 < bk.1 || (k.1 == bk.1 && k.2 < bk.2))),
+                };
+                if better {
+                    best = Some((k, id));
+                }
+            }
+            best.map(|(_, id)| id)
+        };
 
         if let Some(src) = src {
             let lb = self.src_lobby(src);
             if ok(&*self, lb.as_deref()) {
                 let lid = lb.unwrap_or_default();
+                if !solo && !self.lobbies[&lid].members.is_empty() && !near_ok(&*self, &lid) {
+                    if let Some(alt) = best_open(&*self, Some(src), true, &mut ok, &mut near_ok) {
+                        self.add(&alt, token, now, at);
+                        return (alt, format!("own region (post-match lobby {} is mostly another region)", lid));
+                    }
+                }
                 self.add(&lid, token, now, at);
-                return (lid, "post-match lobby");
+                return (lid, "post-match lobby".into());
             }
             if lb.is_none() {
                 let key = self.key_for_mid(src);
                 let nb = self.new_lobby(now, Some(src), Some(&key));
                 self.add(&nb, token, now, at);
-                return (nb, "post-match lobby (first back)");
+                return (nb, "post-match lobby (first back)".into());
             }
         }
         if let Some(e) = &lf {
             if Some(e.0.as_str()) != blocked.as_deref() && now - e.1 <= REJOIN_S && ok(&*self, Some(&e.0)) {
                 let lid = e.0.clone();
                 self.add(&lid, token, now, at);
-                return (lid, "rejoin");
+                return (lid, "rejoin".into());
             }
         }
         if !solo {
-            let mut best: Option<((i64, f64), String)> = None;
-            let ids: Vec<String> = self.lobbies.keys().cloned().collect();
-            for id in ids {
-                if !ok(&*self, Some(&id)) {
-                    continue;
-                }
-                let Some(lb) = self.lobbies.get(&id) else { continue };
-                let k = (-(lb.members.len() as i64), lb.created);
-                let better = match &best {
-                    None => true,
-                    Some((bk, _)) => k.0 < bk.0 || (k.0 == bk.0 && k.1 < bk.1),
-                };
-                if better {
-                    best = Some((k, id));
-                }
-            }
-            if let Some((_, id)) = best {
+            // (best_open: every open lobby is a choice here)
+            if let Some(id) = best_open(&*self, None, false, &mut ok, &mut near_ok) {
                 self.add(&id, token, now, at);
-                return (id, "joined");
+                return (id, "joined".into());
             }
         }
         let nb = self.new_lobby(now, None, None);
@@ -307,7 +335,7 @@ impl LobbyBook {
         if let Some(l) = self.lobbies.get_mut(&nb) {
             l.hold = solo;
         }
-        (nb, "new")
+        (nb, "new".into())
     }
 
     // py: lobbybook.py:190 away
@@ -538,7 +566,18 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
                     .unwrap_or_default();
                 let mut fits = |m: &[String], n: &[String]| !m.iter().chain(n.iter()).any(|t| nofit.contains(t));
                 let mut cap = |_b: &LobbyBook, lb: &Lobby, _n: &[String]| cap_n - lb.members.iter().map(|m| capx.get(m).copied().unwrap_or(0)).sum::<i64>();
-                let (lid, why) = b.place(js(c, "token"), &unit, &mut fits, &mut cap, Some(jf(c, "t")), src.as_deref(), jb(c, "solo"), at);
+let reg: Option<HashMap<String, String>> = c
+                    .get("reg")
+                    .and_then(|x| x.as_object())
+                    .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect());
+                let g = |reg: &HashMap<String, String>, ts: &[String]| ts.iter().find_map(|t| reg.get(t).cloned());
+                let mut near_f = |m: &[String], n: &[String]| {
+                    let Some(reg) = &reg else { return true };
+                    let fresh: Vec<String> = n.iter().filter(|t| !m.contains(t)).cloned().collect();
+                    !matches!((g(reg, m), g(reg, &fresh)), (Some(a), Some(b)) if a != b)
+                };
+                let near: Option<Fits> = if reg.is_some() { Some(&mut near_f) } else { None };
+                let (lid, why) = b.place(js(c, "token"), &unit, &mut fits, &mut cap, Some(jf(c, "t")), src.as_deref(), jb(c, "solo"), at, near);
                 json!([lid, why])
             }
             "away" => {

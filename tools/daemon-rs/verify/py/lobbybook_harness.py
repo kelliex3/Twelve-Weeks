@@ -39,6 +39,8 @@ def gen(r, n):
                 c["nofit"] = r.sample(toks, r.choice([1, 2, 3]))
             if r.random() < 0.15:
                 c["capx"] = {k: r.choice([1, 2]) for k in r.sample(toks, r.choice([1, 2]))}
+            if r.random() < 0.5:
+                c["reg"] = {k: r.choice(["A", "B"]) for k in r.sample(toks, r.randint(1, len(toks)))}
         elif x < 0.46:
             c.update(op="away", token=r.choice(toks))
         elif x < 0.52:
@@ -86,12 +88,21 @@ def run():
         op = c["op"]
         r = None
         if op == "place":
+            def near_of(reg):
+                if reg is None:
+                    return None
+                def g(ts):
+                    for t in ts:
+                        if t in reg:
+                            return reg[t]
+                    return None
+                return lambda m, n: not (g(m) and g([t for t in n if t not in m]) and g(m) != g([t for t in n if t not in m]))
             nofit = set(c.get("nofit", []))
             capx = c.get("capx", {})
             cap_n = c.get("cap", 8)
             r = list(b.place(c["token"], c.get("unit", []), lambda m, n: not any(t in nofit for t in list(m) + list(n)),
                              lambda lb, n: cap_n - sum(capx.get(m, 0) for m in lb.members), now=T[0], src=c.get("src"),
-                             solo=c.get("solo", False), at=c.get("at")))
+                             solo=c.get("solo", False), at=c.get("at"), near=near_of(c.get("reg"))))
         elif op == "away":
             b.away(c["token"], T[0])
         elif op == "back":

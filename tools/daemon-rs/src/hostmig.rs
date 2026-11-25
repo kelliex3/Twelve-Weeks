@@ -2060,7 +2060,10 @@ impl HostRepick {
         let mut best = pick_min(&cands);
         if let Some(cp) = cap {
             if !cp.rank.is_empty() && c.repick_proven_n != 0 && roster.len() as i64 >= c.repick_proven_n {
-                let ok: IndexMap<i64, Key> = cands.iter().filter(|(p, _)| **p == host || cp.rank.get(p).copied().unwrap_or(1) <= 0).map(|(p, k)| (*p, *k)).collect();
+                // only the current host and targets proven at least as well as it stay in the race: a host with lag records may hand over to an
+                // unproven (rank 1) target; a clean proven host still needs a proven one.
+                let hr = cp.rank.get(&host).copied().unwrap_or(1).clamp(0, 1);
+                let ok: IndexMap<i64, Key> = cands.iter().filter(|(p, _)| **p == host || cp.rank.get(p).copied().unwrap_or(1) <= hr).map(|(p, k)| (*p, *k)).collect();
                 if best != host && !ok.contains_key(&best) {
                     let best2 = if !ok.is_empty() { pick_min(&ok) } else { host };
                     let t = cp.text.get(&best).cloned().unwrap_or_else(|| "unproven".to_string());

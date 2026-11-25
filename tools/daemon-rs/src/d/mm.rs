@@ -125,8 +125,8 @@ pub fn book_unit(token: &str) -> Vec<String> {
     vec![token.to_string()]
 }
 
-// py: daemon.py:5011 _book_fits
-pub fn book_fits(members: &[String], newcomers: &[String]) -> bool {
+// py: daemon.py:5027 _book_fits
+pub fn book_fits(members: &[String], newcomers: &[String], rq: &Requeue, queue: &IndexMap<String, f64>) -> bool {
     let mut allp: Vec<String> = members.to_vec();
     for t in newcomers {
         if !members.contains(t) {
@@ -145,6 +145,22 @@ pub fn book_fits(members: &[String], newcomers: &[String]) -> bool {
             return false;
         }
     }
+    if *MM_REGION_ON && *MM_REGION_LOBBY && !members.is_empty() && !newcomers.is_empty() {
+        let fresh: Vec<String> = newcomers.iter().filter(|t| !members.contains(t)).cloned().collect();
+        let (ga, gb) = (region_group(members), region_group(&fresh));
+        if let (Some(ga), Some(gb)) = (&ga, &gb) {
+            if ga != gb {
+                let now = clock::now();
+                // the post-match lobby of one match stays together
+                let srcs: HashSet<String> = members.iter().filter_map(|t| rq.mid_of(t)).collect();
+                let same = newcomers.iter().any(|t| rq.mid_of(t).is_some_and(|m| srcs.contains(&m)));
+                let waited = allp.iter().map(|t| now - queue.get(t).copied().unwrap_or(now)).fold(f64::NEG_INFINITY, f64::max);
+                if !same && waited < *MM_REGION_WAIT_S {
+                    return false;
+                }
+            }
+        }
+    }
     if *MM_PING_GATE && *PING_KICK_MS > 0 && allp.len() >= 2 {
         let now = clock::now();
         let (_kept, dropped, _h, _i) = hostmig::ping_fit(
@@ -159,6 +175,16 @@ pub fn book_fits(members: &[String], newcomers: &[String]) -> bool {
         }
     }
     true
+}
+
+// py: daemon.py:5060 _book_near
+/// Same region group (EU / NA / other), or one side unknown: the lobby book places by region first (never a block).
+pub fn book_near(members: &[String], newcomers: &[String]) -> bool {
+    let fresh: Vec<String> = newcomers.iter().filter(|t| !members.contains(t)).cloned().collect();
+    match (region_group(members), region_group(&fresh)) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
 }
 
 impl MMState {
@@ -515,15 +541,17 @@ impl MMState {
             let (lid, why) = {
                 let MMState { book, rq, queue, matches, departed, ended, .. } = &mut *self;
                 let (rq, queue, matches, departed, ended) = (&*rq, &*queue, &*matches, &*departed, &*ended);
+                let mut near = |m: &[String], n: &[String]| book_near(m, n);
                 book.place(
                     t,
                     &unit,
-                    &mut |m: &[String], n: &[String]| book_fits(m, n),
+                    &mut |m: &[String], n: &[String]| book_fits(m, n, rq, queue),
                     &mut |bk: &LobbyBook, lb: &Lobby, inc: &[String]| MMState::book_cap_of(bk, rq, queue, matches, departed, ended, lb, inc),
                     Some(now),
                     src.as_deref(),
                     solo,
                     Some(at),
+                    if *MM_REGION_ON && *MM_REGION_LOBBY { Some(&mut near) } else { None },
                 )
             };
             dlog!("LOBBY-BOOK:", tag(t), why, lid, tags(&self.book.members(&lid)), if solo { "(held for a join in progress)" } else { "" });
@@ -545,7 +573,7 @@ impl MMState {
             let MMState { book, rq, queue, matches, departed, ended, .. } = &mut *self;
             let (rq, queue, matches, departed, ended) = (&*rq, &*queue, &*matches, &*departed, &*ended);
             let merged = book.merge_pass(
-                &mut |m: &[String], n: &[String]| book_fits(m, n),
+                &mut |m: &[String], n: &[String]| book_fits(m, n, rq, queue),
                 &mut |bk: &LobbyBook, lb: &Lobby, inc: &[String]| MMState::book_cap_of(bk, rq, queue, matches, departed, ended, lb, inc),
                 Some(now),
             );

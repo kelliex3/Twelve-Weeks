@@ -1041,6 +1041,11 @@ pub fn repick_cap(mid: &str, players: &[String], alive: &[usize], hslot: usize) 
             for s in alive {
                 prov.insert(*s, HOSTCAP.proven_for(&players[*s], n)?);
             }
+            // a host with recent lag records (verdict rank 1 'proven but lagged xN') counts as unproven itself, so an unproven target with a
+            // much better ping may take over (hostmig _decide: targets proven at least as well as the host)
+            if prov.contains_key(&hslot) && vs.get(&hslot).map(|v| v.0).unwrap_or(0) >= 1 {
+                prov.insert(hslot, false);
+            }
             let mut o = CapOverride { host_bad: None, max_rank: Some(0), ..Default::default() };
             for s in alive {
                 o.rank.insert(*s as i64, if prov[s] { 0 } else { 1 });
