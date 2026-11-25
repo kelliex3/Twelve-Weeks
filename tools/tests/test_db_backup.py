@@ -16,6 +16,9 @@ daemon.LOG_PATH = os.path.join(tmp, "daemon.log")
 DB = os.path.join(tmp, "t2r.db")
 daemon.DB_PATH, daemon.BAK_PATH = DB, DB + ".bak"
 
+check({0xDE, 0xBF} <= daemon.NOISY_OPS, "gun-limit + rank-badge polls are counted, not logged line by line")
+import inspect
+check("last_bak = time.time()" in inspect.getsource(daemon.status_loop), "no backup right at start (db_guard just checked the DB)")
 check(daemon.DB_BACKUP_S == 1800.0, "backup interval default 30 min (%s s)" % daemon.DB_BACKUP_S)
 c = sqlite3.connect(DB)
 c.execute("CREATE TABLE t (k INTEGER PRIMARY KEY, v TEXT)")

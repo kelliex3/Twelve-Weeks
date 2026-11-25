@@ -15,12 +15,20 @@
 //!     Python server on the backend address (127.0.0.1:7003). The client's address goes along as CF-Connecting-IP (the header server.py
 //!     reads for loopback callers; a loopback caller, e.g. a Cloudflare tunnel, keeps the header it sent).
 //!
-//! No crates (std only), one thread per connection with a cap, keep-alive for file requests, optional global rate cap (--rate-mbit).
+//!   * The launcher polls /status.json, /manifest.json and /news.json are answered HERE too (poll.rs, same bytes as server.py),
+//!     with keep-alive: ~18 of the ~21 requests / s at 100 players no longer reach Python. /status.json counts the open launchers into
+//!     <status dir>/t2r-launchers.json. --status-file is needed for /status.json (else it is passed on); --no-poll passes all three on.
+//!
+//! One crate (flate2, pure Rust, for the gzip replies), one thread per connection with a cap, keep-alive for file and poll requests,
+//! optional global rate cap (--rate-mbit).
 //!
 //! Usage: t2r-files --listen 0.0.0.0:7002 --backend 127.0.0.1:7003 --data <update-data folder> [--max-conns 1500]
-//!                  [--rate-mbit 0] [--stats-secs 60]
+//!                  [--rate-mbit 0] [--stats-secs 60] [--status-file <data folder>/t2r-status.json] [--no-poll]
 //! Run the Python server behind it with: server.py --host 127.0.0.1 --port 7003 ...
 //! Linux build: cargo build --release --target x86_64-unknown-linux-musl (static binary)
+
+mod json;
+mod poll;
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -43,6 +51,8 @@ struct Config {
     max_conns: usize,
     rate_mbit: u64,
     stats_secs: u64,
+    status_file: Option<PathBuf>,
+    no_poll: bool,
 }
 
 #[derive(Default)]
@@ -55,6 +65,7 @@ struct Stats {
     proxy_fail: AtomicU64,
     refused: AtomicU64,
     sent: AtomicU64,
+    polls: AtomicU64,
 }
 
 struct Shared {
@@ -62,6 +73,7 @@ struct Shared {
     stats: Stats,
     elig: Mutex<(Option<SystemTime>, HashSet<String>)>,
     bucket: Option<Mutex<(f64, Instant)>>,
+    poll: poll::Poll,
 }
 
 fn now_ts() -> String {
@@ -309,7 +321,14 @@ fn send_json(s: &mut TcpStream, code: u16, reason: &str, body: &str, head_only: 
     Ok(())
 }
 
+enum PollKind {
+    Status,
+    Manifest,
+    News,
+}
+
 enum Route {
+    Poll(PollKind),
     File { path: PathBuf, etag: String, name: Option<String> },
     NotFound(&'static str),
     Proxy,
@@ -321,6 +340,14 @@ fn route(sh: &Shared, method: &str, target: &str) -> Route {
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let data = &sh.cfg.data;
+    if !sh.cfg.no_poll {
+        match path {
+            "/status.json" if sh.poll.has_status() => return Route::Poll(PollKind::Status),
+            "/manifest.json" => return Route::Poll(PollKind::Manifest),
+            "/news.json" => return Route::Poll(PollKind::News),
+            _ => {}
+        }
+    }
     if let Some(n) = path.strip_prefix("/files/") {
         if !is_blob_name(n) {
             return Route::NotFound("{\"error\":\"no such file\"}");
@@ -499,6 +526,57 @@ fn serve_file(sh: &Shared, s: &mut TcpStream, req: &Request, path: &Path, etag: 
     Ok(true)
 }
 
+fn reason(code: u16) -> &'static str {
+    match code {
+        200 => "OK",
+        404 => "Not Found",
+        503 => "Service Unavailable",
+        _ => "Error",
+    }
+}
+
+/// One launcher poll (poll.rs), answered like server.py's _json: gzip when asked and the body is >= 1 KB, Vary: Accept-Encoding.
+fn serve_poll(sh: &Shared, s: &mut TcpStream, peer: &SocketAddr, req: &Request, kind: &PollKind) -> io::Result<()> {
+    sh.stats.polls.fetch_add(1, Ordering::Relaxed);
+    let loop_peer = is_loopback(&peer.ip());
+    let query = req.target.split_once('?').map(|x| x.1).unwrap_or("");
+    let r = match kind {
+        PollKind::Status => {
+            // server.py: the caller's address (CF-Connecting-IP from a loopback front: Caddy / the tunnel); a loopback caller without it is a
+            // local tool, not a launcher
+            let ip = if loop_peer { req.header("cf-connecting-ip").unwrap_or("").trim().to_string() } else { peer.ip().to_string() };
+            let ip = if ip == "127.0.0.1" || ip == "::1" { String::new() } else { ip };
+            sh.poll.hit_launcher(&ip);
+            sh.poll.status()
+        }
+        PollKind::News => sh.poll.news(),
+        PollKind::Manifest => {
+            let q = |k: &str| query_param(query, k).and_then(|v| pct_decode(&v.replace('+', " "))).filter(|v| !v.is_empty());
+            let ch = q("channel").unwrap_or_else(|| "stable".into());
+            let ver = q("version");
+            // server.py _base: https only when the front that called us said so (X-Forwarded-Proto from a loopback peer)
+            let https = loop_peer && req.header("x-forwarded-proto").map(|v| v.trim().eq_ignore_ascii_case("https")).unwrap_or(false);
+            let base = format!("{}://{}", if https { "https" } else { "http" }, req.header("host").unwrap_or("localhost"));
+            sh.poll.manifest(&ch, ver.as_deref(), &base)
+        }
+    };
+    let gz = r.gz.is_some() && req.header("accept-encoding").map(|v| v.to_ascii_lowercase().contains("gzip")).unwrap_or(false);
+    let body: &[u8] = if gz { r.gz.as_deref().unwrap_or(&[]) } else { &r.plain };
+    let h = format!(
+        "HTTP/1.1 {} {}\r\nServer: t2r-files/1\r\nDate: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nVary: Accept-Encoding\r\n{}\r\n",
+        r.code,
+        reason(r.code),
+        http_date(),
+        body.len(),
+        if gz { "Content-Encoding: gzip\r\n" } else { "" }
+    );
+    s.write_all(h.as_bytes())?;
+    if req.method != "HEAD" {
+        s.write_all(body)?;
+    }
+    Ok(())
+}
+
 fn is_loopback(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => a.is_loopback(),
@@ -597,6 +675,19 @@ fn handle(sh: Arc<Shared>, mut s: TcpStream, peer: SocketAddr) {
             }
         };
         match route(&sh, &req.method, &req.target) {
+            Route::Poll(kind) => {
+                if let Some(n) = req.header("content-length").and_then(|v| v.parse::<usize>().ok()) {
+                    if n > 0 {
+                        if n > buf.len() {
+                            break;
+                        }
+                        buf.drain(..n);
+                    }
+                }
+                if serve_poll(&sh, &mut s, &peer, &req, &kind).is_err() {
+                    break;
+                }
+            }
             Route::Proxy => {
                 let pending = std::mem::take(&mut buf);
                 if let Err(e) = proxy(&sh, &mut s, &peer, &req, pending) {
@@ -643,12 +734,20 @@ fn parse_args() -> Config {
         max_conns: 1500,
         rate_mbit: 0,
         stats_secs: 60,
+        status_file: None,
+        no_poll: false,
     };
     let a: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < a.len() {
         let v = a.get(i + 1).cloned().unwrap_or_default();
+        if a[i] == "--no-poll" {
+            c.no_poll = true;
+            i += 1;
+            continue;
+        }
         match a[i].as_str() {
+            "--status-file" => c.status_file = Some(PathBuf::from(v)),
             "--listen" => c.listen = v,
             "--backend" => c.backend = v,
             "--data" => c.data = PathBuf::from(v),
@@ -680,7 +779,18 @@ fn main() {
         cfg.max_conns,
         if cfg.rate_mbit > 0 { format!("{} Mbit/s", cfg.rate_mbit) } else { "unlimited".into() }
     );
-    let sh = Arc::new(Shared { cfg, stats: Stats::default(), elig: Mutex::new((None, HashSet::new())), bucket });
+    let poll = poll::Poll::new(cfg.data.clone(), cfg.status_file.clone());
+    let sh = Arc::new(Shared { cfg, stats: Stats::default(), elig: Mutex::new((None, HashSet::new())), bucket, poll });
+    if sh.poll.has_status() && !sh.cfg.no_poll {
+        // the open-launcher count for the Discord bot (server.py LauncherSeen: every 15 s)
+        let sh = sh.clone();
+        std::thread::spawn(move || loop {
+            if let Err(e) = sh.poll.write_launchers() {
+                log!("launchers file: {}", e);
+            }
+            std::thread::sleep(Duration::from_secs(15));
+        });
+    }
     {
         let sh = sh.clone();
         std::thread::spawn(move || {
@@ -692,8 +802,9 @@ fn main() {
                 let sent = st.sent.load(Ordering::Relaxed);
                 let el = last.elapsed().as_secs_f64().max(0.001);
                 log!(
-                    "stats: conns {} | file reqs {} (full {}, 404 {}) | proxied {} (backend down {}) | refused {} | sent {:.1} MB, {:.0} Mbit/s",
+                    "stats: conns {} | polls {} | file reqs {} (full {}, 404 {}) | proxied {} (backend down {}) | refused {} | sent {:.1} MB, {:.0} Mbit/s",
                     st.active.load(Ordering::Relaxed),
+                    st.polls.load(Ordering::Relaxed),
                     st.file_reqs.load(Ordering::Relaxed),
                     st.file_full.load(Ordering::Relaxed),
                     st.file_404.load(Ordering::Relaxed),

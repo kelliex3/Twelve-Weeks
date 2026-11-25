@@ -36,6 +36,7 @@ import threading
 import time
 
 OP_REQ, OP_REPLY = 0xD8, 0xD9
+ACCT_CACHE_S = 10.0     # online_map: a token's account (s:<steamid> once its helper linked, else t:<hash>) is re-read at most this often
 S_STATE, S_SEARCH, S_ADD, S_ACCEPT, S_REMOVE, S_INVITE, S_JOIN, S_DECLINE, S_LEAVE, S_KICK, S_PROMOTE, S_READY, S_MSG, S_CHAT, S_PSAY, S_PCHAT, S_MLOG, S_LSAY, S_LCHAT = range(1, 20)
 SUB_NAMES = {S_STATE: "state", S_SEARCH: "search", S_ADD: "add", S_ACCEPT: "accept", S_REMOVE: "remove", S_INVITE: "invite", S_JOIN: "join",
              S_DECLINE: "decline", S_LEAVE: "leave", S_KICK: "kick", S_PROMOTE: "promote", S_READY: "ready", S_MSG: "msg", S_CHAT: "chat",
@@ -509,6 +510,8 @@ class Social:
         self._mgc_at = 0.0
         self.qnote = {}                # party id -> time of the last "leader searches" note
         self._om = (0.0, {}, set())
+        self._acct_c = {}              # token -> (time, account): online_map rebuilt every account each second (4.5 % of the daemon)
+        self._ensured = False          # the social tables exist (_ensure ran 7 CREATE ... IF NOT EXISTS on every launcher poll)
         self._tick_at = 0.0
         self._pt_at = 0.0
         self.gone = {}                 # party token -> time it was first seen neither in the game nor in the launcher
@@ -527,8 +530,16 @@ class Social:
         g = set(self.h.game_tokens())
         toks = g | {t for t, tm in self.hb.items() if now - tm < PRESENCE_TTL}
         m = {}
+        ac = self._acct_c
         for t in toks:
-            m.setdefault(self.acct(t), []).append(t)
+            e = ac.get(t)
+            if e is None or now - e[0] >= ACCT_CACHE_S:
+                e = (now, self.acct(t))
+                ac[t] = e
+            m.setdefault(e[1], []).append(t)
+        if len(ac) > 4 * len(toks) + 256:
+            for t in [t for t in ac if t not in toks]:
+                del ac[t]
         self._om = (now, m, g)
         return m, g
 
@@ -565,6 +576,12 @@ class Social:
 
     # --- storage
     def _ensure(self, c):
+        if self._ensured:
+            return
+        self._ensure_tables(c)
+        self._ensured = True
+
+    def _ensure_tables(self, c):
         c.execute("CREATE TABLE IF NOT EXISTS social_friends(a TEXT, b TEXT, state INT, since REAL, PRIMARY KEY(a, b))")
         c.execute("CREATE INDEX IF NOT EXISTS social_friends_b ON social_friends(b)")
         c.execute("CREATE TABLE IF NOT EXISTS social_seen(acct TEXT PRIMARY KEY, name TEXT, last REAL)")
@@ -783,6 +800,7 @@ class Social:
                 self.touch(token)
                 om = self.online_map()
                 if token not in om[0].get(me, ()):
+                    self._acct_c.pop(token, None)    # (its account may have just changed: helper linked a Steam id)
                     self._om = (0.0, {}, set())      # (the launcher's own first poll: recount so that it is online in this very reply)
                     om = self.online_map()
                 self._seen(c, me, self.h.name(token) or token_name_fallback(token), self.h.now())

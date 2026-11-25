@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Twelve Weeks update server front: serves the big blobs with sendfile, passes every other request to the Python update server"
 
+[dependencies]
+# gzip replies for the launcher polls (pure Rust backend: builds offline, static musl binary)
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 [[bin]]
 name = "t2r-files"
 path = "src/main.rs"
@@ -12,5 +16,5 @@ path = "src/main.rs"
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"   # a panic in one connection thread must not take the whole front down
 strip = true

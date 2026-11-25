@@ -454,7 +454,7 @@ def _search_entries(mode=None):
     c.update(t=now, key=key, ents=ents)
     return ents
 
-_LB_CACHE = {}
+_LOBBY_ENT_CACHE = {}   # per-lobby searching-page rows. Its own name: it was _LB_CACHE, the same global as the leaderboard cache below, so its clear() wiped the leaderboard's keys (KeyError 'top' on every leaderboard request and menu announce)
 def _lobby_entries(lid):
     """(LOBBY_BOOK) [(token, shown name bytes, team label bytes)] of one lobby (searching_frame lists only the viewer's lobby), cached like
     _search_entries."""
@@ -462,7 +462,7 @@ def _lobby_entries(lid):
         q = MM.book.members(lid)
     key = (lid, tuple(q), _name_ver[0], len(PARTIES.of), tuple(sorted(PARTIES.leaders.items())))
     now = time.monotonic()
-    c = _LB_CACHE.get(lid)
+    c = _LOBBY_ENT_CACHE.get(lid)
     if c and c["key"] == key and now - c["t"] < SF_CACHE_S:
         return c["ents"]
     t0, t1 = split_teams(q, {t: PARTIES.pid(t) for t in q if PARTIES.pid(t)}, player_skill(q) if os.environ.get("T2R_TEAM_BALANCE", "1") != "0" else None, top_players(q), rule_groups(q))
@@ -472,9 +472,9 @@ def _lobby_entries(lid):
         if PARTIES.pid(t) and len(PARTIES.members(t)) > 1:
             lab[t] = lab.get(t, "") + (" (party lead)" if PARTIES.is_leader(t) else " (party)")
     ents = [(t, (get_name(t) or "PLAYER").encode("utf-8", "ignore"), lab.get(t, "").encode()) for t in q]
-    if len(_LB_CACHE) > 256:
-        _LB_CACHE.clear()
-    _LB_CACHE[lid] = {"t": now, "key": key, "ents": ents}
+    if len(_LOBBY_ENT_CACHE) > 256:
+        _LOBBY_ENT_CACHE.clear()
+    _LOBBY_ENT_CACHE[lid] = {"t": now, "key": key, "ents": ents}
     return ents
 
 def party_header(tok):
@@ -2890,9 +2890,18 @@ class Bridges:
     def __init__(self):
         self.lock = threading.Lock()
         self.by_token = {}     # token -> {"conn": sock, "steamid": int, "port": int, "ip": str, "name": str}
+        self.by_sid = {}       # steamid -> token (ping_report: ~400 reports / s at 100 helpers scanned every helper per report)
     def register(self, token, conn, steamid, port=0, ip=None, name=None):
         with self.lock:
+            old = self.by_token.get(token)
+            if old and self.by_sid.get(old["steamid"]) == token:
+                del self.by_sid[old["steamid"]]
             self.by_token[token] = {"conn": conn, "steamid": steamid, "port": port, "ip": ip, "name": name}
+            self.by_sid[steamid] = token
+    def links(self):
+        """{token: (conn, steamid)} of every connected helper, one lock pass (the ping fan-out took the lock 3 times per other helper)."""
+        with self.lock:
+            return {t: (b["conn"], b["steamid"]) for t, b in self.by_token.items()}
     def tokens_for_ip(self, ip):
         """Tokens of every helper connected from this IP (for the optional install check)."""
         with self.lock:
@@ -2916,6 +2925,8 @@ class Bridges:
             if b is None or (conn is not None and b["conn"] is not conn):
                 return False
             del self.by_token[token]
+            if self.by_sid.get(b["steamid"]) == token:
+                del self.by_sid[b["steamid"]]
             return True
     def steamid(self, token):
         with self.lock:
@@ -4150,6 +4161,66 @@ def _ping_evict(online, n):
     for k in order[:n]:
         PING.pop(k, None); PING_AT.pop(k, None)
 
+# Ping mesh scope (with ~100 players the server was at 100 % CPU; 394 pair reports / s in and 191 location forwards / s out were 90 % of the daemon's messages).
+# Every location went to EVERY online helper, so every helper estimated (and reported) its ping to every other online player, menu idlers
+# included: N^2. Pair pings are read only for players who can share a match: searchers (host pick, ping gate, lobby fits, JIP cap) and the
+# players of one running match (repick, net stats). Now a location goes only there: a searcher <-> every searcher and every in-match
+# player, an in-match player <-> its matchmates and the searchers. A player who starts searching swaps locations with all of those at once
+# (mesh_activate, at most once per MESH_ACTIVATE_S), so its pair pings still come in within a second or two.
+# T2R_PING_MESH=0 = the old all-to-all.
+PING_MESH = os.environ.get("T2R_PING_MESH", "1") != "0"
+MESH_ACTIVATE_S = 60.0
+MESH_ON = {}     # token -> time of its last full swap as a searcher
+
+def mesh_peers(token, view=None):
+    """Tokens whose helpers need this player's location (and whose locations it needs); None = everyone (T2R_PING_MESH=0)."""
+    if not PING_MESH:
+        return None
+    q, live = view if view is not None else MM.mesh_view()
+    if token in q:
+        out = q | set(live)
+    elif token in live:
+        mid = live[token]
+        out = {t for t, m in live.items() if m == mid} | q
+    else:
+        return set()
+    out.discard(token)
+    return out
+
+def _mesh_send(links, token, peers, loc, both):
+    """Send token's location to its peers' helpers (both=True: and each peer's location to token's helper)."""
+    me = links.get(token)
+    if not me:
+        return
+    for other, oloc in list(PING_LOC.items()):
+        if other == token or (peers is not None and other not in peers):
+            continue
+        ol = links.get(other)
+        if not ol:
+            continue
+        try:
+            push(ol[0], msg(0xF5, me[1].to_bytes(8, "little") + loc.encode("latin1")), drop=True)
+            if both:
+                push(me[0], msg(0xF5, ol[1].to_bytes(8, "little") + oloc.encode("latin1")), drop=True)
+        except Exception as e:
+            log("PING-LOC ERR", tag(token), e)
+
+def mesh_activate(token):
+    """A player started searching: swap locations with every searcher and in-match player now (not at their next 60 s refresh)."""
+    if not PING_MESH or not token:
+        return
+    now = time.time()
+    if now - MESH_ON.get(token, 0) < MESH_ACTIVATE_S:
+        return
+    loc = PING_LOC.get(token)
+    if not loc:
+        return
+    MESH_ON[token] = now
+    try:
+        _mesh_send(BRIDGES.links(), token, mesh_peers(token), loc, True)
+    except Exception as e:                                 # noqa: BLE001 - never breaks the search
+        log("PING-MESH ERR", tag(token), repr(e))
+
 def ping_location(token, loc):
     if not loc:
         return
@@ -4157,11 +4228,7 @@ def ping_location(token, loc):
         # an unchanged location used to be dropped, so the others never re-estimated: pair pings stayed at the pre-match snapshot
         if time.time() - LOC_FWD.get(token, 0) >= 60 and BRIDGES.conn(token):
             LOC_FWD[token] = time.time()
-            sid = BRIDGES.steamid(token)
-            for other in list(PING_LOC):
-                if other != token and BRIDGES.conn(other):
-                    try: BRIDGES.conn(other).sendall(msg(0xF5, sid.to_bytes(8, "little") + loc.encode("latin1")))
-                    except Exception: pass
+            _mesh_send(BRIDGES.links(), token, mesh_peers(token), loc, False)
         return
     best = _loc_best(loc)
     hist = LOC_HIST.setdefault(token, collections.deque(maxlen=8))
@@ -4199,19 +4266,12 @@ def ping_location(token, loc):
         log("PING-LOC", tag(token), "region", REGION.get(token), "(sample %s)" % r, "loc", loc[:120])   # the region decode was written from the format docs - log real strings
     except Exception as e:
         log("PING-LOC", tag(token), "loc", loc[:120], "region decode error", e)
-    sid = BRIDGES.steamid(token)
-    for other, oloc in list(PING_LOC.items()):
-        if other == token or not BRIDGES.conn(other):
-            continue
-        try:
-            push(BRIDGES.conn(other), msg(0xF5, sid.to_bytes(8, "little") + loc.encode("latin1")), drop=True)
-            push(BRIDGES.conn(token), msg(0xF5, BRIDGES.steamid(other).to_bytes(8, "little") + oloc.encode("latin1")), drop=True)
-        except Exception as e:
-            log("PING-LOC ERR", tag(token), e)
+    _mesh_send(BRIDGES.links(), token, mesh_peers(token), loc, True)
 
 def ping_report(token, steamid, ms):
     with BRIDGES.lock:
-        other = next((t for t, b in BRIDGES.by_token.items() if b["steamid"] == steamid), None)
+        other = BRIDGES.by_sid.get(steamid)
+        other = other if other in BRIDGES.by_token else None
         online = set(BRIDGES.by_token) if other and len(PING) >= PING_MAX and (token, other) not in PING else None
     if other and ms >= 0:
         if online is not None:     # bounded by a cap: offline pairs out first, then the least recently reported
@@ -5210,6 +5270,19 @@ class MatchMaker:
         elif cand <= 0 and quiet >= FAST_ALONE:
             want, why = MIN_PLAYERS, "nobody-else-online"
         return want, why
+    def mesh_view(self):
+        """(searching tokens, {token: mid} of players in a live match), one lock pass: the ping mesh scope (mesh_peers)."""
+        with self.lock:
+            q = set(self.queue) | set(self.joining)
+            live = {}
+            for mid, pl in self.matches.items():
+                if mid in self.ended:
+                    continue
+                dep = self.departed.get(mid, ())
+                for t in pl:
+                    if t not in dep:
+                        live[t] = mid
+            return q, live
     def _in_match(self, token):
         return any(token in pl and token not in self.departed.get(mid, ()) and mid not in self.ended
                    for mid, pl in self.matches.items())
@@ -7656,7 +7729,8 @@ def name_from_session(payload):
         return payload[9:41].split(b"\x00")[0].decode("latin1", "ignore") or None
     return None
 
-NOISY_OPS = {0xBC, 0xCC, 0xBA, 0xB4, 0xB6, 0x05, 0x15, 0xE3, 0xE6, 0xDC, 0xEA, 0xE8, 0xE0, 0xD0, 0xF3, 0xF4, 0xF6, 0xDA, 0xC6, 0xC8, 0xCA, 0x13}
+NOISY_OPS = {0xBC, 0xCC, 0xBA, 0xB4, 0xB6, 0x05, 0x15, 0xE3, 0xE6, 0xDC, 0xEA, 0xE8, 0xE0, 0xD0, 0xF3, 0xF4, 0xF6, 0xDA, 0xC6, 0xC8, 0xCA, 0x13,
+             0xDE, 0xBF}   # gun-limit (0xDE) + rank-badge (0xBF) polls were 64 % of all daemon.log lines (35k in 15 min with ~100 players)
 NOISY_COUNT = [0]
 MAX_TCP_BUF = 256 * 1024    # a client frame is < 1 KB (the loadout profile ~350 B); more unparsed bytes = garbage
 def split_frames(buf):
@@ -8603,6 +8677,7 @@ def handle_batch(conn, addr, st, batch):
         else:
             mid, players = MM.enqueue(realtok)
             log("MATCHMAKE", addr, f"ops={[hex(o) for o in ops]}", "tok", tag(realtok), "-> mid", mid)
+            mesh_activate(realtok)                         # ping mesh: swap Steam locations with the searchers / in-match players now
             if not mid and PARTIES.pid(realtok):
                 try: SOCIAL.on_queue(realtok, lambda m: m in MM.queue or MM.in_match(m))      # tells the party mates to press FIND MATCH too
                 except Exception as e: log("SOCIAL queue note failed", repr(e))
@@ -9712,7 +9787,7 @@ def gc_state(now=None, ttl=None):
     with PRES.lock:
         keep = busy | {t for t, p in PRES.players.items() if now - p.get("last", 0) <= ttl}
     dead_tok = lambda t: t not in keep
-    for nm in ("FEED_SEEN", "BOOST_PICK", "BOOST_ACTIVE", "CLAN_MATCH", "PING_LOC", "LOC_FWD", "LOC_HIST", "LOC_SPIKES", "REGION", "REGION_CAND", "JIP_LATE",
+    for nm in ("FEED_SEEN", "BOOST_PICK", "BOOST_ACTIVE", "CLAN_MATCH", "PING_LOC", "LOC_FWD", "LOC_HIST", "LOC_SPIKES", "REGION", "REGION_CAND", "JIP_LATE", "MESH_ON",
                "JIP_STARTED", "JIP_REPUSH", "_JIP_WAIT_LOG", "LOADED_T", "_SILENT", "LOADED", "CD_GOT"):
         n = _prune_keys(globals()[nm], dead_tok)
         if n: out[nm] = n
@@ -9810,7 +9885,7 @@ def _take(counter):
     return items
 
 def status_loop():
-    last_bak = 0.0
+    last_bak = time.time()       # db_guard checked the DB at start; the first backup waits DB_BACKUP_S (it stalled ~80 s right after a restart)
     while True:
         time.sleep(10)
         if time.time() - last_bak > DB_BACKUP_S:         # rolling db backup (every 30 min)
