@@ -63,6 +63,7 @@ pub fn definitions(desk: bool) -> Value {
         cmd("singleplayer", "Switch between single player and multiplayer, or fix the game starting in single player", None, vec![]),
         cmd("mark", "How to mark enemies", None, vec![]),
         cmd("spacewar", "Why Steam shows Spacewar while you play Twelve Weeks", None, vec![]),
+        cmd("safe", "Is Twelve Weeks safe? Why Windows or your antivirus warns about the launcher", None, vec![]),
     ];
     if desk {
         let sub = |name: &str, description: &str, options: Vec<Value>| json!({"name": name, "type": 1, "description": description, "options": options});
@@ -326,6 +327,20 @@ When you press PLAY, the launcher starts a small Steam helper (`t2r-steam.exe`) 
 **Can I remove it?** You can, but Steam adds it again the next time you play. To hide it: right-click Spacewar in your library > Manage > Hide this game.
 **Friends see \"Playing Spacewar\"?** That is you playing Twelve Weeks. It goes away a few seconds after you close the game.";
 
+pub fn safe_text(downloads: &str) -> String {
+    [
+        "## Is Twelve Weeks safe?",
+        "Yes. Windows SmartScreen or your antivirus can warn about the launcher. The warning does not mean that it found something harmful.",
+        "",
+        "**Why the warning?** Windows trusts programs that are signed with a code signing certificate. A certificate costs hundreds of dollars every year, and the creator does not have the money for one. So the launcher is not signed, and Windows warns about new programs that are not signed.",
+        "**To run it:** on \"Windows protected your PC\", click **More info**, then **Run anyway**. If your antivirus removes the launcher, add the launcher folder as an exception.",
+        "**Check it yourself:** the source code is public on GitHub: <https://github.com/kelliex3/Twelve-Weeks>. Anyone can read it, look for anything harmful, and build it themselves. Only the anti-cheat checks are private, so that cheaters cannot read them.",
+        &format!("**Download only from {downloads}** or <https://twelve-weeks.com>. A copy from anywhere else can be changed."),
+    ]
+    .join("
+")
+}
+
 async fn plain(bot: &Bot, it: &Interaction, content: &str, components: Option<Value>) {
     let mut data = json!({"content": content, "allowed_mentions": {"parse": []}});
     if let Some(c) = components {
@@ -349,6 +364,10 @@ pub async fn command(bot: &Bot, it: &Interaction) {
         "singleplayer" => plain(bot, it, SINGLEPLAYER_TEXT, None).await,
         "mark" => plain(bot, it, MARK_TEXT, None).await,
         "spacewar" => plain(bot, it, SPACEWAR_TEXT, None).await,
+        "safe" => {
+            let where_ = bot.cache().mention("downloads");
+            plain(bot, it, &safe_text(&where_), None).await
+        }
         "sneakpeek" => {
             let role = bot.cache().role_named("Sneak Peeks").map(|r| r.id);
             let atts = [a.attachment("media"), a.attachment("media2")].into_iter().flatten().collect();
@@ -532,7 +551,7 @@ mod tests {
     fn command_set() {
         let all = definitions(true);
         let names: Vec<&str> = all.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "known-issue", "report"]);
+        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "known-issue", "report"]);
         assert_eq!(definitions(false).as_array().unwrap().len(), 10);
         for c in all.as_array().unwrap() {
             let opts = c["options"].as_array().unwrap();
