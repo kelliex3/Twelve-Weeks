@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+mod clan;
 mod clanw;
 mod clock;
 mod d;
