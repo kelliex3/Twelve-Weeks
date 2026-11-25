@@ -247,6 +247,11 @@ PING_KICKED = set()      # (token, mid) removed for ping (once per match)
 # match five of eight players sat at 17-22 % (a lossy host / route for all) and the one at 23-34 % was removed.
 LOSS_KICK_PCT = float(os.environ.get("T2R_LOSS_KICK_PCT", "30"))
 LOSS_KICK_S = float(os.environ.get("T2R_LOSS_KICK_S", "120"))
+# A host's own line at 80 % loss froze a match ~80 s until it went silent; another host at 32 % loss played on for 129 s until the removal:
+# a HOST whose median loss is at or over LOSS_KICK_PCT, and the worst of the match, for LOSS_HOST_S hands the host over (planned, it stays as
+# a client) to the best player without heavy loss, before the LOSS_KICK_S removal. T2R_LOSS_HOST_S=0 = off.
+LOSS_HOST_S = float(os.environ.get("T2R_LOSS_HOST_S", "30"))
+LOSS_HOST_HIGH = {}       # mid -> (host token, time its loss was first seen at or over the limit, 'no target' logged)
 LOSS_BASE_PCT = float(os.environ.get("T2R_LOSS_BASE_PCT", "8"))
 LOSS_GATE = int(os.environ.get("T2R_LOSS_GATE", "2"))
 LOSS_HOLD_S = float(os.environ.get("T2R_LOSS_HOLD_S", "300"))
@@ -4956,6 +4961,11 @@ class MatchMaker:
                 return False
         return True
 
+    def _book_near(self, members, newcomers):
+        """(lock held) Same region group (EU / NA / other), or one side unknown: the lobby book places by region first (never a block)."""
+        ga, gb = region_group(members), region_group([t for t in newcomers if t not in members])
+        return not (ga and gb and ga != gb)
+
     def _book_cap(self, lb, incoming=()):
         """(lock held) Seats of lobby `lb` for `incoming`: MATCH_SIZE minus the seats kept for its post-match members still on the screens and
         for the party mates of its members that are not searching yet."""
@@ -5024,7 +5034,8 @@ class MatchMaker:
             unit = self._book_unit(t)
             solo = len(unit) == 1 or all(u in self.queue for u in unit)
             solo = solo and not full and self._book_jip_hold(t, unit, now)
-            lid, why = bk.place(t, unit, self._book_fits, self._book_cap, now, src=src, solo=solo, at=self.queue.get(t, now))
+            lid, why = bk.place(t, unit, self._book_fits, self._book_cap, now, src=src, solo=solo, at=self.queue.get(t, now),
+                                near=self._book_near if (MM_REGION_ON and MM_REGION_LOBBY) else None)
             log("LOBBY-BOOK:", tag(t), why, lid, [tag(x) for x in bk.members(lid)], "(held for a join in progress)" if solo else "")
         for lb in bk.open_lobbies():
             if lb.hold and (full or not (self._book_single_unit(lb) and self._book_jip_hold(lb.members[0], self._book_unit(lb.members[0]), now))):
@@ -10562,6 +10573,10 @@ def loss_check(now=None):
                 med[p] = (v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2.0, len(v))
         high = [p for p, (v, n) in med.items() if v >= LOSS_KICK_PCT]
         near = [p for p, (v, n) in med.items() if v >= LOSS_KICK_PCT / 2.0]
+        try:
+            loss_host_handover(mid, act, med, now)
+        except Exception as e:                                    # noqa: BLE001 - never breaks the loss check
+            log("loss: host handover ERR", repr(e))
         if len(med) >= 2 and len(near) * 2 >= len(med):          # half or more are lossy: the host / relay link is the problem, nobody is removed
             for p in act:
                 LOSS_HIGH.pop((p, mid), None)
@@ -10615,11 +10630,70 @@ def loss_check(now=None):
             out.append(p)
     for k in [k for k in LOSS_HIGH if k not in live]:
         LOSS_HIGH.pop(k, None)
+    for k in [k for k in LOSS_HOST_HIGH if k not in mids]:
+        LOSS_HOST_HIGH.pop(k, None)
     for k in [k for k in LOSS if k[0] not in mids]:               # finished matches
         LOSS.pop(k, None)
     for k in [k for k in LOSS_FLAGS if k[0] not in mids]:
         LOSS_FLAGS.pop(k, None)
     return out
+
+def loss_host_handover(mid, act, med, now):
+    """(loss_check) The host's own packet loss: see LOSS_HOST_S. med = {token: (median loss %, observers)}. Returns the new host slot or None."""
+    if LOSS_HOST_S <= 0 or not HM.enabled or REPICK.mode < 2:
+        return None
+    snap = HM.snapshot(mid)
+    if not snap:
+        return None
+    _t0, players, alive, hslot = snap
+    host = players[hslot] if 0 <= hslot < len(players) else None
+    hv = med.get(host)
+    if host is None or hv is None or hv[0] < LOSS_KICK_PCT or any(v > hv[0] for q, (v, n) in med.items() if q != host):
+        LOSS_HOST_HIGH.pop(mid, None)
+        return None
+    rec = LOSS_HOST_HIGH.get(mid)
+    if not rec or rec[0] != host:
+        LOSS_HOST_HIGH[mid] = rec = (host, now, False)
+        log("loss:", tag(host), "is the host of match %s and loses %.1f%% of its packets (%d observers) - host handed over after %d s of it"
+            % (mid, hv[0], hv[1], LOSS_HOST_S))
+    if now - rec[1] < LOSS_HOST_S or HM.handover_pending(mid):
+        return None
+    ok, why = HM.handover_ok(mid)
+    if not ok:
+        return None
+    stale, _loading = HM.stale_slots(mid)
+    others = [s for s in alive if s != hslot]
+    n = len(alive)
+    lim = ping_match_ms()
+    cands = []
+    for s in others:
+        t = players[s]
+        if s in stale or no_host(t) or t not in act:
+            continue
+        mv = med.get(t)
+        if mv is None or mv[0] >= LOSS_KICK_PCT / 2.0:              # unknown or lossy itself: not a target
+            continue
+        pings = [pair_ping(t, players[o]) for o in others if o != s]
+        if not pings or None in pings or max(pings) > lim:
+            continue
+        rank = HOSTCAP.verdict(t, n)[0] if hostcap.MODE >= 1 else 1
+        cands.append(((1 if rank >= 2 else 0,) + tuple(hostmig.host_key(pings, perf_penalty(t))), s))
+    if not cands:
+        if not rec[2]:
+            LOSS_HOST_HIGH[mid] = (host, rec[1], True)
+            log("loss:", tag(host), "host of match %s: no player without heavy loss within %d ms of the others - the host stays (removal after %d s)"
+                % (mid, lim, LOSS_KICK_S))
+        return None
+    cands.sort()
+    tgt = cands[0][1]
+    if HM.handover(mid, tgt):
+        log("loss:", tag(host), "host of match %s loses %.1f%% for %d s - host handed over to %s (worst %d ms)"
+            % (mid, hv[0], now - rec[1], tag(players[tgt]), cands[0][0][1]))
+        evt("host-loss", mid, "handover to", tag(players[tgt]))
+        REPICK.migrated(mid, frozenset(alive))
+        LOSS_HOST_HIGH.pop(mid, None)
+        return tgt
+    return None
 
 def loss_hold_note(token, now=None):
     """The note a new search is refused with while the player's loss hold runs (LOSS_HOLD_S after a loss removal), else None."""

@@ -119,12 +119,14 @@ class LobbyBook:
                 return lb
         return None
 
-    def place(self, token, unit, fits, cap, now=None, src=None, solo=False, at=None):
+    def place(self, token, unit, fits, cap, now=None, src=None, solo=False, at=None, near=None):
         """Put a searcher into a lobby. unit = the tokens that always go together with it (its party, itself included; mates not searching
         yet count for the room). fits(members, newcomers) -> bool (mode / maps / ping); cap(lobby, newcomers) -> seats of that lobby for them
         (MATCH_SIZE minus the seats kept for post-match members and for party mates not searching yet). src = the finished match the token
         comes back from (its post-match lobby first; the first returner opens it). solo = keep it alone for now (a join in progress waits
-        for it). Returns (lid, why)."""
+        for it). near(members, newcomers) -> bool (optional): same region group (or unknown) - region first, never a block: a returner whose
+        post-match lobby is mostly of another region takes an open lobby of its own region when one fits, else its post-match lobby as before;
+        among the other lobbies the same-region ones come first. Returns (lid, why)."""
         now = self.now() if now is None else now
         lid = self.of.get(token)
         if lid in self.lobbies:
@@ -155,9 +157,29 @@ class LobbyBook:
         def ok(lb):
             return (lb is not None and lb.mid is None and lb.lid != blocked and not lb.hold and lb.members
                     and len(lb.members) + need <= cap(lb, unit) and fits(list(lb.members), unit))
+        def near_ok(lb):
+            return near is None or near(list(lb.members), unit)
+
+        def best_open(same_only):
+            best = None
+            for lb in self.lobbies.values():
+                if (src is not None and lb.src == src) or not ok(lb):
+                    continue
+                nr = near_ok(lb)
+                if same_only and not nr:
+                    continue
+                k = (0 if nr else 1, -len(lb.members), lb.created)
+                if best is None or k < best[0]:
+                    best = (k, lb)
+            return best[1] if best else None
         if src is not None:
             lb = self.src_lobby(src)
             if ok(lb):
+                if not solo and lb.members and not near_ok(lb):
+                    alt = best_open(True)
+                    if alt is not None:
+                        self._add(alt, token, now, at)
+                        return alt.lid, "own region (post-match lobby %s is mostly another region)" % lb.lid
                 self._add(lb, token, now, at)
                 return lb.lid, "post-match lobby"
             if lb is None:
@@ -169,16 +191,11 @@ class LobbyBook:
             self._add(lb, token, now, at)
             return lb.lid, "rejoin"
         if not solo:
-            best = None
-            for lb in self.lobbies.values():
-                if not ok(lb):
-                    continue
-                k = (-len(lb.members), lb.created)
-                if best is None or k < best[0]:
-                    best = (k, lb)
-            if best:
-                self._add(best[1], token, now, at)
-                return best[1].lid, "joined"
+            src = None                                   # (best_open: every open lobby is a choice here)
+            b = best_open(False)
+            if b is not None:
+                self._add(b, token, now, at)
+                return b.lid, "joined"
         nb = self._new(now)
         self._add(nb, token, now, at)
         nb.hold = bool(solo)

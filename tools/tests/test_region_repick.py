@@ -2,6 +2,8 @@
    with lag records still counted as proven. Such a host now counts as unproven, and a target proven at least as well may take over.
 2. The lobby book put a searcher into the fullest lobby within the ping limit whatever its region. Region groups (EU / NA / other) now
    stay apart until somebody waited MM_REGION_WAIT_S.
+3. Region first, never a block: a returner whose post-match lobby is mostly another region takes an open lobby of its own region when
+   one fits, else its post-match lobby; other lobbies are tried same-region first.
 Run: python tests/test_region_repick.py"""
 import os, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,5 +94,44 @@ real_rq = MM.rq
 MM.rq = RQ()
 check(MM._book_fits(E[:3], [O[1]]) is True, "the post-match lobby of one match stays together")
 MM.rq = real_rq
+
+# ---- 3. lobbybook: region first, never a block
+import lobbybook  # noqa: E402
+RG = {}
+def near(members, unit):
+    a = {RG.get(t) for t in members} - {None}; b = {RG.get(t) for t in unit} - {None}
+    return not (a and b and a.isdisjoint(b))
+fits = lambda members, unit: True
+cap = lambda lb, unit: 8
+bk = lobbybook.LobbyBook(8, log=lambda *a: None, now=lambda: 1000.0)
+for i, r in enumerate(["NA", "NA", "NA", "SA", "SA", "NA", "SA"]):
+    RG["p%d" % i] = r
+# post-match lobby of match pm: three NA players back first
+for t in ("p0", "p1", "p2"):
+    bk.place(t, [t], fits, cap, 1000.0, src="pm", near=near)
+pm_lid = bk.lobby_of("p0")
+# an SA lobby is open (p6 searching)
+bk.place("p6", ["p6"], near, cap, 1000.0, near=near)           # (fresh searchers: the 90 s region rule in fits)
+sa_lid = bk.lobby_of("p6")
+check(sa_lid != pm_lid, "setup: the SA searcher has its own lobby")
+lid, why = bk.place("p3", ["p3"], fits, cap, 1000.0, src="pm", near=near)
+check(lid == sa_lid and "own region" in why, "SA returner of an NA post-match lobby joins the open SA lobby (%s)" % why)
+# no SA lobby fits: back to the post-match lobby (not blocked)
+bk2 = lobbybook.LobbyBook(8, log=lambda *a: None, now=lambda: 1000.0)
+for t in ("p0", "p1", "p2"):
+    bk2.place(t, [t], fits, cap, 1000.0, src="pm", near=near)
+lid, why = bk2.place("p4", ["p4"], fits, cap, 1000.0, src="pm", near=near)
+check(lid == bk2.lobby_of("p0") and why == "post-match lobby", "no SA lobby open: the SA returner stays with its post-match lobby (%s)" % why)
+# a same-region returner always takes its post-match lobby
+lid, why = bk.place("p5", ["p5"], fits, cap, 1000.0, src="pm", near=near)
+check(lid == pm_lid and why == "post-match lobby", "NA returner: its post-match lobby")
+# a fresh searcher: same-region lobby first even when another lobby is fuller
+bk3 = lobbybook.LobbyBook(8, log=lambda *a: None, now=lambda: 1000.0)
+for t in ("p0", "p1", "p2"):
+    bk3.place(t, [t], fits, cap, 1000.0, near=near)
+bk3.place("p3", ["p3"], lambda m, u: False, cap, 1000.0, near=near)     # forced into its own lobby
+RG["p9"] = "SA"
+lid, why = bk3.place("p9", ["p9"], fits, cap, 1000.0, near=near)
+check(lid == bk3.lobby_of("p3") and lid != bk3.lobby_of("p0"), "fresh SA searcher (waited 90 s, may join any): the SA lobby before the fuller NA one (%s)" % [bk3.members(lid)])
 print("%d FAIL" % len(FAILS))
 sys.exit(1 if FAILS else 0)
