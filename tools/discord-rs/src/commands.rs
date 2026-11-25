@@ -64,6 +64,7 @@ pub fn definitions(desk: bool) -> Value {
         cmd("mark", "How to mark enemies", None, vec![]),
         cmd("spacewar", "Why Steam shows Spacewar while you play Twelve Weeks", None, vec![]),
         cmd("safe", "Is Twelve Weeks safe? Why Windows or your antivirus warns about the launcher", None, vec![]),
+        cmd("ping", "Why your ping is high and how matches connect (P2P)", None, vec![]),
     ];
     if desk {
         let sub = |name: &str, description: &str, options: Vec<Value>| json!({"name": name, "type": 1, "description": description, "options": options});
@@ -327,6 +328,27 @@ When you press PLAY, the launcher starts a small Steam helper (`t2r-steam.exe`) 
 **Can I remove it?** You can, but Steam adds it again the next time you play. To hide it: right-click Spacewar in your library > Manage > Hide this game.
 **Friends see \"Playing Spacewar\"?** That is you playing Twelve Weeks. It goes away a few seconds after you close the game.";
 
+pub const PING_TEXT: &str = "## Ping and how matches connect
+**Matches are peer to peer (P2P).** There are no game servers. One player in the match is the host, and everyone else connects to that player through Steam's network. Steam picks a direct connection or a Valve relay near both players. Our server handles matchmaking. Gameplay goes through it only as a fallback when Steam cannot connect two players.
+
+**Your ping is your ping to the host**, not to a server. If the host's connection is slow or busy, the whole match lags.
+
+**What the matchmaker does**
+- Players from the same region (EU, NA-east, NA-west) are matched first.
+- You are only matched with a host within 175 ms of you.
+- Over 190 ms to the host for 60 s: you are removed from the match.
+- Heavy packet loss (30 %+ for 2 minutes, while the rest of the match is fine): you are removed from the match.
+- When the host's connection gets overloaded, a better host takes over if there is one.
+- Nobody within 190 ms? You keep searching (\"No players within 190 ms right now - still searching.\"). This happens most in South America, Asia and Oceania when few players there are online.
+
+**Lower your ping**
+- Use a cable, not Wi-Fi.
+- Stop downloads, uploads and streams while you play. Hosting 8 players needs about 1.5 MB/s of upload.
+- Do not use a VPN. It makes every connection longer.
+- Keep Steam running.
+
+**Still lagging?** Right after the match, send a report from the launcher (REPORT A BUG) and post its code in #bug-reports.";
+
 pub fn safe_text(downloads: &str) -> String {
     [
         "## Is Twelve Weeks safe?",
@@ -364,6 +386,7 @@ pub async fn command(bot: &Bot, it: &Interaction) {
         "singleplayer" => plain(bot, it, SINGLEPLAYER_TEXT, None).await,
         "mark" => plain(bot, it, MARK_TEXT, None).await,
         "spacewar" => plain(bot, it, SPACEWAR_TEXT, None).await,
+        "ping" => plain(bot, it, PING_TEXT, None).await,
         "safe" => {
             let where_ = bot.cache().mention("downloads");
             plain(bot, it, &safe_text(&where_), None).await
@@ -551,7 +574,7 @@ mod tests {
     fn command_set() {
         let all = definitions(true);
         let names: Vec<&str> = all.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "known-issue", "report"]);
+        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "ping", "known-issue", "report"]);
         assert_eq!(definitions(false).as_array().unwrap().len(), 10);
         for c in all.as_array().unwrap() {
             let opts = c["options"].as_array().unwrap();
