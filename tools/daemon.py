@@ -266,6 +266,25 @@ LOSS_FLAGS = {}           # (mid, token) -> (its msg-7 sends are paced, its host
 # A searcher waiting MM_REGION_WAIT_S or more keeps its queue place. T2R_MM_REGION=0 = off.
 MM_REGION_ON = os.environ.get("T2R_MM_REGION", "1") != "0"
 MM_REGION_WAIT_S = float(os.environ.get("T2R_MM_REGION_WAIT_S", "90"))
+# The lobby book put a searcher into the fullest lobby within the ping limit, whatever its region (4 EU players 38-108 ms to the host,
+# 4 far ones 129-171 ms; most formations mixed regions). Lobbies of different region groups (EU / NA / other) now only take each other's
+# players or merge once somebody involved has waited MM_REGION_WAIT_S; the post-match lobby of one match stays together.
+# T2R_MM_REGION_LOBBY=0 = off.
+MM_REGION_LOBBY = os.environ.get("T2R_MM_REGION_LOBBY", "1") != "0"
+MM_REGION_GROUP = {"EU": "EU", "NA-east": "NA", "NA-west": "NA", "other": "other"}
+
+def region_group(tokens):
+    """The region group (EU / NA / other) most of `tokens` are in (a tie: the first token's that has one); None = none known."""
+    cnt, first = {}, None
+    for t in tokens:
+        g = MM_REGION_GROUP.get(mm_region(t))
+        if g:
+            cnt[g] = cnt.get(g, 0) + 1
+            first = first or g
+    if not cnt:
+        return None
+    top = max(cnt.values())
+    return first if cnt[first] == top else next(g for g in cnt if cnt[g] == top)
 # ping gate (match 72784a06
 # formed a Polish player with two South Americans at 254 ms to the host, then let three more join at 238-280 ms; all four were ping-removed after 60 s):
 #  - formation: searchers are only matched together when one host candidate has all of them at or under PING_KICK_MS (hostmig.ping_fit);
@@ -4905,7 +4924,8 @@ class MatchMaker:
         return [token]
 
     def _book_fits(self, members, newcomers):
-        """(lock held) May `newcomers` share a lobby with `members`: one game mode, PART I MAPS = ALWAYS only with owners, and the ping gate keeps
+        """(lock held) May `newcomers` share a lobby with `members`: one game mode, PART I MAPS = ALWAYS only with owners, one region group until
+    somebody waited MM_REGION_WAIT_S (MM_REGION_LOBBY), and the ping gate keeps
         everybody with one host (unknown pings pass here; the start waits for them, PING_WAIT_S)."""
         allp = list(members) + [t for t in newcomers if t not in members]
         if not modeq.forced():
@@ -4916,6 +4936,18 @@ class MatchMaker:
             ld = PARTIES.leader
             if any(p1_always(t, ld(t)) for t in allp) and not all(p1_always(t, ld(t)) or p1_owner(t, ld(t)) for t in allp):
                 return False
+        if MM_REGION_ON and MM_REGION_LOBBY and members and newcomers:
+            ga, gb = region_group(members), region_group([t for t in newcomers if t not in members])
+            if ga and gb and ga != gb:
+                now = time.time()
+                same = False
+                try:                                                  # the post-match lobby of one match stays together
+                    srcs = {self.rq.mid_of(t) for t in members} - {None}
+                    same = any(self.rq.mid_of(t) in srcs for t in newcomers)
+                except Exception:                                     # noqa: BLE001
+                    same = False
+                if not same and max(now - self.queue.get(t, now) for t in allp) < MM_REGION_WAIT_S:
+                    return False
         if MM_PING_GATE and PING_KICK_MS > 0 and len(allp) >= 2:
             now = time.time()
             _kept, dropped, _h, _i = hostmig.ping_fit(allp, lambda a, b: _ping_gate(a, b, now), ping_match_ms(), units_fn=PARTIES.members,
@@ -7137,6 +7169,10 @@ def repick_cap(mid, players, alive, hslot):
         if hostcap.MODE >= 2 and n >= hostmig.REPICK_PROVEN_N > 0:
             # no capacity problem, but a ping-only handover in a big lobby may only go to a proven target (hostmig REPICK_PROVEN_N)
             prov = {s: HOSTCAP.proven_for(players[s], n) for s in alive}
+            # A host with recent lag records (verdict rank 1 'proven but lagged xN') counts as unproven itself, so an unproven target with a
+            # much better ping may take over (hostmig _decide: targets proven at least as well as the host)
+            if hslot in prov and vs.get(hslot, (0,))[0] >= 1:
+                prov[hslot] = False
             return {"host_bad": None, "rank": {s: 0 if prov[s] else 1 for s in alive}, "max_rank": 0,
                     "text": {s: ("proven for %d players" % n) if prov[s] else "not proven for %d players (needs ~%d KB/s: %s)" % (n, hostcap.need_kb_relay(n), vs[s][1]) for s in alive}}
         return None

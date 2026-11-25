@@ -1100,7 +1100,11 @@ class HostRepick:
         best = min(cands, key=lambda p: (cands[p], 0 if p == host else 1))
         if cap and cap.get("rank") and REPICK_PROVEN_N and len(roster) >= REPICK_PROVEN_N:
             rank = cap["rank"]
-            ok = {p: k for p, k in cands.items() if p == host or rank.get(p, 1) <= 0}     # only the current host and proven targets stay in the race
+            # only the current host and targets proven at least as well as it stay in the race. Most matches that kept a host 26-106 ms
+            # worse than the best candidate (303 v 197 ms) had a host that was itself not clean (proven but lagged x2-x58):
+            # a host with lag records may hand over to an unproven (rank 1) target; a clean proven host still needs a proven one.
+            hr = max(0, min(rank.get(host, 1), 1))
+            ok = {p: k for p, k in cands.items() if p == host or rank.get(p, 1) <= hr}
             if best != host and best not in ok:
                 best2 = min(ok, key=lambda p: (ok[p], 0 if p == host else 1)) if ok else host
                 self._say(mid, "hold: best ping target %s is not proven for %d players (%s)" % ((labels or {}).get(best, best), len(roster), (cap.get("text") or {}).get(best, "unproven")))
