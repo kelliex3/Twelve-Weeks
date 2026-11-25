@@ -3,7 +3,8 @@ use std::io::{BufRead, Write};
 
 pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     match module {
-        // modules register here: "hostmig" => crate::hostmig::selftest(input, out),
+        "hostmig" => crate::hostmig::selftest(input, out),
+        "hostcap" => crate::hostcap::selftest(input, out),
         _ => {
             let _ = (input, out);
             eprintln!("selftest: unknown module {}", module);

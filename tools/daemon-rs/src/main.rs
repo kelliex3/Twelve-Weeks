@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 mod clock;
+mod hostcap;
+mod hostmig;
 mod log;
 mod net;
 mod py;
