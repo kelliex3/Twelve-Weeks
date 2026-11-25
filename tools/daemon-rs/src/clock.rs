@@ -7,7 +7,18 @@ fn wall() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
+static FROZEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Tests only (selftest): freeze `now()` at `t` (0.0 = run free again).
+pub fn freeze(t: f64) {
+    FROZEN.store(t.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn now() -> f64 {
+    let f = FROZEN.load(std::sync::atomic::Ordering::Relaxed);
+    if f != 0 {
+        return f64::from_bits(f);
+    }
     let (t0, i0) = BASE.get_or_init(|| (wall(), Instant::now()));
     t0 + i0.elapsed().as_secs_f64()
 }

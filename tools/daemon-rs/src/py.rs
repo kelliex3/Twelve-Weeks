@@ -174,3 +174,25 @@ pub fn fmod(a: f64, b: f64) -> f64 {
         r
     }
 }
+
+/// Python `repr()` of a JSON-shaped value as Python would print the dict/list it came from:
+/// {'k': 1, 'x': [1.5, 'a', None, True]} (str keys; lists print as lists; floats as repr).
+pub fn pyrepr(v: &serde_json::Value) -> String {
+    use serde_json::Value as V;
+    match v {
+        V::Null => "None".into(),
+        V::Bool(b) => self::b(*b).into(),
+        V::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                i.to_string()
+            } else if let Some(u) = n.as_u64() {
+                u.to_string()
+            } else {
+                f(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        V::String(s) => repr_str(s),
+        V::Array(a) => format!("[{}]", a.iter().map(pyrepr).collect::<Vec<_>>().join(", ")),
+        V::Object(o) => format!("{{{}}}", o.iter().map(|(k, x)| format!("{}: {}", repr_str(k), pyrepr(x))).collect::<Vec<_>>().join(", ")),
+    }
+}
