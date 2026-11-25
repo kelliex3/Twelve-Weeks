@@ -700,6 +700,18 @@ impl App {
                 Some((path, ct, size)) => self.range(r, path, ct, size),
                 None => self.text(404, "no such video"),
             },
+            "/api/match" => self.result(a.match_detail(&qs("id", ""))),
+            "/api/chat" => {
+                let int = |k: &str, d: &str| -> Result<i64, String> {
+                    let raw = qs(k, d);
+                    let raw = if raw.is_empty() { d.to_string() } else { raw };
+                    py::to_int(&Value::String(raw.clone())).ok_or_else(|| format!("ValueError: invalid literal for int() with base 10: {}", py::repr_str(&raw)))
+                };
+                match (int("before", "0"), int("n", "200")) {
+                    (Ok(before), Ok(n)) => self.result(a.chat(&qs("q", ""), &qs("kind", ""), &qs("id", ""), before, n)),
+                    (Err(e), _) | (_, Err(e)) => self.json(500, &json!({"error": e})),
+                }
+            }
             "/api/news" => self.json(200, &self.live.news_get()),
             "/api/logs" => {
                 let raw = qs("n", "300");
@@ -755,6 +767,8 @@ impl App {
             "/api/news" => self.result(self.live.news_save(body.get("entries"))),
             "/api/ban" => self.result(a.ban(&s("id"), &s_or("reason"), &self.who_label(&ident))),
             "/api/unban" => self.result(a.unban(&s("id"), &self.who_label(&ident))),
+            "/api/mute" => self.result(a.mute(&s("id"), body.get("minutes").unwrap_or(&Value::Null), &s_or("reason"), &self.who_label(&ident))),
+            "/api/unmute" => self.result(a.unmute(&s("id"), &self.who_label(&ident))),
             "/api/kick" => self.json(200, &a.kick(&s("pid"), &s_or("reason"))),
             "/api/clan-reset" => self.result(a.clan_reset(&s("id"), &s("confirm"), flag("names", false))),
             "/api/clan-restore" => self.result(a.clan_restore(&s("id"), &s("file"))),

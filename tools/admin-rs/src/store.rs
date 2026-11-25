@@ -195,6 +195,7 @@ struct State {
     seen_online: HashMap<String, f64>,
     seen_state: HashMap<String, (String, f64)>,
     alife_sum: HashMap<String, (f64, Value)>,
+    acct_index: Option<(Instant, Arc<HashMap<String, (String, String)>>)>,
     metas: HashMap<PathBuf, (Sig, Option<Arc<Map<String, Value>>>)>,
 }
 
@@ -260,6 +261,7 @@ impl Admin {
                 seen_online: HashMap::new(),
                 seen_state: HashMap::new(),
                 alife_sum: HashMap::new(),
+                acct_index: None,
                 metas: HashMap::new(),
             }),
             file_lock: Mutex::new(()),
@@ -978,6 +980,7 @@ impl Admin {
         let online_names: HashSet<String> = arr(&lv.snap, "players").iter().map(|p| p.get("name").map(py::to_str).unwrap_or_default().to_lowercase()).collect();
         let online_sid: HashSet<i64> = arr(&lv.snap, "players").iter().filter_map(|p| p.get("steamid").and_then(Value::as_i64)).filter(|s| *s != 0).collect();
         let (ban_ids, ban_names) = self.banned_index();
+        let muted = self.muted_keys();
         let mut rows: Vec<(f64, Value)> = Vec::new();
         let mut hidden = 0;
         for g in &pg.list {
@@ -997,6 +1000,7 @@ impl Admin {
                 g.last_seen,
                 json!({"id": g.id, "name": g.display, "steamid": g.steamid, "matches": g.matches, "wins": g.wins, "losses": g.losses, "draws": g.draws,
                        "lastSeen": g.last_seen, "version": g.version, "platform": g.platform, "online": online, "banned": banned,
+                       "muted": mute_keys(g).iter().any(|k| muted.has(k)),
                        "faction": cf("factionName", json!("")), "clanStatus": cf("status", json!("")), "week": cf("week", json!(0)),
                        "day": cf("dayOfWeek", json!(0)), "size": cf("size", json!(0))}),
             ));
@@ -1154,7 +1158,7 @@ impl Admin {
         Ok(json!({"ok": true, "id": pid, "name": g.display, "tag": g.tag, "aliases": g.names.iter().collect::<Vec<_>>(), "steamid": g.steamid,
                   "installs": g.ntokens, "matches": g.matches, "wins": g.wins, "losses": g.losses, "draws": g.draws, "kills": g.kills, "deaths": g.deaths,
                   "avgParts": avg, "lastSeen": g.last_seen, "version": g.version, "platform": g.platform, "clan": g.clan, "morale": morale,
-                  "feed": feed, "alife": null, "history": hist, "reports": reps, "online": online, "ban": self.ban_state(g),
+                  "feed": feed, "alife": null, "history": hist, "reports": reps, "online": online, "ban": self.ban_state(g), "mute": self.mute_state(g),
                   "matchLogFrom": py::opt_float(earliest), "canKick": can_kick}))
     }
 
@@ -1436,7 +1440,7 @@ impl Admin {
             return None;
         }
         Self::files_of(&m).iter().find(|x| x.get("name").and_then(Value::as_str) == Some(name) && x.get("kind") == Some(&json!("video")))?;
-        let p = d.join("files").join(name);
+        let p = self.report_local_path(&d, name)?;
         let mut h = [0u8; 64];
         let n = {
             use std::io::Read;
@@ -1478,7 +1482,7 @@ impl Admin {
             return None;
         }
         Self::files_of(&m).iter().find(|x| x.get("name").and_then(Value::as_str) == Some(name) && x.get("kind") == Some(&json!("screenshot")))?;
-        let f = std::fs::File::open(d.join("files").join(name)).ok()?;
+        let f = std::fs::File::open(self.report_local_path(&d, name)?).ok()?;
         let mut data = Vec::new();
         f.take(8 * 1024 * 1024 + 1).read_to_end(&mut data).ok()?;
         if data.len() > 8 * 1024 * 1024 {
@@ -1509,7 +1513,7 @@ impl Admin {
             return None;
         }
         Self::files_of(&m).iter().find(|x| x.get("name").and_then(Value::as_str) == Some(name))?;
-        let p = d.join("files").join(name);
+        let p = self.report_local_path(&d, name)?;
         let size = std::fs::metadata(&p).ok()?.len();
         let mut f = std::fs::File::open(&p).ok()?;
         if size > limit {
@@ -1964,6 +1968,572 @@ fn clan_row(r: &[rusqlite::types::Value]) -> Map<String, Value> {
     m
 }
 
+// ---- chat mutes (<db dir>/mutes.txt, re-read by the daemon), chat page, match page, report files on storage boxes ----
+
+/// The daemon's account keys of a player group (social.Social.acct): the Steam account, else every install account.
+fn mute_keys(g: &Group) -> Vec<String> {
+    if g.steamid != 0 {
+        return vec![format!("s:{}", g.steamid)];
+    }
+    g.token_ids.iter().map(|t| token_key(t)).collect()
+}
+
+/// "t:" + the first 16 hex characters of sha256(token id).
+fn token_key(tid: &str) -> String {
+    let d = Sha256::digest(tid.as_bytes());
+    let mut s = String::with_capacity(18);
+    s.push_str("t:");
+    for b in &d[..8] {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+/// (account, until, note) or None for a comment / blank line.
+fn mute_parse(line: &str) -> Option<(String, f64, String)> {
+    let (head, note) = line.split_once('#').unwrap_or((line, ""));
+    let mut parts = head.split_whitespace();
+    let first = parts.next()?;
+    let key = if first.len() == 17 && first.bytes().all(|b| b.is_ascii_digit()) { format!("s:{}", first) } else { first.to_string() };
+    let until = parts.next().map(|p| p.parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0);
+    Some((key, until, note.trim().to_string()))
+}
+
+fn mute_live(until: f64, now: f64) -> bool {
+    until <= 0.0 || until > now
+}
+
+/// Python's "%g" for a duration in minutes.
+fn fmt_g(x: f64) -> String {
+    if x == 0.0 {
+        return "0".into();
+    }
+    let e = format!("{:.5e}", x);
+    let (mant, exp) = e.split_once('e').unwrap_or((&e, "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    let trim = |s: &str| -> String {
+        if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            s.to_string()
+        }
+    };
+    if !(-4..6).contains(&exp) {
+        return format!("{}e{}{:02}", trim(mant), if exp < 0 { '-' } else { '+' }, exp.abs());
+    }
+    trim(&format!("{:.*}", (5 - exp).max(0) as usize, x))
+}
+
+fn expand_user(p: &str) -> String {
+    if p == "~" || p.starts_with("~/") {
+        if let Ok(h) = std::env::var("HOME") {
+            if !h.is_empty() {
+                return format!("{}{}", h.trim_end_matches('/'), &p[1..]);
+            }
+        }
+    }
+    p.to_string()
+}
+
+static REPORT_FETCH_LOCK: Mutex<()> = Mutex::new(());
+
+/// {account: until} of every mute still running, in the order the lines name them (a dict: a repeated account keeps its first place).
+pub struct Muted {
+    order: Vec<(String, f64)>,
+    idx: HashMap<String, usize>,
+}
+
+impl Muted {
+    pub fn has(&self, k: &str) -> bool {
+        self.idx.contains_key(k)
+    }
+}
+
+impl Admin {
+    fn mutes_path(&self) -> PathBuf {
+        self.dbdir.join("mutes.txt")
+    }
+
+    fn mutes_lines(&self) -> Vec<String> {
+        match std::fs::read(self.mutes_path()) {
+            Ok(b) => {
+                let t = String::from_utf8_lossy(&b).replace('\u{fffd}', "");
+                py::splitlines(&t).into_iter().map(str::to_string).collect()
+            }
+            Err(_) => vec!["# chat mutes (one per line: <account> <until unix time, 0 = for good>  # note)".into()],
+        }
+    }
+
+    pub fn muted_keys(&self) -> Muted {
+        let now = timeutil::now();
+        let mut m = Muted { order: Vec::new(), idx: HashMap::new() };
+        for line in self.mutes_lines() {
+            if let Some((k, until, _)) = mute_parse(&line) {
+                if mute_live(until, now) {
+                    match m.idx.get(&k) {
+                        Some(&i) => m.order[i].1 = until,
+                        None => {
+                            m.idx.insert(k.clone(), m.order.len());
+                            m.order.push((k, until));
+                        }
+                    }
+                }
+            }
+        }
+        m
+    }
+
+    /// Null or {"until", "left" (s, -1 = for good), "reason", "line"} for a player group.
+    pub fn mute_state(&self, g: &Group) -> Value {
+        let keys: HashSet<String> = mute_keys(g).into_iter().collect();
+        let now = timeutil::now();
+        for line in self.mutes_lines() {
+            if let Some((k, until, note)) = mute_parse(&line) {
+                if keys.contains(&k) && mute_live(until, now) {
+                    let reason = note.split_once("reason:").map(|(_, r)| r.trim()).unwrap_or("");
+                    return json!({"until": until as i64, "left": if until <= 0.0 { -1 } else { (until - now) as i64 }, "reason": reason, "line": line.trim()});
+                }
+            }
+        }
+        Value::Null
+    }
+
+    fn mutes_write(&self, lines: &[String]) -> Result<(), String> {
+        let p = self.mutes_path();
+        if p.exists() {
+            let mut bak = p.as_os_str().to_owned();
+            bak.push(".bak-admin");
+            copy2(&p, Path::new(&bak)).map_err(|e| format!("OSError: {}", e))?;
+        }
+        let data = format!("{}\n", lines.join("\n").trim_end_matches('\n'));
+        write_atomic(&p, data.as_bytes()).map_err(|e| format!("OSError: {}", e))
+    }
+
+    /// Mute a player for `minutes` (0 = for good). A new mute replaces the player's old one.
+    pub fn mute(&self, pid: &str, minutes: &Value, reason: &str, who: &str) -> Result<Value, String> {
+        let pg = self.player_groups()?;
+        let Some(g) = pg.get(pid) else {
+            return Ok(json!({"ok": false, "error": "no such player"}));
+        };
+        let keys = mute_keys(g);
+        if keys.is_empty() {
+            return Ok(json!({"ok": false, "error": "this player has no account to mute"}));
+        }
+        let minutes = if py::truthy(minutes) { py::to_float(minutes) } else { Some(0.0) };
+        let minutes = match minutes {
+            Some(m) if (0.0..=10.0 * 365.0 * 1440.0).contains(&m) => m,
+            _ => return Ok(json!({"ok": false, "error": "bad duration"})),
+        };
+        let (reason, who, name) = (clean_ban(reason, 160), clean_ban(who, 60), clean_ban(&g.display, 60));
+        let now = timeutil::now();
+        let until = if minutes != 0.0 { (now + minutes * 60.0) as i64 } else { 0 };
+        let l = timeutil::localtime(now);
+        let tail = format!(
+            "{} - admin site {:04}-{:02}-{:02} {:02}:{:02}{}{}",
+            name,
+            l.year,
+            l.month,
+            l.day,
+            l.hour,
+            l.min,
+            if who.is_empty() { String::new() } else { format!(" by {}", who) },
+            if reason.is_empty() { String::new() } else { format!(" | reason: {}", reason) }
+        );
+        let ks: HashSet<&str> = keys.iter().map(String::as_str).collect();
+        let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut keep: Vec<String> = Vec::new();
+        for line in self.mutes_lines() {
+            if let Some((k, u, _)) = mute_parse(&line) {
+                if ks.contains(k.as_str()) || !mute_live(u, now) {
+                    continue; // the player's old mute, or one that ran out
+                }
+            }
+            keep.push(line);
+        }
+        keep.extend(keys.iter().map(|k| format!("{} {}  # {}", k, until, tail)));
+        self.mutes_write(&keep)?;
+        self.audit(&format!(
+            "MUTE {} ({}) for {} by {}: {}",
+            name,
+            keys.join(","),
+            if minutes != 0.0 { format!("{} min", fmt_g(minutes)) } else { "good".into() },
+            if who.is_empty() { "?" } else { &who },
+            if reason.is_empty() { "-" } else { &reason }
+        ));
+        Ok(json!({"ok": true, "name": name, "until": until}))
+    }
+
+    pub fn unmute(&self, pid: &str, who: &str) -> Result<Value, String> {
+        let pg = self.player_groups()?;
+        let Some(g) = pg.get(pid) else {
+            return Ok(json!({"ok": false, "error": "no such player"}));
+        };
+        let ks: HashSet<String> = mute_keys(g).into_iter().collect();
+        let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let lines = self.mutes_lines();
+        let keep: Vec<String> = lines.iter().filter(|l| !mute_parse(l).map(|e| ks.contains(&e.0)).unwrap_or(false)).cloned().collect();
+        if keep.len() == lines.len() {
+            return Ok(json!({"ok": false, "error": "not muted"}));
+        }
+        self.mutes_write(&keep)?;
+        self.audit(&format!("UNMUTE {} by {}", g.display, if who.is_empty() { "?" } else { who }));
+        Ok(json!({"ok": true, "name": g.display}))
+    }
+
+    /// {daemon account key: (player id, shown name)} for the chat page (cached 30 s).
+    fn acct_index(&self) -> Result<Arc<HashMap<String, (String, String)>>, String> {
+        if let Some((at, v)) = &self.state().acct_index {
+            if at.elapsed().as_secs_f64() < 30.0 {
+                return Ok(v.clone());
+            }
+        }
+        let pg = self.player_groups()?;
+        let mut out = HashMap::new();
+        for g in &pg.list {
+            for k in mute_keys(g) {
+                out.insert(k, (g.id.clone(), g.display.clone()));
+            }
+        }
+        let v = Arc::new(out);
+        self.state().acct_index = Some((Instant::now(), v.clone()));
+        Ok(v)
+    }
+
+    /// Chat lines from chat_log (MATCH / TEAM / PARTY / LOBBY), newest first, plus the running mutes.
+    pub fn chat(&self, q: &str, kind: &str, pid: &str, before: i64, n: i64) -> Result<Value, String> {
+        use rusqlite::types::Value as S;
+        let n = if n == 0 { 200 } else { n }.clamp(1, 500);
+        let mut wh: Vec<String> = Vec::new();
+        let mut args: Vec<S> = Vec::new();
+        if ["match", "team", "party", "lobby"].contains(&kind) {
+            wh.push("kind=?".into());
+            args.push(S::Text(kind.into()));
+        }
+        if before != 0 {
+            wh.push("id<?".into());
+            args.push(S::Integer(before));
+        }
+        if !pid.is_empty() {
+            let keys = self.player_groups()?.get(pid).map(mute_keys).unwrap_or_default();
+            if keys.is_empty() {
+                return Ok(json!({"lines": [], "mutes": [], "player": null}));
+            }
+            wh.push(format!("acct IN ({})", vec!["?"; keys.len()].join(",")));
+            args.extend(keys.into_iter().map(S::Text));
+        }
+        if !q.is_empty() {
+            wh.push("(body LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')".into());
+            let lq = format!("%{}%", q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            args.push(S::Text(lq.clone()));
+            args.push(S::Text(lq));
+        }
+        let sql = format!(
+            "SELECT id, ts, kind, room, acct, name, body, muted FROM chat_log{} ORDER BY id DESC LIMIT ?",
+            if wh.is_empty() { String::new() } else { format!(" WHERE {}", wh.join(" AND ")) }
+        );
+        args.push(S::Integer(n));
+        let c = self.connect().map_err(|e| format!("OperationalError: {}", e))?;
+        // (no chat_log yet: the daemon makes it on the first chat line)
+        let rows: Vec<Vec<S>> = (|| -> rusqlite::Result<Vec<Vec<S>>> {
+            let mut st = c.prepare(&sql)?;
+            let it = st.query_map(rusqlite::params_from_iter(args.iter()), |r| (0..8).map(|i| r.get::<_, S>(i)).collect::<rusqlite::Result<Vec<S>>>())?;
+            it.collect()
+        })()
+        .unwrap_or_default();
+        let idx = self.acct_index()?;
+        let muted = self.muted_keys();
+        let text = |v: &S| py::sql_text(v).unwrap_or_default();
+        let mut lines = Vec::new();
+        for r in &rows {
+            let acct = py::sql_text(&r[4]).unwrap_or_default();
+            let p = idx.get(&acct);
+            lines.push(json!({"id": py::sqlv(r[0].clone()), "ts": py::sqlv(r[1].clone()), "kind": py::sqlv(r[2].clone()), "room": text(&r[3]),
+                              "name": text(&r[5]), "text": text(&r[6]), "pid": p.map(|p| p.0.as_str()).unwrap_or(""),
+                              "player": p.map(|p| p.1.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[7]) != 0, "mutedNow": muted.has(&acct)}));
+        }
+        let now = timeutil::now();
+        let mut mutes: Vec<(i64, Value)> = Vec::new();
+        for (k, until) in &muted.order {
+            let p = idx.get(k);
+            let left = if *until <= 0.0 { -1 } else { (until - now) as i64 };
+            mutes.push((left, json!({"pid": p.map(|p| p.0.as_str()).unwrap_or(""), "name": p.map(|p| p.1.as_str()).unwrap_or(k.as_str()),
+                                     "until": *until as i64, "left": left})));
+        }
+        mutes.sort_by_key(|m| (m.0 != -1, m.0));
+        let mutes: Vec<Value> = mutes.into_iter().map(|m| m.1).collect();
+        let player = if pid.is_empty() { Value::Null } else { self.player_groups()?.get(pid).map(|g| Value::String(g.display.clone())).unwrap_or(Value::Null) };
+        Ok(json!({"lines": lines, "mutes": mutes, "player": player}))
+    }
+
+    /// One match for its own page: players with ban / mute state and kick target, the match's MATCH / TEAM chat, the match info.
+    pub fn match_detail(&self, mid: &str) -> Result<Value, String> {
+        use rusqlite::types::Value as S;
+        let mid = mid.trim();
+        if !(1..=32).contains(&mid.len()) || !mid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+            return Ok(json!({"ok": false, "error": "bad match id"}));
+        }
+        let lv = self.live_view();
+        let live = arr(&lv.snap, "matches").iter().find(|m| s_of(m, "id") == mid).cloned();
+        let (ms, _, _) = self.matches_now();
+        let lm = ms.iter().find(|m| m.id == mid);
+        let pg = self.player_groups()?;
+        let mut by_pid: HashMap<String, Option<String>> = HashMap::new();
+        for p in self.online_rows(&lv, Some(&pg)) {
+            if p.get("pid").map(py::truthy).unwrap_or(false) {
+                by_pid.insert(py::to_str(&p["pid"]), p.get("playerId").filter(|v| py::truthy(v)).map(py::to_str));
+            }
+        }
+        let group_of = |name: &str, pid: Option<&str>| -> Option<&Group> {
+            if let Some(gid) = pid.and_then(|p| by_pid.get(p)).and_then(|g| g.as_deref()) {
+                if let Some(g) = pg.get(gid) {
+                    return Some(g);
+                }
+            }
+            let n = name.to_lowercase();
+            pg.list.iter().find(|g| g.alias.contains(&n))
+        };
+        let muted = self.muted_keys();
+        let src: Vec<Map<String, Value>> = if let Some(l) = &live {
+            l.get("players").and_then(Value::as_array).map(|a| a.iter().filter_map(|p| p.as_object().cloned()).collect()).unwrap_or_default()
+        } else if let Some(m) = lm {
+            let gone: HashSet<&str> = m.left.iter().filter(|l| l.why != "back").map(|l| l.name.as_str()).collect();
+            m.players
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    let mut o = Map::new();
+                    o.insert("name".into(), json!(n));
+                    o.insert("pid".into(), Value::Null);
+                    o.insert("team".into(), json!(i % 2));
+                    o.insert("left".into(), json!(gone.contains(n.as_str())));
+                    o.insert("host".into(), json!(m.host.as_deref() == Some(n.as_str())));
+                    o.insert("ping_ms".into(), Value::Null);
+                    o
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut players = Vec::new();
+        for mut p in src {
+            let name = p.get("name").filter(|v| py::truthy(v)).map(py::to_str).unwrap_or_default();
+            let ppid = p.get("pid").filter(|v| py::truthy(v)).map(py::to_str);
+            let g = group_of(&name, ppid.as_deref());
+            p.insert("playerId".into(), json!(g.map(|g| g.id.as_str()).unwrap_or("")));
+            p.insert("display".into(), json!(g.map(|g| g.display.as_str()).unwrap_or(name.as_str())));
+            p.insert("steamid".into(), json!(g.map(|g| g.steamid).unwrap_or(0)));
+            p.insert("banned".into(), json!(g.map(|g| !self.ban_state(g).is_null()).unwrap_or(false)));
+            p.insert("muted".into(), json!(g.map(|g| mute_keys(g).iter().any(|k| muted.has(k))).unwrap_or(false)));
+            let kick = live.is_some() && ppid.is_some() && !p.get("left").map(py::truthy).unwrap_or(false) && lv.source == "live";
+            p.insert("kick".into(), json!(kick));
+            players.push(Value::Object(p));
+        }
+        let c = self.connect().map_err(|e| format!("OperationalError: {}", e))?;
+        let rows: Vec<Vec<S>> = (|| -> rusqlite::Result<Vec<Vec<S>>> {
+            let mut st = c.prepare("SELECT id, ts, kind, acct, name, body, muted FROM chat_log WHERE room=? AND kind IN ('match','team') ORDER BY id LIMIT 600")?;
+            let it = st.query_map([mid], |r| (0..7).map(|i| r.get::<_, S>(i)).collect::<rusqlite::Result<Vec<S>>>())?;
+            it.collect()
+        })()
+        .unwrap_or_default();
+        if live.is_none() && lm.is_none() && rows.is_empty() {
+            return Ok(json!({"ok": false, "error": "no such match in the live feed, the retained logs or the chat log"}));
+        }
+        let idx = self.acct_index()?;
+        let text = |v: &S| py::sql_text(v).unwrap_or_default();
+        let chat: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                let acct = py::sql_text(&r[3]).unwrap_or_default();
+                json!({"id": py::sqlv(r[0].clone()), "ts": py::sqlv(r[1].clone()), "kind": py::sqlv(r[2].clone()), "name": text(&r[4]), "text": text(&r[5]),
+                       "pid": idx.get(&acct).map(|p| p.0.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[6]) != 0, "mutedNow": muted.has(&acct)})
+            })
+            .collect();
+        let mut info = Map::new();
+        info.insert("id".into(), json!(mid));
+        info.insert("live".into(), json!(live.is_some()));
+        let state = match (&live, lm) {
+            (Some(l), _) => l.get("state").cloned().unwrap_or_else(|| json!("ended")),
+            (None, Some(m)) => json!(m.state),
+            _ => json!("ended"),
+        };
+        info.insert("state".into(), state);
+        if let Some(l) = &live {
+            let g = |k: &str| l.get(k).filter(|v| py::truthy(v)).cloned();
+            let map = l.get("map").filter(|v| py::truthy(v)).and_then(|m| m.get("name")).filter(|v| py::truthy(v)).cloned().unwrap_or_else(|| json!("Map not chosen yet"));
+            info.insert("map".into(), map);
+            info.insert("mode".into(), g("game_mode").or_else(|| g("mode")).unwrap_or_else(|| json!("")));
+            for k in ["net", "age_s", "clock", "lives"] {
+                info.insert(k.into(), l.get(k).cloned().unwrap_or(Value::Null));
+            }
+        }
+        if let Some(m) = lm {
+            let res = if m.state == "ended" {
+                match m.winner {
+                    Some(0) => "TEAM 1 WON",
+                    Some(1) => "TEAM 2 WON",
+                    Some(2) => "DRAW",
+                    _ => "RESULT UNKNOWN",
+                }
+                .to_string()
+            } else if m.closed.is_some() {
+                format!("NOT FINISHED ({})", if m.closed_why.is_empty() { "closed" } else { &m.closed_why })
+            } else {
+                String::new()
+            };
+            let left_log: Vec<String> = m.left.iter().filter(|l| EARLY.contains(&l.why.as_str())).map(|l| format!("{} ({})", l.name, l.why)).collect();
+            for (k, v) in [
+                ("formed", json!(m.formed)),
+                ("started", json!(m.started)),
+                ("ended", json!(m.ended)),
+                ("result", json!(res)),
+                ("winner", json!(m.winner)),
+                ("secs", json!(m.secs)),
+                ("host", json!(m.host)),
+                ("ping_ms", json!(m.ping_ms)),
+                ("left_log", json!(left_log)),
+                ("joined", json!(m.jip)),
+            ] {
+                info.insert(k.into(), v);
+            }
+            if !info.contains_key("map") {
+                info.insert(
+                    "map".into(),
+                    json!(match m.map.as_deref() {
+                        Some(l) if !l.is_empty() => pretty_level(l),
+                        _ => "?".to_string(),
+                    }),
+                );
+            }
+            if !info.contains_key("net") {
+                info.insert("net".into(), json!(m.net));
+            }
+        }
+        Ok(json!({"ok": true, "match": info, "players": players, "chat": chat, "canKick": lv.source == "live"}))
+    }
+
+    // Bug-report files can live on a storage box (<report>/store.json says which box and which files); a moved file is copied back into a
+    // small local cache on first use. T2R_REPORT_BOXES = the boxes JSON file the mover uses.
+    fn report_boxes() -> Option<Value> {
+        let path = std::env::var("T2R_REPORT_BOXES").ok().filter(|p| !p.is_empty())?;
+        serde_json::from_slice(&std::fs::read(expand_user(&path)).ok()?).ok()
+    }
+
+    fn report_cache_dir() -> PathBuf {
+        match std::env::var("T2R_REPORT_CACHE") {
+            Ok(p) if !p.is_empty() => PathBuf::from(p),
+            _ => PathBuf::from(expand_user("~/.cache/t2r-report-cache")),
+        }
+    }
+
+    fn report_cache_max() -> u64 {
+        std::env::var("T2R_REPORT_CACHE_MB").ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(800) << 20
+    }
+
+    fn report_cache_trim(keep: &Path) {
+        fn walk(dir: &Path, out: &mut Vec<(f64, u64, PathBuf)>) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            for e in rd.flatten() {
+                let p = e.path();
+                match e.file_type() {
+                    Ok(t) if t.is_dir() => walk(&p, out),
+                    Ok(_) => {
+                        if let Ok(md) = std::fs::metadata(&p) {
+                            out.push((md.atime() as f64 + md.atime_nsec() as f64 / 1e9, md.len(), p));
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        let mut ents = Vec::new();
+        walk(&Self::report_cache_dir(), &mut ents);
+        let mut total: u64 = ents.iter().map(|e| e.1).sum();
+        let max = Self::report_cache_max();
+        ents.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)));
+        for (_, size, p) in ents {
+            if total <= max {
+                break;
+            }
+            if p == keep {
+                continue;
+            }
+            if std::fs::remove_file(&p).is_ok() {
+                total -= size;
+            }
+        }
+    }
+
+    /// Readable local path of files/<name> of report folder d: the file itself, or a cached copy fetched from its storage box.
+    fn report_local_path(&self, d: &Path, name: &str) -> Option<PathBuf> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.starts_with('.') {
+            return None;
+        }
+        let p = d.join("files").join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+        let st: Value = serde_json::from_slice(&std::fs::read(d.join("store.json")).ok()?).ok()?;
+        let want = u64::try_from(py::to_int(st.get("files")?.get(name)?)?).ok()?;
+        let boxname = st.get("box")?.clone();
+        let folder = d.file_name()?.to_string_lossy().into_owned();
+        let cp = Self::report_cache_dir().join(&folder).join(name);
+        let _g = REPORT_FETCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if std::fs::metadata(&cp).map(|m| m.len() == want).unwrap_or(false) {
+            if let Ok(c) = std::ffi::CString::new(cp.as_os_str().as_encoded_bytes()) {
+                unsafe {
+                    libc::utimensat(libc::AT_FDCWD, c.as_ptr(), std::ptr::null(), 0);
+                }
+            }
+            return Some(cp);
+        }
+        let cfg = Self::report_boxes()?;
+        let bx = cfg.get("boxes")?.as_array()?.iter().find(|b| b.get("name") == Some(&boxname))?;
+        let host = py::to_str(bx.get("host")?);
+        std::fs::create_dir_all(cp.parent()?).ok()?;
+        let mut tmp = cp.as_os_str().to_owned();
+        tmp.push(".part");
+        let tmp = PathBuf::from(tmp);
+        let cfg_s = |k: &str, d: &str| expand_user(&cfg.get(k).filter(|v| py::truthy(v)).map(py::to_str).unwrap_or_else(|| d.to_string()));
+        let ssh = format!(
+            "ssh -i {} -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={} -o ConnectTimeout=10",
+            cfg_s("key", "~/.ssh/t2r_reports"),
+            cfg_s("known_hosts", "~/.ssh/known_hosts_reports")
+        );
+        let fetched = (|| -> Option<()> {
+            let mut ch = std::process::Command::new("rsync")
+                .args(["-t", "--timeout=60", "-e", &ssh, &format!("{}:{}/files/{}", host, folder, name)])
+                .arg(&tmp)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .ok()?;
+            let t0 = Instant::now();
+            let status = loop {
+                match ch.try_wait().ok()? {
+                    Some(s) => break s,
+                    None if t0.elapsed() > Duration::from_secs(300) => {
+                        let _ = ch.kill();
+                        let _ = ch.wait();
+                        return None;
+                    }
+                    None => std::thread::sleep(Duration::from_millis(100)),
+                }
+            };
+            if !status.success() || std::fs::metadata(&tmp).ok()?.len() != want {
+                return None;
+            }
+            std::fs::rename(&tmp, &cp).ok()
+        })();
+        if fetched.is_none() {
+            let _ = std::fs::remove_file(&tmp);
+            return None;
+        }
+        Self::report_cache_trim(&cp);
+        Some(cp)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1983,5 +2553,35 @@ mod tests {
         assert_eq!(week_day(90), (12, 7));
         assert_eq!(pid_of("s1"), pid_of("s1"));
         assert_eq!(pid_of("abc").len(), 10);
+    }
+
+    #[test]
+    fn mute_lines() {
+        assert_eq!(mute_parse("# comment"), None);
+        assert_eq!(mute_parse("   "), None);
+        let (k, u, n) = mute_parse("s:76561198000000001 1700000000  # Bob - admin site 2026-11-24 12:00 by Mai | reason: spam").unwrap();
+        assert_eq!((k.as_str(), u, n.as_str()), ("s:76561198000000001", 1700000000.0, "Bob - admin site 2026-11-24 12:00 by Mai | reason: spam"));
+        let (k, u, _) = mute_parse("76561198000000001").unwrap();
+        assert_eq!((k.as_str(), u), ("s:76561198000000001", 0.0));
+        let (_, u, _) = mute_parse("t:abc xyz").unwrap();
+        assert_eq!(u, 0.0);
+        assert!(mute_live(0.0, 5.0) && mute_live(6.0, 5.0) && !mute_live(5.0, 5.0));
+    }
+
+    #[test]
+    fn mute_key_hash() {
+        // sha256("abc") = ba7816bf8f01cfea414140de5dae2223...
+        assert_eq!(token_key("abc"), "t:ba7816bf8f01cfea");
+        assert_eq!(token_key("").len(), 18);
+    }
+
+    #[test]
+    fn percent_g() {
+        assert_eq!(fmt_g(30.0), "30");
+        assert_eq!(fmt_g(1.5), "1.5");
+        assert_eq!(fmt_g(0.25), "0.25");
+        assert_eq!(fmt_g(123456.0), "123456");
+        assert_eq!(fmt_g(1234567.0), "1.23457e+06");
+        assert_eq!(fmt_g(0.00001), "1e-05");
     }
 }
