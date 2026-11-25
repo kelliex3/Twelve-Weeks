@@ -1077,30 +1077,6 @@ impl Admin {
         out
     }
 
-    fn read_morale(c: &Connection, key: &str) -> Value {
-        let Ok(s) = c.query_row("SELECT state FROM clan_story WHERE token_id=?", [key], |r| r.get::<_, String>(0)) else {
-            return Value::Null;
-        };
-        let Ok(Value::Object(st)) = serde_json::from_str::<Value>(&s) else {
-            return Value::Null;
-        };
-        if st.get("v").and_then(Value::as_i64) != Some(1) {
-            return Value::Null;
-        }
-        let m = st.get("morale").cloned().unwrap_or(Value::Null);
-        let f = py::num_f64(&m).unwrap_or(0.0);
-        let label = if f >= 70.0 {
-            "hopeful"
-        } else if f >= 50.0 {
-            "steady"
-        } else if f >= 30.0 {
-            "strained"
-        } else {
-            "grim"
-        };
-        json!({"value": m, "label": label})
-    }
-
     pub fn player(&self, pid: &str) -> Result<Value, String> {
         let pg = self.player_groups()?;
         let Some(g) = pg.get(pid) else {
@@ -1121,15 +1097,25 @@ impl Admin {
             }
         }
         let mut feed = Vec::new();
-        let mut morale = Value::Null;
+        let mut people = json!({});
         if let Some(k) = &g.clan_key {
             if self.db.exists() {
                 if let Ok(c) = self.connect() {
                     feed = Self::read_feed(&c, k);
-                    morale = Self::read_morale(&c, k);
+                    people = t2r_clan::read_people(&c, k, 40);
+                    let pl = t2r_clan::feed_pl_texts(&c, k, 40);
+                    for m in feed.iter_mut() {
+                        let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
+                        if let Some(o) = m.as_object_mut() {
+                            o.insert("textPl".into(), json!(pl.get(&id).cloned().unwrap_or_default()));
+                        }
+                    }
                 }
             }
         }
+        let morale = people.get("morale").cloned().unwrap_or(Value::Null);
+        let people_rows: Vec<Value> = people.get("people").and_then(Value::as_array).map(|a| a.iter().take(12).cloned().collect()).unwrap_or_default();
+        let alive_n = people.get("alive").cloned().unwrap_or(Value::Null);
         let sid = g.steamid.to_string();
         let mut reps = Vec::new();
         for (_, m) in self.report_metas() {
@@ -1158,8 +1144,21 @@ impl Admin {
         Ok(json!({"ok": true, "id": pid, "name": g.display, "tag": g.tag, "aliases": g.names.iter().collect::<Vec<_>>(), "steamid": g.steamid,
                   "installs": g.ntokens, "matches": g.matches, "wins": g.wins, "losses": g.losses, "draws": g.draws, "kills": g.kills, "deaths": g.deaths,
                   "avgParts": avg, "lastSeen": g.last_seen, "version": g.version, "platform": g.platform, "clan": g.clan, "morale": morale,
-                  "feed": feed, "alife": null, "history": hist, "reports": reps, "online": online, "ban": self.ban_state(g), "mute": self.mute_state(g),
-                  "matchLogFrom": py::opt_float(earliest), "canKick": can_kick}))
+                  "people": people_rows, "alive": alive_n, "feed": feed, "alife": null, "history": hist, "reports": reps, "online": online, "ban": self.ban_state(g), "mute": self.mute_state(g),
+                  "alifeServerOn": self.alife_on(), "matchLogFrom": py::opt_float(earliest), "canKick": can_kick}))
+    }
+
+    // clan_alife.enabled(): env T2R_CLAN_ALIFE wins, else the first word of tools/clan_alife.txt next to the data dir (default off)
+    fn alife_on(&self) -> bool {
+        let yes = |w: &str| matches!(w.trim().to_lowercase().as_str(), "1" | "on" | "true" | "yes");
+        if let Ok(e) = std::env::var("T2R_CLAN_ALIFE") {
+            if !e.trim().is_empty() {
+                return yes(&e);
+            }
+        }
+        let Some(root) = self.db.parent().and_then(Path::parent) else { return false };
+        let txt = std::fs::read(root.join("tools").join("clan_alife.txt")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        yes(txt.split_whitespace().next().unwrap_or(""))
     }
 
     pub fn matches(&self) -> Result<Value, String> {

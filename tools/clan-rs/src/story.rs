@@ -729,6 +729,63 @@ fn sym_param(params: &Map<String, Value>) -> Option<Map<String, Value>> {
     }
 }
 
+static ARCS_RAW: &str = include_str!("../data/arcs.json");
+
+fn arcs() -> Option<&'static Value> {
+    static A: std::sync::OnceLock<Option<Value>> = std::sync::OnceLock::new();
+    A.get_or_init(|| serde_json::from_str(ARCS_RAW).ok()).as_ref()
+}
+
+/// A stored story-arc step ("arc/<kind>.<node>") in Polish: "DZIEŃ n: HEADLINE. Vignette." (clan_arcs.render_msg); None for an unknown node.
+fn render_arc_pl(d: &Data, key: &str, params: &Map<String, Value>) -> Option<String> {
+    let at = arcs()?;
+    let t = at.get("text")?.get(key)?.as_array()?;
+    let (hp, bp) = (t.get(1)?.as_str()?, t.get(3)?.as_str()?);
+    let people = people_of(d, params, true)?;
+    let sym = sym_param(params)?;
+    let fk = match sym.get("f") {
+        None => "W".to_string(),
+        Some(x) => x.as_str()?.to_string(),
+    };
+    let mut v = chron_vars(d, &sym, true)?;
+    let idx = |k: &str, n: usize| -> Option<usize> { Some(py_int(sym.get(k).unwrap_or(&Value::from(0)))?.rem_euclid(n as i64) as usize) };
+    let pair = |list: &str, k: &str| -> Option<String> {
+        let a = at.get(list)?.as_array()?;
+        Some(a.get(idx(k, a.len())?)?.as_array()?.get(1)?.as_str()?.to_string())
+    };
+    if let Some(rel) = sym.get("rel").and_then(Value::as_str) {
+        if let Some(r) = at.get("rel").and_then(|r| r.get(rel)) {
+            let ag = if people.get('A').map_or(false, |p| p.g == "f") { "f" } else { "m" };
+            let e = r.get(ag)?.as_array()?;
+            v.insert("rel".into(), e.get(1)?.as_str()?.to_string());
+            v.insert("rel_nom".into(), e.get(1)?.as_str()?.to_string());
+            v.insert("rel_acc".into(), e.get(2)?.as_str()?.to_string());
+            v.insert("rel_gen".into(), e.get(3)?.as_str()?.to_string());
+        }
+    }
+    v.insert("spot".into(), pair("spots", "spot")?);
+    v.insert("task".into(), pair("tasks", "task")?);
+    let places = at.get("places")?.as_array()?;
+    let pc = places.get(idx("place", places.len())?)?.as_array()?.get(1)?.as_str()?.to_string();
+    v.insert("place".into(), pc.clone());
+    v.insert("place_gen".into(), pc);
+    v.insert("wish".into(), pair("wishes", "wish")?);
+    if let Some(k) = sym.get("keep").and_then(Value::as_str).and_then(|k| at.get("keeps")?.get(k)) {
+        let k = k.as_array()?;
+        v.insert("keep".into(), k.get(1)?.as_str()?.to_string());
+        v.insert("keep_acc".into(), k.get(1)?.as_str()?.to_string());
+        v.insert("keep_ins".into(), k.get(2)?.as_str()?.to_string());
+        v.insert("keep_gen".into(), k.get(3)?.as_str()?.to_string());
+    }
+    v.entry("map".into()).or_default();
+    let head = render_lex(hp, &people, &v, true, &fk)?.to_uppercase();
+    let mut body = render_lex(bp, &people, &v, true, &fk)?;
+    if let Some(tie) = params.get("tie_pl").filter(|t| crate::text::truthy(Some(t))) {
+        body = format!("{} {}", body, py_str(tie));
+    }
+    Some(format!("DZIEŃ {}: {}. {}", py_int(sym.get("day").unwrap_or(&Value::from(0)))?, head, body))
+}
+
 fn chron_vars(d: &Data, sym: &Map<String, Value>, pl: bool) -> Option<crate::text::Vars> {
     let ch = &d.chron;
     let fk = sym.get("f")?.as_str()?.to_string();
@@ -876,8 +933,8 @@ fn render_stored_pl(d: &Data, lid: &str, params: &Value) -> Option<String> {
         s.push(format!("Zapiski idą dalej od dnia {}.", day));
         return Some(format!("DZIEŃ {}: GDZIE STOIMY. {}", day, s.join(" ")));
     }
-    if lid.starts_with("arc/") {
-        return None;
+    if let Some(key) = lid.strip_prefix("arc/") {
+        return render_arc_pl(d, key, params);
     }
     if lid.starts_with("pk/") || lid.starts_with("sg/") {
         return params.get("tp").and_then(Value::as_str).map(str::to_string);
@@ -1128,4 +1185,93 @@ pub fn menu_lines(c: &Connection, tid: &str, n: usize, lang: &str, now: f64) -> 
     }
     out.truncate(n);
     out
+}
+
+/// Polish text of the newest `limit` stored feed rows that have a template id and a Polish form (id -> text); the admin page shows it next to the English one.
+pub fn feed_pl_texts(c: &Connection, tid: &str, limit: i64) -> std::collections::HashMap<i64, String> {
+    let mut out = std::collections::HashMap::new();
+    let Some(d) = data() else { return out };
+    let limit = limit.clamp(1, 400);
+    let Ok(mut st) = c.prepare("SELECT id,day,lid,params FROM clan_feed WHERE token_id=? AND id>0 ORDER BY id DESC LIMIT ?") else { return out };
+    let Ok(rows) = st.query_map(params![tid, limit], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, rusqlite::types::Value>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
+    }) else {
+        return out;
+    };
+    let rows: Vec<_> = rows.flatten().collect();
+    let done = days_done(c, tid);
+    for (id, day, lid, p) in rows {
+        let (Some(l), Some(p)) = (lid, p) else { continue };
+        if l.is_empty() || p.is_empty() {
+            continue;
+        }
+        if let Some(done) = done {
+            let dv = sql_val(day);
+            let dd = if crate::text::truthy(Some(&dv)) { py_int(&dv).unwrap_or(0) } else { 0 };
+            if dd > done {
+                continue;
+            }
+        }
+        if let Ok(pv) = serde_json::from_str::<Value>(&p) {
+            if let Some(t) = render_stored_pl(d, &l, &pv) {
+                if !t.is_empty() {
+                    out.insert(id, t);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Roster summary of a clan's story (English): {"morale", "people", "alive", "dead"}; an empty object when the clan has no story state.
+pub fn read_people(c: &Connection, tid: &str, limit: usize) -> Value {
+    let Some(raw) = load_state(c, tid) else { return Value::Object(Map::new()) };
+    let st = &raw.value;
+    let Some(d) = data() else { return Value::Object(Map::new()) };
+    let w = st.get("fac").and_then(py_int) != Some(SERAPHITES);
+    let day = st.get("day").and_then(Value::as_f64).unwrap_or(0.0);
+    let morale = st.get("morale").cloned().unwrap_or(Value::Null);
+    let mf = morale.as_f64().unwrap_or(0.0);
+    let people_v: Vec<Value> = st.get("people").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut people = Vec::new();
+    for p in people_v.iter().take(limit) {
+        let g = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("");
+        let role = d.story.roles.iter().find(|x| x.0 == g("r")).map(|x| if w { x.1.clone() } else { x.2.clone() }).unwrap_or_default();
+        let state = match g("s") {
+            "u" => "hungry",
+            "s" => "sick",
+            _ => "healthy",
+        };
+        let mood = if g("s") == "s" {
+            "ill"
+        } else if g("s") == "u" {
+            "hungry"
+        } else if p.get("gr").and_then(Value::as_f64).unwrap_or(0.0) > day {
+            "grieving"
+        } else if mf >= 70.0 {
+            "cheerful"
+        } else if mf >= 50.0 {
+            "steady"
+        } else if mf >= 30.0 {
+            "tired"
+        } else {
+            "hollow"
+        };
+        let ill = d.story.illness.iter().find(|x| x.0 == g("il")).map(|x| x.1.clone()).unwrap_or_default();
+        people.push(serde_json::json!({"name": g("n"), "gender": g("g"), "role": role, "state": state, "mood": mood, "illness": ill}));
+    }
+    let label = if mf >= 70.0 {
+        "hopeful"
+    } else if mf >= 50.0 {
+        "steady"
+    } else if mf >= 30.0 {
+        "strained"
+    } else {
+        "grim"
+    };
+    let dead: Vec<Value> = st.get("dead").and_then(Value::as_array).map(|a| {
+        let from = a.len().saturating_sub(8);
+        a[from..].iter().map(|x| serde_json::json!({"name": x.get("n").cloned().unwrap_or(Value::Null), "day": x.get("d").cloned().unwrap_or(Value::Null)})).collect()
+    }).unwrap_or_default();
+    serde_json::json!({"morale": {"value": morale, "label": label}, "people": people, "alive": people_v.len(), "dead": dead})
 }

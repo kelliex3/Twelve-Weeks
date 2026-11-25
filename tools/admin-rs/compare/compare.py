@@ -3,7 +3,7 @@ from urllib.parse import quote
 
 PY, RS = 17010, 17020
 TIMEY = {"now", "ms", "age_s", "online_s", "state_s", "uptime_s", "snapshotAge", "idle_s", "queued_s", "waited_s"}
-DROPPED_PLAYER = {"people", "alive", "alifeServerOn", "alife"}
+DROPPED_PLAYER = {"alife"}
 results = {"same": 0, "diff": []}
 ONLY = ""
 
