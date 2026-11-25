@@ -65,6 +65,7 @@ pub fn definitions(desk: bool) -> Value {
         cmd("spacewar", "Why Steam shows Spacewar while you play Twelve Weeks", None, vec![]),
         cmd("safe", "Is Twelve Weeks safe? Why Windows or your antivirus warns about the launcher", None, vec![]),
         cmd("ping", "Why your ping is high and how matches connect (P2P)", None, vec![]),
+        cmd("cnd", "How Twelve Weeks keeps the risk of a cease and desist (C&D) from Sony low", None, vec![]),
     ];
     if desk {
         let sub = |name: &str, description: &str, options: Vec<Value>| json!({"name": name, "type": 1, "description": description, "options": options});
@@ -328,39 +329,28 @@ When you press PLAY, the launcher starts a small Steam helper (`t2r-steam.exe`) 
 **Can I remove it?** You can, but Steam adds it again the next time you play. To hide it: right-click Spacewar in your library > Manage > Hide this game.
 **Friends see \"Playing Spacewar\"?** That is you playing Twelve Weeks. It goes away a few seconds after you close the game.";
 
-pub const PING_TEXT: &str = "## Ping and how matches connect
-**Matches are peer to peer (P2P).** There are no game servers. One player in the match is the host, and everyone else connects to that player through Steam's network. Steam picks a direct connection or a Valve relay near both players. Our server handles matchmaking. Gameplay goes through it only as a fallback when Steam cannot connect two players.
+pub const CND_TEXT: &str = "## Will Sony shut it down?
+Nobody can promise that, but we keep the risk low:
+- **Free.** Nothing is sold and there are no paid perks. The Ko-fi supports the developer only.
+- **You need your own copy** of the game. Piracy talk is banned here.
+- **Open source** on <https://github.com/kelliex3/Twelve-Weeks>.
+- **Kept quiet and private** until release.";
 
-**Your ping is your ping to the host**, not to a server. If the host's connection is slow or busy, the whole match lags.
-
-**What the matchmaker does**
-- Players from the same region (EU, NA-east, NA-west) are matched first.
-- You are only matched with a host within 175 ms of you.
-- Over 190 ms to the host for 60 s: you are removed from the match.
-- Heavy packet loss (30 %+ for 2 minutes, while the rest of the match is fine): you are removed from the match.
-- When the host's connection gets overloaded, a better host takes over if there is one.
-- Nobody within 190 ms? You keep searching (\"No players within 190 ms right now - still searching.\"). This happens most in South America, Asia and Oceania when few players there are online.
-
-**Lower your ping**
-- Use a cable, not Wi-Fi.
-- Stop downloads, uploads and streams while you play. Hosting 8 players needs about 1.5 MB/s of upload.
-- Do not use a VPN. It makes every connection longer.
-- Keep Steam running.
-
-**Still lagging?** Right after the match, send a report from the launcher (REPORT A BUG) and post its code in #bug-reports.";
+pub const PING_TEXT: &str = "## Ping
+Matches are P2P: one player hosts, and everyone connects to that player through Steam. Your ping is your ping to the host, not to a server.
+- You only match with a host within 175 ms. Same region goes first.
+- Over 190 ms for 60 s, or heavy packet loss: you are removed from the match.
+- A lagging host is replaced when a better one is in the match.
+**Tips:** use a cable, not Wi-Fi. No downloads, streams or VPN while you play.";
 
 pub fn safe_text(downloads: &str) -> String {
-    [
-        "## Is Twelve Weeks safe?",
-        "Yes. Windows SmartScreen or your antivirus can warn about the launcher. The warning does not mean that it found something harmful.",
-        "",
-        "**Why the warning?** Windows trusts programs that are signed with a code signing certificate. A certificate costs hundreds of dollars every year, and the creator does not have the money for one. So the launcher is not signed, and Windows warns about new programs that are not signed.",
-        "**To run it:** on \"Windows protected your PC\", click **More info**, then **Run anyway**. If your antivirus removes the launcher, add the launcher folder as an exception.",
-        "**Check it yourself:** the source code is public on GitHub: <https://github.com/kelliex3/Twelve-Weeks>. Anyone can read it, look for anything harmful, and build it themselves. Only the anti-cheat checks are private, so that cheaters cannot read them.",
-        &format!("**Download only from {downloads}** or <https://twelve-weeks.com>. A copy from anywhere else can be changed."),
-    ]
-    .join("
-")
+    format!(
+        "## Is it safe?
+Yes. Windows or your antivirus warns because the launcher is not signed. A signing certificate costs hundreds of dollars a year, and the creator cannot afford one.
+**To run it:** More info > Run anyway.
+**Check it yourself:** the source is public on <https://github.com/kelliex3/Twelve-Weeks> (only the anti-cheat is private).
+Download only from {downloads}."
+    )
 }
 
 async fn plain(bot: &Bot, it: &Interaction, content: &str, components: Option<Value>) {
@@ -387,6 +377,7 @@ pub async fn command(bot: &Bot, it: &Interaction) {
         "mark" => plain(bot, it, MARK_TEXT, None).await,
         "spacewar" => plain(bot, it, SPACEWAR_TEXT, None).await,
         "ping" => plain(bot, it, PING_TEXT, None).await,
+        "cnd" => plain(bot, it, CND_TEXT, None).await,
         "safe" => {
             let where_ = bot.cache().mention("downloads");
             plain(bot, it, &safe_text(&where_), None).await
@@ -574,7 +565,7 @@ mod tests {
     fn command_set() {
         let all = definitions(true);
         let names: Vec<&str> = all.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "ping", "known-issue", "report"]);
+        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "ping", "cnd", "known-issue", "report"]);
         assert_eq!(definitions(false).as_array().unwrap().len(), 10);
         for c in all.as_array().unwrap() {
             let opts = c["options"].as_array().unwrap();
