@@ -62,3 +62,15 @@ pub fn ctime(t: f64) -> String {
 pub fn ctime_now() -> String {
     ctime(wall())
 }
+
+static MONO0: OnceLock<Instant> = OnceLock::new();
+
+/// `time.monotonic()` (seconds since an arbitrary start).
+pub fn mono() -> f64 {
+    MONO0.get_or_init(Instant::now).elapsed().as_secs_f64() + 1000.0
+}
+
+/// The real wall clock (`wall_time()` in daemon.py): for values other programs compare with their own clock.
+pub fn wall_time() -> f64 {
+    wall()
+}

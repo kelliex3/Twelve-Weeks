@@ -1,8 +1,8 @@
 [package]
 name = "t2r-daemon"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Twelve Weeks game daemon (Rust rewrite of tools/daemon.py), stage 1: the UDP relay"
+description = "Twelve Weeks game daemon (Rust rewrite of tools/daemon.py)"
 
 [[bin]]
 name = "t2r-daemon"
@@ -12,10 +12,22 @@ path = "src/main.rs"
 name = "t2r-udp-load"
 path = "verify/udp_load.rs"
 
+[features]
+default = []
+# The private modules (anti-cheat, identity, install check) live in ./private (never on GitHub).
+# Without this feature the daemon builds with neutral stubs (src/privstub.rs).
+private = []
+
 [dependencies]
 indexmap = "2"
 libc = "0.2"
 socket2 = { version = "0.5", features = ["all"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+t2r-clanstory = { path = "../clanstory-rs" }
+parking_lot = "0.12"
+getrandom = "0.2"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3

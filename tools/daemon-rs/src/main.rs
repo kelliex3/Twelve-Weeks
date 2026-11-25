@@ -1,8 +1,13 @@
+#![allow(dead_code)]
 mod clock;
 mod log;
 mod net;
+mod py;
 mod pyfmt;
+mod rnd;
+mod selftest;
 mod udp;
+mod util;
 
 use std::io::{self, BufRead, Write};
 use std::net::SocketAddrV4;
@@ -16,8 +21,24 @@ pub fn env_parse<T: FromStr>(key: &str, default: T) -> T {
     }
 }
 
-fn env_str(key: &str, default: &str) -> String {
+pub fn env_str(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+/// `os.environ.get(key, default) != "0"` style switches: on unless the variable is exactly "0" (default when unset).
+pub fn env_on(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(v) => v != "0",
+        Err(_) => default,
+    }
+}
+
+/// `os.environ.get(key, "0") == "1"` style switches: on only when exactly "1".
+pub fn env_is1(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(v) => v == "1",
+        Err(_) => default,
+    }
 }
 
 fn log_config(default_name: &str) -> log::Config {
@@ -123,8 +144,18 @@ fn main() {
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("relay") => run_relay(),
         Some("replay-udp") => run_replay_udp(),
+        Some("selftest") => {
+            log::init_capture();
+            let m = args.get(2).cloned().unwrap_or_default();
+            let stdin = io::stdin();
+            let stdout = io::stdout();
+            let mut w = io::BufWriter::new(stdout.lock());
+            let c = selftest::run(&m, &mut stdin.lock(), &mut w);
+            let _ = w.flush();
+            c
+        }
         _ => {
-            eprintln!("usage: t2r-daemon relay | replay-udp < trace");
+            eprintln!("usage: t2r-daemon relay | replay-udp < trace | selftest <module> < script");
             2
         }
     };

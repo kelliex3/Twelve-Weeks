@@ -96,3 +96,5 @@ Thumbs.db
 .desloppify
 *.c~
 *.h~
+# daemon-rs: private modules (anti-cheat, identity, install check) are never public
+tools/daemon-rs/private/
