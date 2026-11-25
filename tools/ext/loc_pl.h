@@ -1325,6 +1325,8 @@ static const loc_ent_t LOC_PL[] = {
     {"SWITCH FACTION", "ZMIEŃ FRAKCJĘ"},
     {"ZOOM IN", "PRZYBLIŻ"},
     {"ZOOM OUT", "ODDAL"},
+    {"UNLOCKED ONLY", "TYLKO DOSTĘPNE"},
+    {"SHOW ALL", "POKAŻ WSZYSTKO"},
     {"MASK", "MASKA"},
     {"BEANIE", "CZAPKA"},
     {"SLOUCH BEANIE", "LUŹNA CZAPKA"},

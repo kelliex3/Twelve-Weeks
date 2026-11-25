@@ -55,11 +55,12 @@ typedef struct {
     uint8_t sex[CZ_NFAC];
     uint8_t it[CZ_NFAC][CZ_NSEX][CZ_NCAT];      // [..][CZ_SEX] unused (sex[] holds it)
     cz_fstat_t fs[CZ_NFAC];                     // progress while playing as that faction
-    uint32_t flags;                             // CZF_*: one-time UI state (the file's "flag <name> 1" lines)
+    uint32_t flags;                             // CZF_*: saved UI state (the file's "flag <name> 1" lines)
     const char *grant[CZ_NGRANT];               // the file's "grant <label>" lines: labels of the lists (NULL = free place)
 } cz_profile_t;
 #define CZF_CHTIP 1u                            // the first-visit CHALLENGES tip on CUSTOMIZE was shown
-static const char *const CZF_KEY[] = {"chtip"};
+#define CZF_UONLY 2u                            // CUSTOMIZE lists the unlocked items only (the UNLOCKED ONLY toggle, customize.c)
+static const char *const CZF_KEY[] = {"chtip", "uonly"};
 #define CZF_N ((int)(sizeof CZF_KEY / sizeof CZF_KEY[0]))
 static int cz_scalar(int k) { return k > 0 && k < CZK_N && k != CZK_MAPWINS && k != CZK_COUNT && k != CZK_BEST; }
 

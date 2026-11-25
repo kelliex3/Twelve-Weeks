@@ -6,7 +6,8 @@
 //
 // The page: category tabs (Q / E, the bumpers, a click), a 3 x 4 grid of the category's items for the faction + sex being edited
 // (arrows / stick / d-pad, the wheel, hover), SELECT / a click = EQUIP (saved at once to t2r-customize.txt), F / menu-action / a click
-// on the other model = SWITCH FACTION (the front model in the spotlight is the outfit being edited). BACK / Esc closes.
+// on the other model = SWITCH FACTION (the front model in the spotlight is the outfit being edited), U / pad L3 / a click on the
+// tab bar's toggle = UNLOCKED ONLY (every category lists its unlocked items only; saved). BACK / Esc closes.
 // Items whose parts are not in the MP data yet (customize_items tier 2 / 3) can be looked at but not equipped.
 // First slice: the page, the lists and the saved choice. Not yet: the two live 3D models, wearing the outfit in a match,
 // MSG_CUSTOM_LOOK (customize_core.h has the format; the send stays off until receivers can compose the look) - see the doc.
@@ -61,6 +62,7 @@ static struct {
     int h_sel, h_u, h_d, h_l, h_r, h_back, h_esc, h_pv, h_nx, h_act, h_q, h_e, h_f, h_c, h_x;
     int hv_ch, hv_tip;                           // the CHALLENGES prompt / the tip's CONTINUE under the cursor
     int h_z, h_r3, hv_zm;                        // ZOOM: Z / pad R3 held, its prompt under the cursor
+    int h_uk, h_l3, hv_uo;                       // UNLOCKED ONLY: U / pad L3 held, its toggle under the cursor
     uint64_t t_u, t_d, t_l, t_r;
     uint64_t key;                                // last filled state
     char msg[128]; uint64_t msg_until;
@@ -178,21 +180,30 @@ static int cz_plain_kind(int kind) { return kind == CZK_OG || kind == CZK_KELLIE
 // are left out. The page works in ROW positions (CZ.foc / CZ.off / the cards); cz_r2k / cz_k2r convert to and from the table index that the
 // profile, the compose and the network carry.
 static int cz_unlisted(const cz_item_t *it) { return !it || (it->hid && !cz_is_kellie()) || cz_story_mask_off(it); }
+// UNLOCKED ONLY (U / pad L3 / a click on the tab bar's toggle; saved as profile flag uonly): every category's grid leaves out the
+// locked rows. The worn item always stays listed (the grid never loses its check), SEX is never filtered.
+static int cz_locked(int fac, int sex, int cat, int k);
+static int cz_row_out(int fac, int sex, int cat, int k) {
+    if (cz_unlisted(cz_item(fac, sex, cat, k))) return 1;
+    if (!(g_cz.flags & CZF_UONLY) || cat == CZ_SEX) return 0;
+    if (k == g_cz.it[fac][sex < CZ_NSEX ? sex : 0][cat]) return 0;
+    return cz_locked(fac, sex, cat, k);
+}
 static int cz_listed(int fac, int sex, int cat) {
     int n = 0, c = cz_count(fac, sex, cat);
-    for (int k = 0; k < c; k++) n += !cz_unlisted(cz_item(fac, sex, cat, k));
+    for (int k = 0; k < c; k++) n += !cz_row_out(fac, sex, cat, k);
     return n;
 }
 static int cz_r2k(int fac, int sex, int cat, int r) {          // row position -> table index (-1: past the listed rows)
     int c = cz_count(fac, sex, cat);
     if (r < 0) return -1;
-    for (int k = 0; k < c; k++) if (!cz_unlisted(cz_item(fac, sex, cat, k)) && r-- == 0) return k;
+    for (int k = 0; k < c; k++) if (!cz_row_out(fac, sex, cat, k) && r-- == 0) return k;
     return -1;
 }
 static int cz_k2r(int fac, int sex, int cat, int k) {          // table index -> row position (an unlisted index: row 0)
     int r = 0, c = cz_count(fac, sex, cat);
-    for (int i = 0; i < c && i < k; i++) r += !cz_unlisted(cz_item(fac, sex, cat, i));
-    return k >= 0 && k < c && !cz_unlisted(cz_item(fac, sex, cat, k)) ? r : 0;
+    for (int i = 0; i < c && i < k; i++) r += !cz_row_out(fac, sex, cat, i);
+    return k >= 0 && k < c && !cz_row_out(fac, sex, cat, k) ? r : 0;
 }
 static int cz_rows(void) { return cz_listed(CZ.fac, cz_sex(), CZ.cat); }
 static int cz_equipped(int cat) { return cat == CZ_SEX ? cz_sex() : g_cz.it[CZ.fac][cz_sex()][cat]; }      // table index
@@ -479,6 +490,7 @@ static void cz_scan(void) {
     CZ.hv_b = ui_mouse_over("anim-group.czHitB", 1);
     CZ.hv_ch = ui_mouse_over("anim-group.pChHit", 1);
     CZ.hv_zm = ui_mouse_over("anim-group.pZmHit", 1);            // (a page built before the prompt existed: no widget, 0)
+    CZ.hv_uo = ui_mouse_over("anim-group.tabs.tabUoHit", 1);
     CZ.hv_tip = ui_mouse_over("anim-group.czTip.tipHit", 1);
 }
 static int g_czc_tip;                             // (customize_challenges.c) 1 = the first-visit tip is up
@@ -500,7 +512,7 @@ static int cz_click_hit(void) {
     if (!CZ.up || CZ.quiet) return 0;
     cz_scan();
     if (g_czc_tip) return CZ.hv_tip;
-    return CZ.hv_card >= 0 || CZ.hv_tab >= 0 || CZ.hv_back || CZ.hv_sel || CZ.hv_sw || CZ.hv_b || CZ.hv_q || CZ.hv_e || CZ.hv_ch || CZ.hv_zm;
+    return CZ.hv_card >= 0 || CZ.hv_tab >= 0 || CZ.hv_back || CZ.hv_sel || CZ.hv_sw || CZ.hv_b || CZ.hv_q || CZ.hv_e || CZ.hv_ch || CZ.hv_zm || CZ.hv_uo;
 }
 
 // ------------------------------------------------------------------ text width / rules / card names
@@ -531,7 +543,8 @@ static void cz_fill(void) {
     uint64_t now = GetTickCount64();
     int msg = now < CZ.msg_until;
     uint64_t key = (uint64_t)fac | (uint64_t)sex << 2 | (uint64_t)cat << 4 | (uint64_t)(foc & 0xff) << 8 | (uint64_t)(off & 0xff) << 16 | (uint64_t)(eq & 0xff) << 24 |
-                   (uint64_t)(cur + 1) << 32 | (uint64_t)(hv + 1 & 0x1f) << 34 | (uint64_t)msg << 40 | (uint64_t)(g_pad_mode & 1) << 41 | (uint64_t)(g_cz_gen & 0xff) << 42 | (uint64_t)(g_cz_zoom & 1) << 50 | 1ULL << 63;
+                   (uint64_t)(cur + 1) << 32 | (uint64_t)(hv + 1 & 0x1f) << 34 | (uint64_t)msg << 40 | (uint64_t)(g_pad_mode & 1) << 41 | (uint64_t)(g_cz_gen & 0xff) << 42 | (uint64_t)(g_cz_zoom & 1) << 50 |
+                   (uint64_t)!!(g_cz.flags & CZF_UONLY) << 51 | (uint64_t)!!CZ.hv_uo << 52 | 1ULL << 63;
     if (key == CZ.key) return;
     CZ.key = key;
     char p[96], b[256];          // (b: an image path; a 128 byte one cut a long card name short and the tile kept another tile's picture)
@@ -603,6 +616,12 @@ static void cz_fill(void) {
     }
     ui_text("anim-group.mdlName", CZ_FAC_NAME[fac]);
     if (ui_w("anim-group.pZmTx")) { ui_text("anim-group.pZmKt", g_pad_mode ? "R3" : "Z"); ui_text("anim-group.pZmTx", loc_tr(g_cz_zoom ? "ZOOM OUT" : "ZOOM IN")); }
+    if (ui_w("anim-group.tabs.tabUoTx")) {      // UNLOCKED ONLY: the label names what a press does; on = white, hovered brighter
+        const int uo = (g_cz.flags & CZF_UONLY) != 0;
+        ui_text("anim-group.tabs.tabUoKt", g_pad_mode ? "L3" : "U");
+        ui_text("anim-group.tabs.tabUoTx", loc_tr(uo ? "SHOW ALL" : "UNLOCKED ONLY"));
+        w_alpha(ui_w("anim-group.tabs.tabUoTx"), uo || CZ.hv_uo ? 1.0f : 0.8f);
+    }
     ui_text("anim-group.pSelTx", loc_tr("EQUIP"));
     ui_text("anim-group.pSwTx", loc_tr("SWITCH FACTION"));
     ui_text("anim-group.pChKt", g_pad_mode ? "Y" : "C");
@@ -659,6 +678,25 @@ static void cz_set_fac(int f, const char *why) {
     ui_sfx("sfx-select");
     xlog("customize: editing %s (%s)", CZ_FAC_NAME[f], why);
 }
+// UNLOCKED ONLY on / off: the rows of every category change, so each focus moves to where its item now stands (a hidden one:
+// the worn item); the scroll starts over and follows the focus
+static void cz_set_uonly(int on, const char *why) {
+    on = on != 0;
+    if (on == ((g_cz.flags & CZF_UONLY) != 0)) return;
+    const int fac = CZ.fac, sex = cz_sex();
+    int fk[CZ_NCAT];
+    for (int c = 0; c < CZ_NCAT; c++) fk[c] = cz_r2k(fac, sex, c, CZ.foc[c]);
+    if (on) g_cz.flags |= CZF_UONLY; else g_cz.flags &= ~CZF_UONLY;
+    for (int c = 0; c < CZ_NCAT; c++) {
+        CZ.foc[c] = fk[c] >= 0 && !cz_row_out(fac, sex, c, fk[c]) ? cz_k2r(fac, sex, c, fk[c]) : cz_eq_row(c);
+        CZ.off[c] = 0;
+    }
+    cz_keep_visible();
+    cz_save();
+    CZ.key = 0;
+    ui_sfx("sfx-cycle");
+    xlog("customize: unlocked only %s (%s; %s: %d of %d rows)", on ? "on" : "off", why, CZ_CAT_LABEL[CZ.cat], cz_rows(), cz_count(fac, sex, CZ.cat));
+}
 static void cz_net_changed(void);                 // customize_compose.c: the outfit changed (next MSG_CUSTOM_LOOK carries a new counter)
 static void cz_equip(int r, const char *why) {                // r: the ROW position on the page
     const int fac = CZ.fac, sex = cz_sex(), cat = CZ.cat, k = cz_r2k(fac, sex, cat, r);
@@ -707,6 +745,7 @@ static void cz_enter(void) {
     cz_load();
     CZ.up = 1; CZ.enter_ms = GetTickCount64();
     CZ.h_sel = CZ.h_u = CZ.h_d = CZ.h_l = CZ.h_r = CZ.h_back = CZ.h_esc = CZ.h_pv = CZ.h_nx = CZ.h_act = CZ.h_q = CZ.h_e = CZ.h_f = CZ.h_c = CZ.h_x = 1;   // held on arrival = not a press
+    CZ.h_uk = CZ.h_l3 = 1;
     CZ.t_u = CZ.t_d = CZ.t_l = CZ.t_r = ~0ULL;
     int cur = cz_cur_side();
     CZ.fac = cur >= 0 ? cur : 0;                 // the faction the player plays as stands in front first
@@ -735,6 +774,7 @@ static void cz_close(const char *how) {
 //   chal             open CHALLENGES                         tip         dismiss the first-visit tip
 //   unlock <0|1>     CUSTOMIZE: every row unlocked for this run (nothing saved as unlocked)
 //   zoom <0|1>       CUSTOMIZE: ZOOM IN ON ITEM off / on
+//   uonly <0|1>      CUSTOMIZE: UNLOCKED ONLY off / on (saved, as the toggle)
 //   yaw <deg>        CUSTOMIZE: turn the front model         fov <deg> / cpitch <deg x 10> / cyaw <deg x 10>   page camera zoom + aim (close shots)
 //   cfac <0|1>       CHALLENGES: faction tab                 crow <d>    CHALLENGES: move d rows      ccol <c>   CHALLENGES: column c
 //   cequip           CHALLENGES: equip the focused tile
@@ -766,6 +806,7 @@ static void cz_test_tick(uint64_t top) {
     else if (on_cz && !g_czc_tip && !strcmp(cmd, "chal")) czc_open("test file");
     else if (on_cz && !strcmp(cmd, "unlock")) { g_cz_test_open = v != 0; CZ.key = 0; }
     else if (on_cz && !strcmp(cmd, "zoom")) g_cz_zoom = v != 0;                         // ZOOM IN ON ITEM on / off
+    else if (on_cz && !g_czc_tip && !strcmp(cmd, "uonly")) cz_set_uonly(v, "test file");   // UNLOCKED ONLY on / off
     else if (on_cz && !strcmp(cmd, "yaw")) CZS.user_yaw = (float)v;                    // the front model's turn (degrees)
     else if (on_cz && !strcmp(cmd, "fov")) g_czs_t_fov = (float)v;                     // page camera fov (0 = the stage's)
     else if (on_cz && !strcmp(cmd, "cpitch")) g_czs_t_pitch = (float)v / 10.0f;        // page camera pitch / yaw offsets, tenths of a degree
@@ -830,6 +871,7 @@ static void feature_customize(void) {
     if (CZC.up) {                                    // back from CHALLENGES: what is held now (the BACK that closed it) is not a press here
         CZC.up = 0; CZ.key = 0;
         CZ.h_sel = CZ.h_u = CZ.h_d = CZ.h_l = CZ.h_r = CZ.h_back = CZ.h_esc = CZ.h_pv = CZ.h_nx = CZ.h_act = CZ.h_q = CZ.h_e = CZ.h_f = CZ.h_c = CZ.h_x = 1;
+        CZ.h_uk = CZ.h_l3 = 1;
         CZ.t_u = CZ.t_d = CZ.t_l = CZ.t_r = ~0ULL;
         xlog("customize: challenges page left (top now %s)", page_name(top));
     }
@@ -865,13 +907,18 @@ static void feature_customize(void) {
     { WORD pb = 0; BYTE l, r; SHORT lx, ly; r3_now = pad_state(&pb, &l, &r, &lx, &ly) && (pb & 0x0080) && !(pb & 0x0040); }
     int zoom = (z_now && !CZ.h_z) || (r3_now && !CZ.h_r3);
     CZ.h_z = z_now; CZ.h_r3 = r3_now;
+    // UNLOCKED ONLY: U on the keyboard, L3 on the pad (alone: L3 + R3 is the dev freecam, as ZOOM's R3), a click on the toggle
+    int uk_now = game_focused() && (GetAsyncKeyState('U') & 0x8000) != 0, l3_now = 0;
+    { WORD pb = 0; BYTE l, r; SHORT lx, ly; l3_now = pad_state(&pb, &l, &r, &lx, &ly) && (pb & 0x0040) && !(pb & 0x0080); }
+    int uonly = (uk_now && !CZ.h_uk) || (l3_now && !CZ.h_l3);
+    CZ.h_uk = uk_now; CZ.h_l3 = l3_now;
     if (g_czs_fc) {                                  // the stage freecam flies (customize_stage.c): no page input at all
         CZ.h_esc = 1;                                // (the Esc that ends the flight must not close the page on its release frame)
         goto fade;
     }
     if (g_czc_tip) {                                 // the first-visit tip is up: CONTINUE (select / a click) or BACK closes it, nothing else
         if (now - CZ.enter_ms > 400 && (sel || back || esc || (click && CZ.hv_tip))) czc_tip_done(back || esc ? "back" : click ? "CONTINUE clicked" : "select");
-        if (!back && !esc) { sel = 0; click = 0; chal = 0; wn = 0; up = down = left = right = tab_l = tab_r = sw = 0; }
+        if (!back && !esc) { sel = 0; click = 0; chal = 0; wn = 0; up = down = left = right = tab_l = tab_r = sw = uonly = 0; }
         if (!back && !esc) goto fade;
     }
     if (chal || (click && CZ.hv_ch)) { czc_open(chal ? (x_now ? "pad Y / Triangle" : "C") : "CHALLENGES clicked"); return; }
@@ -919,6 +966,10 @@ static void feature_customize(void) {
         if (top_page() == cz_page_id() && !CZ.closing) { pop_page(); CZ.closing = 1; xlog("customize: closed"); return; }
     }
     if (CZ.quiet) return;
+    if (uonly || (click && CZ.hv_uo)) {
+        cz_set_uonly(!(g_cz.flags & CZF_UONLY), uonly ? (l3_now ? "pad L3" : "U") : "toggle clicked");
+        click = 0;
+    }
     const int n = cz_rows();
     int *foc = &CZ.foc[CZ.cat];
     if (up && *foc - CZ_COLS >= 0) { *foc -= CZ_COLS; ui_sfx("sfx-cycle"); }

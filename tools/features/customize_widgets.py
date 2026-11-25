@@ -65,6 +65,7 @@ SB_X = GRID_X + COLS * CARD_W + (COLS - 1) * GAP + 30     # scroll bar
 PROMPT_CY, PROMPT_PT, GLYPH = 2002, 46, 56
 CH_KEY, CH_W = 52, 420             # the CHALLENGES prompt: key box, label width
 ZM_KEY, ZM_W = 84, 300             # the ZOOM prompt: key box ("R3" on a pad), label width ("ZOOM OUT")
+UO_X0, UO_KEY, UO_W, UO_PT = BAR_E_X + GLYPH // 2 + 70, 84, 400, 32   # the UNLOCKED ONLY toggle on the tab bar (ends ~2056, left of the front model)
 # the prompts, right to left from RIGHT_X (the stock row: glyph, 16 gap, label; 80 between prompts)
 PROMPTS = (("pBack", "menu:back", "BACK", 180), ("pSel", "menu:select", "EQUIP", 200), ("pSw", "menu:action", "SWITCH FACTION", 480))
 # the two models (3D, in the menu world): front = the selected one in the spotlight, back = further back, in shadow (the mockup)
@@ -198,6 +199,13 @@ def build_page(main):
     b.line("tabLineR", tabs, BAR_LR[0], BAR_CY, BAR_LR[1], BAR_CY, WHITE, LINE_A * 2, 2.0)
     b.image("tabE", tabs, b.ctr(BAR_E_X, BAR_CY, GLYPH, GLYPH), "menu:next", WHITE)
     b.rect("tabEHit", tabs, b.ctr(BAR_E_X, BAR_CY, 100, 100), WHITE, HIT_A)
+    # UNLOCKED ONLY (customize.c g_cz_uonly): U on the keyboard, L3 on the pad, a click. The grid of every category lists only the
+    # unlocked items while it is on. Right of the E glyph on the tab bar (the prompt row's left part belongs to the requirement card);
+    # the label names what a press does (as ZOOM IN / ZOOM OUT): UNLOCKED ONLY, then SHOW ALL
+    b.rect("tabUoKb", tabs, b.tl(UO_X0, BAR_CY - CH_KEY / 2, UO_KEY, CH_KEY), 0xFFE6E6E6, 255)
+    b.text("tabUoKt", tabs, b.tl(UO_X0, BAR_CY - CH_KEY / 2, UO_KEY, CH_KEY), "U", 34, 0xFF141414, align=1, tracking=1)
+    b.text("tabUoTx", tabs, tlm(UO_X0 + UO_KEY + 16, BAR_CY - 35, UO_W, 70), "UNLOCKED ONLY", UO_PT, PROMPT, tracking=2)
+    b.rect("tabUoHit", tabs, b.tl(UO_X0 - 16, BAR_CY - 55, UO_KEY + 16 + UO_W + 32, 110), WHITE, HIT_A)
     # ------------------------------------------------------------ item row: the focused item's name + rule (t2r-ext moves the rule's
     # left end to just past the name: secRule is a 2 px rect, pivot at its left end, scaled in x)
     b.text("secName", a, tlm(ITEM_X, ITEM_CY - 40, 1000, 80), "TORSO 10", ITEM_PT, WHITE, tracking=2)
