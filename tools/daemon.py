@@ -4615,6 +4615,34 @@ def best_host_order(players):
         except Exception as e:
             log("HOST-PICK cap ERR", repr(e))
         return out
+    def limit_first(pl):            # some pings unknown: capacity picks (cap_first), but never a host known to be over the match ping limit
+        # One unknown pair among 8 made the pick skip every ping; capacity chose a host 224 ms from one player (removed 60 s into the
+        # round) while another host had everyone within 175 ms. Most formations with a host over the limit had such an unknown pair. The pings are the ones the formation gate judged (_ping_gate: fresh, else the last measured one).
+        out = cap_first(pl)
+        if not (MM_PING_GATE and PING_KICK_MS > 0) or len(out) < 3:
+            return out
+        try:
+            lim, now = ping_match_ms(), time.time()
+            a = host_allowed(out)
+            def tier(h):            # 0 = all known and within, 1 = the known ones within, 2 = somebody known over the limit
+                v = [_ping_gate(h, o, now) for o in out if o != h]
+                k = [x for x in v if x is not None]
+                if k and max(k) > lim:
+                    return 2
+                return 0 if len(k) == len(v) else 1
+            tiers = {h: tier(h) for h in a}
+            bt = min(tiers.values())
+            if tiers.get(out[0], 2) == 2 and bt < 2:
+                pool = [h for h in a if tiers[h] == bt]
+                n = max(len(out), 3)
+                vs = {t: HOSTCAP.verdict(t, n) for t in pool} if hostcap.MODE >= 2 else {t: (1, "") for t in pool}
+                best = min(pool, key=lambda t: (vs[t][0], out.index(t)))
+                log("HOST-PICK", "ping limit %d ms (some pings unknown):" % lim, tag(out[0]), "has a player over it ->", tag(best),
+                    "hosts (%s)" % ("all its pings known and within" if bt == 0 else "its known pings within"), vs[best][1])
+                i = out.index(best); out[0], out[i] = out[i], out[0]
+        except Exception as e:
+            log("HOST-PICK limit ERR", repr(e))
+        return out
     if os.environ.get("T2R_NO_HOST_PICK"):
         return first_allowed(players)
     if len(players) < 3:
@@ -4624,7 +4652,7 @@ def best_host_order(players):
     for h in players:
         if None in [pair_ping(h, o) for o in players if o != h]:
             log("HOST-PICK", "ping unknown, keeping queue order")
-            return cap_first(players)
+            return limit_first(players)
     pool, rinfo = host_pool(players)
     log("HOST-PICK", "region:", rinfo)
     if MM_PING_GATE and PING_KICK_MS > 0:          # (MM_PING_GATE) the ping limit beats the region rule and capacity: never a host that gets a player removed when another would not
@@ -6369,12 +6397,12 @@ def host_swap_pick(host, big, small, players, sk, top, rg, party_of):
             elif kind == "apart":
                 apart += k * (k - 1) // 2 + (len(g) - k) * (len(g) - k - 1) // 2
         return tog, apart
-    if pid_mates(host, small):
-        log("HOST-PICK", tag(host), "is on the smaller team with party mates - no swap")
-        return None
     base = cost(big, small)
     best = None
-    for c in big:
+    mates = pid_mates(host, small)
+    if mates:
+        log("HOST-PICK", tag(host), "is on the smaller team with party mates - no swap")
+    for c in ([] if mates else big):
         if c == host or pid_mates(c, big):
             continue
         gap = abs(w[c] - w[host])
@@ -6388,7 +6416,31 @@ def host_swap_pick(host, big, small, players, sk, top, rg, party_of):
         if best is None or gap < best[0] - 1e-9:
             best = (gap, c, nb, ns)
     if not best:
-        log("HOST-PICK", tag(host), "(worst %d ms) is on the smaller team and nobody on the bigger one is within %d ms - no valid swap (parties / rules / skill), old rule" % (hw, lim))
+        # No swap (the host's party mates, the skill gap) left a bigger-team host at 184-276 ms (a host within 170 ms in a party of 2 on the
+        # smaller team, the bigger team's pick 276 ms). The ping limit beats the skill balance: move one
+        # bigger-team player (no party mates there, rules not worse, the team gap grows by at most what a swap may change it) to the host's team, which becomes the bigger one; the closest balance wins.
+        mv = None
+        for c in big:
+            if c == host or pid_mates(c, big):
+                continue
+            nb = [x for x in players if x in small or x == c]
+            ns = [x for x in players if x in big and x != c]
+            if len(nb) <= len(ns):
+                continue
+            k = cost(nb, ns)
+            if k[0] > base[0] or k[1] > base[1]:
+                continue
+            gap = abs(sum(w[x] for x in nb) - sum(w[x] for x in ns))
+            if sk and gap > abs(sum(w[x] for x in big) - sum(w[x] for x in small)) + 2 * HOST_SWAP_SKILL:
+                continue                                 # (the most a swap may change the team gap: 2 x HOST_SWAP_SKILL)
+            if mv is None or gap < mv[0] - 1e-9:
+                mv = (gap, c, nb, ns)
+        if mv:
+            gap, c, nb, ns = mv
+            log("HOST-PICK", tag(host), "(worst %d ms, within %d) is on the smaller team, nobody on the bigger one is within the limit (best %s ms) and no swap fits - moved %s to the host's team; teams now %.2f v %.2f"
+                % (hw, lim, ",".join(str(_worst_ping(x, players)) for x in big), tag(c), sum(w[x] for x in nb), sum(w[x] for x in ns)))
+            return nb, ns
+        log("HOST-PICK", tag(host), "(worst %d ms) is on the smaller team and nobody on the bigger one is within %d ms - no valid swap or move (parties / rules / skill), old rule" % (hw, lim))
         return None
     gap, c, nb, ns = best
     log("HOST-PICK", tag(host), "(worst %d ms, within %d) is on the smaller team and nobody on the bigger one is within the limit (best %s ms) - swapped with %s (skill %.2f v %.2f); teams now %.2f v %.2f"

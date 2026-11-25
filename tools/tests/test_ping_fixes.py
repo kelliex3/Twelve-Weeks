@@ -97,7 +97,8 @@ daemon.PARTIES.pid = orig_pid
 S, A, B, C, D = shape({S: 0.05, A: 0.9, B: 0.95, C: 0.85, D: 0.5})
 LOGS.clear()
 out = daemon.team_order([A, B, C, S, D])
-check(out[0] in (A, B, C) and any("no valid swap" in l for l in LOGS), "no bigger-team player close enough in skill: old rule, host from the bigger team (%s)" % daemon.tag(out[0]))
+# no swap fits, but moving C to the host's team keeps the host within the limit and the balance better (2.15 -> 0.45): moved
+check(out[0] == S and any("moved" in l for l in LOGS), "no bigger-team player close enough in skill: one moves to the host's team (%s)" % daemon.tag(out[0]))
 # a bigger-team host within the limit exists: no swap (host_from_team takes him)
 S, A, B, C, D = shape()
 setp(A, C, 150); setp(A, B, 150); setp(A, D, 100); setp(A, S, 100)
