@@ -41,6 +41,10 @@
 #include "net/social/clan-page-data.hpp"
 #include "net/online/clan-state.hpp"
 #include "net/ui/postmatch-screens.hpp"
+#include "net/ui/achieve.hpp"
+#include "net/ui/choose.hpp"
+#include "net/ui/customize.hpp"
+#include "net/ui/customize-challenges.hpp"
 #include "net/ui/death-ui.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
@@ -2180,6 +2184,10 @@ namespace net::replication {
         net::clan::Reset();
         net::clan::page::Reset();
         net::ui::postmatch::Reset();
+        net::ui::achieve::Reset();
+        net::ui::choose::Reset();
+        net::ui::customize::Reset();
+        net::ui::customize::challenges::Reset();
         net::ui::death_ui::Reset();
         net::requeue::Reset();
         net::direct::Reset();

@@ -1226,11 +1226,18 @@ namespace net::gui2 {
         if (myTeam < 0) return;
         const int enemyTeam = (myTeam == MM_TEAM_WLF) ? MM_TEAM_SERAPHITES : MM_TEAM_WLF;
 
-        setTxt(node("anim-group.scoreboard.team0_name"), MMTeamName(static_cast<uint8_t>(myTeam)));
-        setTxt(node("anim-group.scoreboard.team1_name"), MMTeamName(static_cast<uint8_t>(enemyTeam)));
+        // winmm fills the two fixed blocks by ROSTER team (0 = Seraphites,
+        // 1 = WLF). While sbteam is enabled its native 474-unit pivot swap
+        // moves our block to the top place, so the rows and the team name
+        // travel together; the opt-out leaves the stock winmm order.
+        const int ownBlock = (myTeam == MM_TEAM_WLF) ? 1 : 0;
+        const int enemyBlock = 1 - ownBlock;
 
-        FillScoreboardTeam(0, myTeam);
-        FillScoreboardTeam(1, enemyTeam);
+        setTxt(node("anim-group.scoreboard.team0_name"), MMTeamName(MM_TEAM_SERAPHITES));
+        setTxt(node("anim-group.scoreboard.team1_name"), MMTeamName(MM_TEAM_WLF));
+
+        FillScoreboardTeam(ownBlock, myTeam);
+        FillScoreboardTeam(enemyBlock, enemyTeam);
     }
 
     static void RefreshEmbeddedScoreBanner()

@@ -7,16 +7,19 @@
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp (it uses it in a template)
+#include "boot.hpp"
 #include "net-protocol.hpp"
 #include "engine/flag.hpp"
 #include "engine/lobby.hpp"
 #include "engine/script.hpp"
 #include "engine/widget.hpp"
 #include "daemon-rpc.hpp"
+#include "menu/loadseq.hpp"
 #include "net-account.hpp"
 #include "net-gui2.hpp"
 #include "net-matchmaking.hpp"
 #include "net/match/kick-state.hpp"
+#include "net/match/match.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
 #include "net/ui/postmatch-screens.hpp"
@@ -89,6 +92,24 @@ namespace net::requeue {
                 }
             }
             return g_rq.off != 0;
+        }
+
+        // ext t2r-ext.c: ms_world_busy() = ms_switching() || g_ms_pick_st. The
+        // native port has no menu-scene switch / side-pick reload producer, so use
+        // the ownerless signals that do exist: the connecting hand-off, the MP
+        // front-end loading phase and an in-flight level load / black fade. This
+        // deliberately errs on the side of waiting rather than pushing a search
+        // that a scene reload would drop.
+        bool WorldBusy()
+        {
+            if (menu::loadseq::HoldActive())
+                return true;
+            if (net::match::Get().GetPhase() == net::match::Phase::FrontEndLoading)
+                return true;
+            const uint64_t ready = DC::Call<"task-want-load-levels-fully-spawned?">();
+            if (ready != ~uint64_t{ 0 } && ready == 0)
+                return true;
+            return HUD::GET_BLACK_FADE() > 0.02f;
         }
 
         // ---- async 0xBC poll (ext RqpWorker / RqpAsk) -------------------------------
@@ -343,6 +364,12 @@ namespace net::requeue {
 
     void Tick()
     {
+        // The legacy ext ticks requeue first and owns its own scene-busy gate.
+        // Running both would push the search page twice and duplicate the 0xBC
+        // polls / close watch.
+        if (boot::ExtLoaded())
+            return;
+
         static StringId64 pMm = 0, pFm = 0;
         if (!pMm) {
             pMm = engine::widget::PageId("main-menu");
@@ -362,6 +389,9 @@ namespace net::requeue {
                 ++g_rq.gen;                      // an answer from the older match is stale
                 g_rq.ans = core::Answer{};
                 g_rq.lobby = core::Lobby{};
+                g_rq.ansRq = -1;                 // only once per match: keep a later early answer
+                g_rq.ansW = 0;
+                g_rq.ansT = 0;
             }
             g_rq.armed = g_rq.endAt = now;
             g_rq.pushed = 0;
@@ -458,7 +488,8 @@ namespace net::requeue {
         // the mod's "on the MP menu, still known to the daemon" state (ext session state 2).
         const bool onMenu = st == net::matchmaking::State::Connected
             || st == net::matchmaking::State::Matched;
-        if (matchEndHold || top != pMm || !onMenu || !PostMatchScreensDone()) {
+        if (matchEndHold || top != pMm || !onMenu || !PostMatchScreensDone()
+            || WorldBusy()) {
             g_rq.menuSince = 0;
             g_rq.asked = 0;
             return;
@@ -476,8 +507,7 @@ namespace net::requeue {
         }
         if (!g_rq.menuSince) {
             g_rq.menuSince = now;
-            g_rq.ansRq = -1;
-            return;
+            return;                              // a fresh early rq=1 survives this frame
         }
         if (now - g_rq.menuSince < kSettleMs)
             return;

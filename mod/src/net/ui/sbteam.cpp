@@ -1,9 +1,10 @@
-// ported from tools/ext/sbteam.c (build-201 working tree, 102-line version).
-// The ext's block move fixed winmm's team-0-on-top fill. The native fill already
-// puts our team on top, so moving the blocks here would invert a correct board;
-// only the place-colour band pair is owned natively. No settext hook is needed:
-// the mod's scoreboard writes go straight through engine::widget, and the
-// observer slot is still used by search-rows.
+// Native owner of build-191 tools/ext/sbteam.c. winmm fills the two team
+// blocks by roster team; our team must be the upper one. The ext reads the
+// CURRENT placement from the two team-name pivots and moves each block by the
+// measured distance -- the pause page and the scoreboard page have different
+// y, so the swap is relative, not an absolute 474-unit write. Colour follows
+// the place: the blue / red bands are static and are never touched here.
+// Yields while t2r-ext is loaded; no sidecar is written.
 
 #include "sbteam.hpp"
 
@@ -12,99 +13,93 @@
 #include "engine/lobby.hpp"
 #include "engine/widget.hpp"
 #include "log.hpp"
-#include "net/ui/net-gui2.hpp"
 
 #include <cstdint>
+#include <cstdio>
 
 namespace net::ui::sbteam {
 
     namespace {
 
         struct Owned {
-            uint64_t page = 0;
-            uint64_t blue = 0, red = 0;
-            uint64_t stock0 = 0, stock1 = 0;
-            bool     applied = false;
+            bool active = false;    // this page has resolvable team-name pivots
         } g;
 
-        bool Disabled()
+        // ext SbTick: the local player's roster entry carries the team bit.
+        // With no readable entry the ext leaves swap = 0.
+        bool WantsSwap(bool& known)
         {
-            return boot::ExtLoaded() ||
-                   engine::flag::Present("t2r-no-sbteam.txt") ||
-                   engine::lobby::Substate() < 3 ||
-                   (!net::gui2::ScoreboardShowing() && !net::gui2::PauseMenuOpen());
+            known = false;
+            const uint8_t me = engine::lobby::LocalSlot();
+            if (me >= engine::lobby::kRosterMax) return false;
+            const int n = engine::lobby::RosterCount();
+            for (int i = 0; i < n; ++i) {
+                const uint8_t* e = engine::lobby::RosterEntry(i);
+                if (e && e[0] == me) {
+                    known = true;
+                    return core::WantsPhysicalSwap(e[0x31]);
+                }
+            }
+            return false;
         }
 
-        void Restore()
+        void Shift(int team, const char* leaf, float dy, int& moved)
         {
-            if (!g.applied) return;
-            if (g.stock0) engine::widget::Visible(g.stock0, true);
-            if (g.stock1) engine::widget::Visible(g.stock1, true);
-            if (g.blue)   engine::widget::Visible(g.blue, false);
-            if (g.red)    engine::widget::Visible(g.red, false);
-            g.applied = false;
-            g.page = 0;
-            g.blue = g.red = g.stock0 = g.stock1 = 0;
+            char rel[128];
+            std::snprintf(rel, sizeof rel,
+                          "anim-group.scoreboard.team%d_%s", team, leaf);
+            const uint64_t w = engine::widget::Page(rel);
+            if (!w) return;
+            float x = 0.0f, y = 0.0f;
+            if (!engine::widget::PivotGet(w, &x, &y)) return;
+            engine::widget::Pivot(w, x, y + dy);
+            ++moved;
+        }
+
+        void PlaceBlocks(bool want)
+        {
+            const uint64_t n0 = engine::widget::Page("anim-group.scoreboard.team0_name");
+            const uint64_t n1 = engine::widget::Page("anim-group.scoreboard.team1_name");
+            float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+            g.active = n0 && n1 && engine::widget::PivotGet(n0, &x0, &y0)
+                       && engine::widget::PivotGet(n1, &x1, &y1);
+            if (!g.active) return;
+
+            const core::SwapRead read = core::ReadSwap(y0, y1);
+            if (!core::NeedsSwap(read, want)) return;
+            int moved = 0;
+            for (int team = 0; team < 2; ++team) {
+                const float dy = core::ShiftDelta(read, want, team);
+                for (const char* leaf : core::kBlockParts)
+                    Shift(team, leaf, dy, moved);
+                for (int row = 0; row < core::kRows; ++row)
+                    for (const char* part : core::kRowParts) {
+                        char leaf[48];
+                        std::snprintf(leaf, sizeof leaf, "row%d_%s", row, part);
+                        Shift(team, leaf, dy, moved);
+                    }
+            }
+            TO1_LOG("sbteam: our team is team %d - %s block on top (%d widgets placed)\n",
+                    want ? 1 : 0, want ? "team 1" : "team 0", moved);
         }
 
     } // namespace
 
-    void Tick(uint64_t)
+    void Tick(uint64_t now)
     {
-        if (Disabled()) {
-            Restore();
-            return;
-        }
+        (void)now;
+        if (boot::ExtLoaded()) { g.active = false; return; }
+        if (!engine::widget::TopPage()) { g.active = false; return; }
 
-        const uint64_t page = engine::widget::TopPage();
-        if (!page) return;
-
-        const uint64_t blue = engine::widget::Page(
-            "anim-group.scoreboard.sbBlue");
-        const uint64_t red = engine::widget::Page(
-            "anim-group.scoreboard.sbRed");
-        const uint64_t stock0 = engine::widget::Page(
-            "anim-group.scoreboard.team0_band");
-        const uint64_t stock1 = engine::widget::Page(
-            "anim-group.scoreboard.team1_band");
-        if (!blue || !red || !stock0 || !stock1) {
-            Restore();   // old gui2-widgets.pak: keep the stock bands
-            return;
-        }
-        if (g.applied && g.page == page) return;
-        Restore();
-
-        g.page = page;
-        g.blue = blue;
-        g.red = red;
-        g.stock0 = stock0;
-        g.stock1 = stock1;
-
-        // The ext would swap both blocks here when our roster team is 1. The
-        // native fill already used our team for display team 0, so the blocks
-        // stay put and only the colours follow the place.
-        engine::widget::Visible(stock0, false);
-        engine::widget::Visible(stock1, false);
-        engine::widget::Visible(blue, true);
-        engine::widget::Visible(red, true);
-        engine::widget::Alpha(blue, 1.0f);
-        engine::widget::Alpha(red, 1.0f);
-        g.applied = true;
-        TO1_LOG("sbteam: our team %d - native fill owns the order; %s; sbBlue / sbRed placed on the two bands\n",
-            static_cast<int>(engine::lobby::OwnTeam()),
-            core::WantsPhysicalSwap(static_cast<int>(engine::lobby::OwnTeam()))
-                ? "ext would have swapped blocks"
-                : "no block swap needed");
+        bool known = false;
+        const bool want = WantsSwap(known);
+        // Opt-out and an unknown local team both put the template blocks back.
+        const bool target = known && !engine::flag::Present("t2r-no-sbteam.txt") && want;
+        PlaceBlocks(target);
     }
 
-    bool Active()
-    {
-        return g.applied && !Disabled();
-    }
+    bool Active() { return g.active && !boot::ExtLoaded(); }
 
-    void Reset()
-    {
-        Restore();
-    }
+    void Reset() { g.active = false; }
 
 } // namespace net::ui::sbteam

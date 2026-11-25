@@ -56,6 +56,10 @@
 #include "net/social/clan-page-data.hpp"
 #include "net/online/clan-state.hpp"
 #include "net/ui/postmatch-screens.hpp"
+#include "net/ui/achieve.hpp"
+#include "net/ui/choose.hpp"
+#include "net/ui/customize.hpp"
+#include "net/ui/customize-challenges.hpp"
 #include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
 #include "net/online/requeue.hpp"
@@ -257,6 +261,10 @@ namespace boot {
 		net::clan::Tick();        // 2013 CLAN state (0xE0/0xE1) + g_pm.pending / g_ev.pending producers
 		net::clan::page::Tick();  // 2013 CLAN page data (0xB6/0xB7 sections 1..6)
 		net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
+		net::ui::achieve::Tick(now);     // 0xA9/0xAA/0xAB client half + clanach/cards (yields to ext)
+		net::ui::choose::Tick(now);      // CHOOSE YOUR SIDE widget owner (camera/mixer seams inert)
+		net::ui::customize::Tick(now);   // CUSTOMIZE page owner (shared profile, atomic save + NEVT_CUSTOM_LOOK)
+		net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)

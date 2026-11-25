@@ -29,6 +29,28 @@ namespace engine::menu_input {
     // not fire an action).
     bool CommandEdge(StringId64 command, bool& held);
 
+    // ext gu_rep() (gearup13.c): the first press fires at once, then a held
+    // command repeats after 260 ms and every 75 ms. `next` is the caller's
+    // absolute next-fire tick; initialise it to ~0ULL on page entry. The `now`
+    // passed by boot::FrameTick is the same GetTickCount64 clock the ext used.
+    bool CommandActive(StringId64 command);
+    bool CommandRepeat(StringId64 command, bool& held, uint64_t& next, uint64_t now);
+
+    // ext wheel_notches(): whole wheel notches since the previous BeginFrame,
+    // positive = up. The hook is thread-local (WM_MOUSEWHEEL / raw WM_INPUT on the
+    // foreground game window), not the system-wide WH_MOUSE_LL hook.
+    int WheelNotches();
+
+    // ext pad_state()'s raw XInput bits for the first connected pad, sampled once
+    // per BeginFrame. XINPUT_GAMEPAD_LEFT_THUMB is 0x0040, RIGHT_THUMB 0x0080;
+    // L3 + R3 must keep meaning "freecam" to the features that read both.
+    uint16_t PadButtons();
+    bool RightStick(float& x, float& y);   // -1..1, false when no pad / not focused
+
+    // ext g_pad_mode: the last device used (true = pad). Picker / customize
+    // prompts use it to choose between key and glyph labels.
+    bool PadMode();
+
     // Test / session helper.
     void Reset();
 

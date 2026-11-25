@@ -57,6 +57,16 @@ namespace engine::lobby {
         return Substate() == kSubstateInMatch;
     }
 
+    int MatchPhase()
+    {
+        const uint8_t* lo = Object();
+        if (!lo)
+            return -1;
+        const uintptr_t p = reinterpret_cast<uintptr_t>(lo) + 0x1B4;
+        return engine::ptr::Readable(p, sizeof(int))
+            ? static_cast<int>(*reinterpret_cast<const volatile int*>(p)) : -1;
+    }
+
     int PartyStatus()
     {
         const uintptr_t p = Base() + kRvaPartyStatus;
@@ -92,6 +102,12 @@ namespace engine::lobby {
             return 0;
         const int n = lo[0x1A];
         return n > static_cast<int>(kRosterMax) ? static_cast<int>(kRosterMax) : n;
+    }
+
+    uint8_t LocalSlot()
+    {
+        const uint8_t* lo = Object();
+        return lo ? lo[0x19] : 0xFF;
     }
 
     uint8_t OwnTeam()

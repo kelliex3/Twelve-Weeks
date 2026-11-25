@@ -241,6 +241,11 @@ enum NetEventType : uint8_t {
     NEVT_GIFT       = 0x53,   // [u8 kind]                 giver -> receiver
     NEVT_GIFT_STOCK = 0x56,   // [u8 roomMask & 0xF]       to 0xff
     NEVT_GIFT_ACK   = 0x57,   // [u8 1 taken / 0 refused]  receiver -> giver
+
+    // CUSTOMIZE outfit (tools/ext/customize_compose.c MSG_CUSTOM_LOOK), pinned to the
+    // ext's exact byte. Body is customize-core.hpp `core::Msg()`: [u8 ver][u16 table id]
+    // [u8 counter][2 x ([u8 sex][7 x u8 worn index])] -- kMsgLen bytes, broadcast.
+    NEVT_CUSTOM_LOOK = 0x59,
 };
 
 // ---- other wire opcodes introduced by the ext -> mod port -------------------------------
@@ -266,6 +271,11 @@ enum class NetDaemonOp : uint8_t {
     kClanStateReply = 0xE1,   // "fac=1 st=1 day=3 ..." (parsed by clan-state.hpp)
     kClanReport     = 0xE2,   // [64B token][u32 seq][u32 parts][u8 flags][u8 n][n x (u8 label,u16 count)]
     kClanChooseSide = 0xE4,   // [64B token][u8 side] -> kClanStateReply
+    // Achievements client half (tools/ext/achieve.c). Same ext bytes, added as
+    // names only -- no existing opcode is moved during cutover.
+    kAchReport      = 0xA9,   // [64B token][u32 seq][u8 n][n x (u8 label,u16 count)] -> table
+    kAchTable       = 0xAA,   // [64B token] -> "ACH <unlocked> <tot>\n<rows>\n[LIVE 1]"
+    kAchLive        = 0xAB,   // [64B token][u8 n][n x (u8 label,u16 count)] -> table
     kNoticePoll     = 0xBA,
     kNoticeReply    = 0xBB,
     kRequeuePoll    = 0xBC,

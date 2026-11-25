@@ -34,6 +34,11 @@ namespace engine::lobby {
     uint8_t  Substate();
     bool     InMatch();               // Substate() == 6
 
+    // LobbyObj +0x1b4 (int): the match flow / CUSTOMIZE page-close phase. 2 means a
+    // match was found (the ext closes stacked mod pages before the map load). -1 when
+    // the object / field is not readable.
+    int      MatchPhase();
+
     // ext T2R_SYM(kPartyStatus) -- the raw int the ext reads for the lobby / party
     // rows (3 = searching / match found, 4 = in a match). -1 if not readable.
     int      PartyStatus();
@@ -43,6 +48,7 @@ namespace engine::lobby {
     bool     Clock(float& duration, float& remaining);
 
     int      RosterCount();           // +0x1a clamped to kRosterMax (0 if no object)
+    uint8_t  LocalSlot();             // +0x19, the engine's own slot (0xFF if no object)
     uint8_t  OwnTeam();               // +0x1c (0xFF if no object)
     uint8_t* RosterEntry(int index);  // +0x1d + index*0x32, nullptr if unreadable
 

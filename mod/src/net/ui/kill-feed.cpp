@@ -1,5 +1,7 @@
 #include "kill-feed.hpp"
 #include "radar-box.hpp"
+#include "boot.hpp"
+#include "log.hpp"              // TO1_LOG must precede net-common.hpp / engine/script.hpp
 #include "net-common.hpp"
 #include "net-player.hpp"
 #include "match.hpp"
@@ -179,13 +181,15 @@ void DrawRadar()
     float yaw = atan2f(fwd.x, fwd.z);
     float c = cosf(yaw), s = sinf(yaw);
 
-    // translucent background. With the t2rRbx page widgets the GUI pak's
-    // radarVig carries the disc (as in the ext); with an old pak our own glyph
-    // disc stays behind the stock dots.
-    const bool iconsOwnRadar = net::ui::radar_box::Active();
+    // The native radar always draws its own glyph disc / square backdrop, even
+    // while the t2rRbx crate widgets are live. Only the legacy ext owns the
+    // winmm disc, so native drawing yields to it. The draw.cpp DebugDrawCommon
+    // path is initialized in every build (engine::debugdraw::Init is the
+    // separate, debug-only 3D primitive path).
+    const bool ownRadar = !boot::ExtLoaded();
     uint32_t radarBGColor = _rgba(0, 0, 0, 160);
 
-    if (!iconsOwnRadar) {
+    if (ownRadar) {
         if (net::gui2::GetRadarMode() == net::gui2::RadarMode::Square)
         {
             DebugDrawCommon::DrawRectangle(RADAR_LEFT, RADAR_TOP, RADAR_RIGHT, RADAR_BOTTOM,
@@ -266,16 +270,20 @@ void DrawRadar()
                          (radarX - RADAR_CX);
         const float by = net::ui::radar_box::core::kRadarCy +
                          (radarY - RADAR_CY);
-        // The owner resolves the crate's floor from the world-Y delta to our
-        // feet (ext nrbox.c: 2.0 m to enter, 1.85 m to leave the other floor).
-        if (net::ui::radar_box::FeedBlip(bx, by, pinned,
-                static_cast<uint64_t>(box.boxSID),
-                boxTrans.Position.y, me.Position.y)) continue;
+        // The owner still places the crate / arc widget from this centre and
+        // resolves its floor from the world-Y delta to our feet (ext nrbox.c:
+        // 2.0 m to enter, 1.85 m to leave the other floor). The native dot is
+        // now drawn as well; only the legacy ext owns the winmm dot.
+        net::ui::radar_box::FeedBlip(bx, by, pinned,
+            static_cast<uint64_t>(box.boxSID),
+            boxTrans.Position.y, me.Position.y);
 
-        auto    boxSize = DebugDrawCommon::GetTextWidthHeight(kSupplyBoxGlyph, SUPPLYBOX_BLIP_FONT);
-        DebugDrawCommon::DrawTextPrintV(radarX - boxSize.x * 0.5f, radarY - boxSize.y * 0.5f,
-            SUPPLYBOX_BLIP_FONT, _rgba(220, 220, 220, 255),
-            "%s", kSupplyBoxGlyph);      
+        if (ownRadar) {
+            auto boxSize = DebugDrawCommon::GetTextWidthHeight(kSupplyBoxGlyph, SUPPLYBOX_BLIP_FONT);
+            DebugDrawCommon::DrawTextPrintV(radarX - boxSize.x * 0.5f, radarY - boxSize.y * 0.5f,
+                SUPPLYBOX_BLIP_FONT, _rgba(220, 220, 220, 255),
+                "%s", kSupplyBoxGlyph);
+        }
 
     }
 
