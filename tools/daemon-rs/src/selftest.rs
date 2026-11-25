@@ -10,6 +10,7 @@ pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         "gunlimit" => crate::gunlimit::selftest(input, out),
         "interrogation" => crate::interrogation::selftest(input, out),
         "map_packs" => crate::map_packs::selftest(input, out),
+        "clan_base" => crate::clan::selftest_base::selftest(input, out),
         _ => {
             let _ = (input, out);
             eprintln!("selftest: unknown module {}", module);
