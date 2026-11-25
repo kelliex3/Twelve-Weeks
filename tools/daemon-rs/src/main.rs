@@ -1,11 +1,17 @@
 #![allow(dead_code)]
 mod clock;
 mod log;
+mod names;
 mod net;
+mod notices;
 mod py;
 mod pyfmt;
+mod rankbadge;
 mod rnd;
+mod roles;
 mod selftest;
+mod social;
+mod social_selftest;
 mod udp;
 mod util;
 
