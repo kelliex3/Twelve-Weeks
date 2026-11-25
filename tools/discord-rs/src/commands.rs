@@ -66,6 +66,7 @@ pub fn definitions(desk: bool) -> Value {
         cmd("safe", "Is Twelve Weeks safe? Why Windows or your antivirus warns about the launcher", None, vec![]),
         cmd("ping", "Why your ping is high and how matches connect (P2P)", None, vec![]),
         cmd("cnd", "How Twelve Weeks keeps the risk of a cease and desist (C&D) from Sony low", None, vec![]),
+        cmd("rank", "How ranks work and what the numbers mean", None, vec![]),
     ];
     if desk {
         let sub = |name: &str, description: &str, options: Vec<Value>| json!({"name": name, "type": 1, "description": description, "options": options});
@@ -329,6 +330,22 @@ When you press PLAY, the launcher starts a small Steam helper (`t2r-steam.exe`) 
 **Can I remove it?** You can, but Steam adds it again the next time you play. To hide it: right-click Spacewar in your library > Manage > Hide this game.
 **Friends see \"Playing Spacewar\"?** That is you playing Twelve Weeks. It goes away a few seconds after you close the game.";
 
+pub const RANK_TEXT: &str = "## Ranks
+Your rank is a chalk symbol with a number beside it. The number is how many weeks your clans have survived in total.
+- Everyone starts at rank 1 (Fresh).
+- Keep a clan alive for the full 12 weeks and you go up one rank. Rank 10 (Ghost) is the top.
+- If your clan dies, you keep your rank and your weeks and start a new clan.";
+pub const RANK_PNG: &[u8] = include_bytes!("../assets/ranks.png");
+
+async fn rank(bot: &Bot, it: &Interaction) {
+    let body = json!({"type": 4, "data": {"content": RANK_TEXT, "allowed_mentions": {"parse": []}, "attachments": [{"id": 0, "filename": "ranks.png"}]}});
+    let files = [File { name: "ranks.png".into(), data: RANK_PNG.to_vec() }];
+    let path = format!("/interactions/{}/{}/callback", it.id, it.token);
+    if let Err(e) = bot.rest.call(Method::POST, &path, Body::Multipart(&body, &files), None, true).await {
+        log!("interaction reply: {e}");
+    }
+}
+
 pub const CND_TEXT: &str = "## Will Sony shut it down?
 Nobody can promise that, but we keep the risk low:
 - **Free.** Nothing is sold and there are no paid perks. The Ko-fi supports the developer only.
@@ -378,6 +395,7 @@ pub async fn command(bot: &Bot, it: &Interaction) {
         "spacewar" => plain(bot, it, SPACEWAR_TEXT, None).await,
         "ping" => plain(bot, it, PING_TEXT, None).await,
         "cnd" => plain(bot, it, CND_TEXT, None).await,
+        "rank" => rank(bot, it).await,
         "safe" => {
             let where_ = bot.cache().mention("downloads");
             plain(bot, it, &safe_text(&where_), None).await
@@ -565,7 +583,7 @@ mod tests {
     fn command_set() {
         let all = definitions(true);
         let names: Vec<&str> = all.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "ping", "cnd", "known-issue", "report"]);
+        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "safe", "ping", "cnd", "rank", "known-issue", "report"]);
         assert_eq!(definitions(false).as_array().unwrap().len(), 10);
         for c in all.as_array().unwrap() {
             let opts = c["options"].as_array().unwrap();
