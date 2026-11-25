@@ -1,5 +1,7 @@
 #![allow(dead_code)]
+mod clanw;
 mod clock;
+mod d;
 mod log;
 mod net;
 mod py;

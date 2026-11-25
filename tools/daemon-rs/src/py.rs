@@ -9,6 +9,7 @@
 //! - `json::*`      = `json.dumps` with the Python separators / ensure_ascii and float repr
 use std::fmt::Write as _;
 
+#[allow(unused_imports)]
 pub use crate::pyfmt::{hex_sp, str_repr as repr_str};
 pub use t2r_clanstory::pyjson;
 

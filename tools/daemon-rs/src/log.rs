@@ -156,6 +156,16 @@ pub fn line(parts: &[&dyn Display]) {
     push(l, out);
 }
 
+/// A line whose body and rate-limit category were built elsewhere (the clan worker): same limit, clock and queue as `line`.
+pub fn raw(cat: &str, body: &str) {
+    let Some(l) = LOGGER.get() else { return };
+    if l.capture.is_none() && !allow(l, cat) {
+        return;
+    }
+    let out = if l.capture.is_some() { clean(body) } else { format!("[{}] {}", clock::hms_now(), clean(body)) };
+    push(l, out);
+}
+
 #[macro_export]
 macro_rules! dlog {
     ($($p:expr),+ $(,)?) => {
