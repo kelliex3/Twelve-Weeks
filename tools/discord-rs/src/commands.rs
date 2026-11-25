@@ -59,6 +59,10 @@ pub fn definitions(desk: bool) -> Value {
             Some(MANAGE_GUILD),
             vec![opt("version", STR, true, DOTS), opt("windows", FILE, false, DOTS), opt("linux", FILE, false, DOTS), opt("note", STR, false, DOTS)],
         ),
+        cmd("install", "Post the install guide", None, vec![]),
+        cmd("singleplayer", "Switch between single player and multiplayer, or fix the game starting in single player", None, vec![]),
+        cmd("mark", "How to mark enemies", None, vec![]),
+        cmd("spacewar", "Why Steam shows Spacewar while you play Twelve Weeks", None, vec![]),
     ];
     if desk {
         let sub = |name: &str, description: &str, options: Vec<Value>| json!({"name": name, "type": 1, "description": description, "options": options});
@@ -281,12 +285,70 @@ async fn known(bot: &Bot, it: &Interaction, sub: &Value) {
     }
 }
 
+pub fn install_text(downloads: &str) -> String {
+    [
+        "## How to install Twelve Weeks",
+        "You need The Last of Us Part II Remastered on Steam. Keep Steam running while you play.",
+        "",
+        &format!("1. Download the launcher for your OS in {downloads}."),
+        "2. Open the launcher.",
+        "3. Press UPDATE, wait until it finishes, then press PLAY.",
+        "",
+        "**Linux / Steam Deck:** start the game once from Steam first, then use the AppImage (Deck: Desktop mode).",
+        "**Single player:** see /singleplayer.",
+    ]
+    .join("\n")
+}
+
+pub const SINGLEPLAYER_TEXT: &str = "## Single player / multiplayer
+**Play single player:** close the game, press SWITCH TO SP (bottom right of the launcher), then start the game from Steam. Your saves are never touched.
+**Back to multiplayer:** press SWITCH TO MP in the launcher, then PLAY.
+
+**Game starts in single player when you wanted multiplayer?**
+1. If the launcher's bottom bar says SWITCH TO MP, press it.
+2. If not: close Steam completely and start it again.
+3. Press PLAY in the launcher, not in Steam. (This happens most after ADD TO STEAM.)";
+
+pub const MARK_TEXT: &str = "## Marking enemies
+**Keyboard:** press T (default).
+**Controller:** click the right stick (R3), the same button as the flashlight.";
+
+pub const SPACEWAR_TEXT: &str = "## Why does Steam show Spacewar?
+Spacewar (app 480) is Valve's own free test app. Every Steam account can use it.
+
+When you press PLAY, the launcher starts a small Steam helper (`t2r-steam.exe`) next to the game. The helper connects to Steam as Spacewar.
+- Matches run between players over Steam's network. Steam picks a direct connection or a Valve relay near both players.
+- The helper also reads your Steam name, so your name in game is your Steam name.
+- It uses Spacewar, not the game's own app, so it never interferes with the game's own connection to Steam.
+
+**Is it safe?** Yes. It is Valve's app, free, and it does nothing to your account.
+**Why is it in my library?** Steam adds Spacewar by itself the first time the helper starts. It is tiny.
+**Can I remove it?** You can, but Steam adds it again the next time you play. To hide it: right-click Spacewar in your library > Manage > Hide this game.
+**Friends see \"Playing Spacewar\"?** That is you playing Twelve Weeks. It goes away a few seconds after you close the game.";
+
+async fn plain(bot: &Bot, it: &Interaction, content: &str, components: Option<Value>) {
+    let mut data = json!({"content": content, "allowed_mentions": {"parse": []}});
+    if let Some(c) = components {
+        data["components"] = c;
+    }
+    if let Err(e) = bot.respond(it, 4, data).await {
+        log!("interaction reply: {e}");
+    }
+}
+
 pub async fn command(bot: &Bot, it: &Interaction) {
     let Some(data) = it.data.as_ref() else { return };
     let name = data.get("name").and_then(Value::as_str).unwrap_or("");
     let a = Args::new(data, data.get("options"));
     match name {
         "lfg" => lfg(bot, it, &a).await,
+        "install" => {
+            let where_ = bot.cache().mention("downloads");
+            plain(bot, it, &install_text(&where_), Some(crate::post::download_buttons(&bot.cfg.downloads))).await
+        }
+        "singleplayer" => plain(bot, it, SINGLEPLAYER_TEXT, None).await,
+        "mark" => plain(bot, it, MARK_TEXT, None).await,
+        "spacewar" => plain(bot, it, SPACEWAR_TEXT, None).await,
         "sneakpeek" => {
             let role = bot.cache().role_named("Sneak Peeks").map(|r| r.id);
             let atts = [a.attachment("media"), a.attachment("media2")].into_iter().flatten().collect();
@@ -470,8 +532,8 @@ mod tests {
     fn command_set() {
         let all = definitions(true);
         let names: Vec<&str> = all.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "known-issue", "report"]);
-        assert_eq!(definitions(false).as_array().unwrap().len(), 6);
+        assert_eq!(names, ["lfg", "sneakpeek", "announce", "patchnotes", "welcome-preview", "files", "install", "singleplayer", "mark", "spacewar", "known-issue", "report"]);
+        assert_eq!(definitions(false).as_array().unwrap().len(), 10);
         for c in all.as_array().unwrap() {
             let opts = c["options"].as_array().unwrap();
             let first_optional = opts.iter().position(|o| o["required"] == false).unwrap_or(opts.len());

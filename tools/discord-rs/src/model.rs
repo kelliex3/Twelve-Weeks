@@ -306,3 +306,20 @@ mod tests {
         assert_eq!(c.available_tags.unwrap()[0].id, 77);
     }
 }
+
+#[derive(Deserialize)]
+pub struct AutomodAction {
+    #[serde(rename = "type")]
+    pub kind: u8,
+}
+
+#[derive(Deserialize)]
+pub struct AutomodExecution {
+    #[serde(deserialize_with = "id")]
+    pub guild_id: u64,
+    #[serde(deserialize_with = "id")]
+    pub rule_id: u64,
+    #[serde(deserialize_with = "id")]
+    pub user_id: u64,
+    pub action: AutomodAction,
+}

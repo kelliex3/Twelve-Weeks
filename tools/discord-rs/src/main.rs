@@ -7,6 +7,7 @@ mod desk;
 mod live;
 mod model;
 mod net;
+mod piracy;
 mod post;
 mod util;
 

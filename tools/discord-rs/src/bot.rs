@@ -2,9 +2,9 @@ use crate::cache::Cache;
 use crate::config::Config;
 use crate::desk::Desk;
 use crate::log;
-use crate::model::{Channel, Envelope, Guild, Interaction, Member, MemberRemove, Ready, RoleDelete, RoleEvent};
+use crate::model::{AutomodExecution, Channel, Envelope, Guild, Interaction, Member, MemberRemove, Ready, RoleDelete, RoleEvent};
 use crate::net::{Body, File, Rest};
-use crate::{commands, desk, live};
+use crate::{commands, desk, live, piracy};
 use hyper::Method;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -29,6 +29,7 @@ pub struct Bot {
     pub lfg_last: Mutex<HashMap<u64, Instant>>,
     pub automod_dirty: Notify,
     started: AtomicBool,
+    pub piracy_rule: Mutex<Option<u64>>,
 }
 
 fn parse<'a, T: serde::Deserialize<'a>>(d: &'a serde_json::value::RawValue) -> Option<T> {
@@ -49,6 +50,7 @@ impl Bot {
             lfg_last: Mutex::new(HashMap::new()),
             automod_dirty: Notify::new(),
             started: AtomicBool::new(false),
+            piracy_rule: Mutex::new(None),
         })
     }
 
@@ -138,6 +140,11 @@ impl Bot {
                 if parse::<MemberRemove>(d).is_some_and(|m| m.guild_id == guild) {
                     let mut c = self.cache();
                     c.member_count = c.member_count.saturating_sub(1);
+                }
+            }
+            "AUTO_MODERATION_ACTION_EXECUTION" => {
+                if let Some(ex) = parse::<AutomodExecution>(d) {
+                    tokio::spawn(piracy::on_execution(self.clone(), ex));
                 }
             }
             "INTERACTION_CREATE" => {
@@ -276,7 +283,7 @@ async fn interaction(bot: Arc<Bot>, it: Interaction) {
 }
 
 pub async fn run(bot: Arc<Bot>) -> Result<(), String> {
-    let mut shard = Shard::new(ShardId::ONE, bot.cfg.token.clone(), Intents::GUILDS | Intents::GUILD_MEMBERS);
+    let mut shard = Shard::new(ShardId::ONE, bot.cfg.token.clone(), Intents::GUILDS | Intents::GUILD_MEMBERS | Intents::AUTO_MODERATION_EXECUTION);
     loop {
         let next = poll_fn(|cx| futures_core::Stream::poll_next(Pin::new(&mut shard), cx)).await;
         match next {

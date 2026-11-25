@@ -11,8 +11,9 @@ its modules). It reads and writes the same files in the same folder (`config.jso
 | --- | --- |
 | Buttons on the `#choose-your-faction` post | WLF / Seraphites (switches faction), Sneak peek pings, LFG pings (creates the LFG role on first use). |
 | `#new-survivors` welcome card | Same picture: avatar, name, member number. Same fonts and background from `welcome-art/`. |
-| Slash commands | `/lfg`, `/sneakpeek`, `/announce`, `/patchnotes`, `/files`, `/welcome-preview`, and with the bug desk on `/known-issue add\|fixed\|remove` and `/report`. |
+| Slash commands | `/lfg`, `/sneakpeek`, `/announce`, `/patchnotes`, `/files`, `/install`, `/singleplayer`, `/mark`, `/spacewar`, `/welcome-preview`, and with the bug desk on `/known-issue add\|fixed\|remove` and `/report`. |
 | Bug desk | `#bug-reports` forum: report code check against the update server's reports folder and `report_codes.json`, the replies, tags, rename and lock, `discord.txt` next to the report, the pinned guide with the known-issues list, the `#general` AutoMod rule. |
+| Piracy escalation | Discord's "TW piracy talk" AutoMod rule block (gateway intent AUTO_MODERATION_EXECUTION): strikes in `piracy_strikes.json` (same file/format as Python), 2nd+ hit within a week raises the timeout to 30 min, then 1 h. |
 | LIVE PLAYERS | The locked voice channels whose names carry the counts from the daemon's status file and the launcher snapshot. |
 | `post <channel...>` | Re-posts the art (and the buttons) in those channels. REST only: it does not log in a second time while the service runs. |
 

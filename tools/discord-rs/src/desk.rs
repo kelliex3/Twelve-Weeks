@@ -50,10 +50,11 @@ If the report could not be uploaded, use `R-EMPTY` in place of the code.
 
 Reports made anywhere else, or without a code, cannot be followed up.";
 pub const GENERAL_RULE: &str = "TW bug talk in #general";
-pub const GENERAL_BLOCK_MSG: &str = "Bugs go in #bug-reports. Send a report from the launcher (REPORT A BUG) first, then post its code there.";
-pub const GENERAL_WORDS: [&str; 23] = [
+pub const GENERAL_BLOCK_MSG: &str = "In order to receive help, send a report from the launcher (REPORT A BUG) first, then post its code in #bug-reports.";
+pub const GENERAL_WORDS: [&str; 27] = [
     "bug", "bugs", "bugged", "buggy", "glitch*", "crash*", "freez*", "froze", "softlock*", "broken", "not working", "doesnt work", "doesn't work",
     "dont work", "don't work", "won't launch", "wont launch", "won't load", "wont load", "can't connect", "cant connect", "kicked me", "keeps kicking",
+    "im stuck", "i'm stuck", "i\u{2019}m stuck", "i am stuck",
 ];
 pub const GENERAL_ALLOW: [&str; 2] = ["debug*", "bugatti"];
 
@@ -449,15 +450,30 @@ pub async fn automod(bot: &Arc<Bot>) -> Result<(), String> {
             log!("bug desk: automod rule created ({} exempt channels)", exempt.len());
         }
         Some(r) => {
+            let id = r.get("id").and_then(parse_id).ok_or("automod: rule without id")?;
+            let path = format!("/guilds/{guild}/auto-moderation/rules/{id}");
             let have: HashSet<u64> = r.get("exempt_channels").and_then(Value::as_array).map(|a| a.iter().filter_map(parse_id).collect()).unwrap_or_default();
             let want: HashSet<u64> = exempt.iter().copied().collect();
             if have != want {
-                let id = r.get("id").and_then(parse_id).ok_or("automod: rule without id")?;
-                bot.rest
-                    .patch(&format!("/guilds/{guild}/auto-moderation/rules/{id}"), &json!({"exempt_channels": ids(&exempt)}), Some("keep only #general covered"))
-                    .await
-                    .map_err(|e| format!("automod: {e}"))?;
+                bot.rest.patch(&path, &json!({"exempt_channels": ids(&exempt)}), Some("keep only #general covered")).await.map_err(|e| format!("automod: {e}"))?;
                 log!("bug desk: automod exempt list synced ({})", exempt.len());
+            }
+            let msg = r
+                .get("actions")
+                .and_then(Value::as_array)
+                .and_then(|a| a.iter().find_map(|x| x.get("metadata").and_then(|m| m.get("custom_message")).and_then(Value::as_str)));
+            let lower = |v: Option<&Value>| -> HashSet<String> {
+                v.and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_lowercase).collect()).unwrap_or_default()
+            };
+            let have_words = lower(r.get("trigger_metadata").and_then(|m| m.get("keyword_filter")));
+            let want_words: HashSet<String> = GENERAL_WORDS.iter().map(|w| w.to_lowercase()).collect();
+            if have_words != want_words || msg != Some(GENERAL_BLOCK_MSG) {
+                let body = json!({
+                    "trigger_metadata": {"keyword_filter": GENERAL_WORDS, "allow_list": GENERAL_ALLOW},
+                    "actions": [{"type": 1, "metadata": {"custom_message": GENERAL_BLOCK_MSG}}],
+                });
+                bot.rest.patch(&path, &body, Some("bug talk words / notice updated")).await.map_err(|e| format!("automod: {e}"))?;
+                log!("bug desk: automod words + notice synced");
             }
         }
     }
