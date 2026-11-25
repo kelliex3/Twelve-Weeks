@@ -605,8 +605,17 @@ class Social:
                 c.execute("INSERT OR IGNORE INTO social_seen(acct,name,last) VALUES(?,?,?)", (key, r[0], r[1]))
                 c.execute("DELETE FROM social_seen WHERE acct=?", (old,))
             c.commit()
+            return True
         except sqlite3.Error as ex:
+            # This commit can hit "database is locked" while the DB backup holds its read lock. A failed COMMIT leaves the transaction open
+            # with sqlite's PENDING lock, which blocks every new reader; handle() then needed a read (online_map -> steamid) that waited on that
+            # same lock, so the whole daemon queued behind it until a restart. Roll back: the locks go at once; the adopt is retried next poll.
+            try:
+                c.rollback()
+            except sqlite3.Error:
+                pass
             self.h.log("SOCIAL adopt failed", repr(ex))
+            return False
 
     def _seen(self, c, key, name, now, force=False):
         if not force and now - self.seen_w.get(key, 0) < SEEN_WRITE_S:
@@ -942,7 +951,8 @@ class Social:
     def _adopt_once(self, c, token, key):
         if key.startswith("s:") and self.seen_w.get(("adopt", token)) is None:
             self.seen_w[("adopt", token)] = 1
-            self._adopt(c, token, key)
+            if self._adopt(c, token, key) is False:
+                self.seen_w.pop(("adopt", token), None)      # failed (locked): try again next time
 
     def _rel(self, c, a, b):
         """None | 'friend' | 'out' (a asked b) | 'in' (b asked a)."""
