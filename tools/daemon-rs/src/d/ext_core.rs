@@ -9,10 +9,6 @@ use std::sync::LazyLock;
 pub fn handle_batch(conn: &Conn, addr: Addr, st: &mut ConnSt, batch: &mut Batch) -> HResult {
     unimplemented!()
 }
-// K1 base
-pub fn tag(token: &str) -> String {
-    token.chars().take(8).collect() // (K1 adds the embedded-name lookup; the K4 selftest tokens carry none)
-}
 // K3 sess
 pub struct Bridges {}
 impl Bridges {

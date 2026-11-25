@@ -35,6 +35,7 @@ pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         "clan_chronicle" | "clan_arcs" => crate::clan::selftest_chronicle::selftest(input, out),
         "clan_base" => crate::clan::selftest_base::selftest(input, out),
         "clan_story" => crate::clan::selftest_story::selftest(input, out),
+        "k1" => crate::d::k1_selftest::selftest(input, out),
         "k4" => crate::d::k4_selftest::selftest(input, out),
         _ => {
             let _ = (input, out);
