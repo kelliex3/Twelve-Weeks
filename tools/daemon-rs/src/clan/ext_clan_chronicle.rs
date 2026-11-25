@@ -5,8 +5,7 @@
 //! `unimplemented!()` in production and run deterministic TEST DOUBLES (the same ones verify/py/clan_chronicle_harness.py installs on the Python
 //! side) only while `doubles(true)` is set by `selftest clan_chronicle`. Conventions: `cs` (= `st["ch"]`) is never passed, the callee takes it
 //! from `st`; a Python exception is `Err(String)`.
-use crate::clan::clan::{int_of, pystr, truthy};
-use crate::clan::data;
+use crate::clan::clan::{int_of, pystr};
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -29,154 +28,8 @@ fn need_doubles(what: &str) {
 /// Python `int(x)` of a value in a template variable.
 pub type Vars = HashMap<String, String>;
 
-// ---------------------------------------------------------------------------------------------------- clan_alife_lex.py (the needed part)
-pub mod lex {
-    use super::*;
-    use regex::Regex;
-    use std::collections::BTreeSet;
-    use std::sync::LazyLock;
-
-    const W: &str = r"\p{L}\p{N}_";
-
-    // py: clan_alife_lex.py:312 _KEY
-    static KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"\{{([{w}]+)\}}", w = W)).expect("KEY"));
-    // py: clan_alife_lex.py:313 _SW
-    static SW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([A-D]+)\?([^|{}]*)\|([^|{}]*)\}").expect("SW"));
-    // py: clan_alife_lex.py:314 _PERSON   ^([ABCD])_(\w+)$
-    static PERSON: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"^([ABCD])_([{w}]+)$", w = W)).expect("PERSON"));
-    static PERSON_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"^[A-D](?:_[{w}]+)?$", w = W)).expect("PERSON_ONLY"));
-    static LETTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(&format!(r"\{{([A-D])(?:_[{w}]+)?\}}", w = W)).expect("LETTER"));
-
-    fn data_roles() -> &'static Value {
-        data::t("clan_story_data", "ROLES")
-    }
-
-    // py: clan_alife_lex.py:317 role_word
-    /// `Err` = the KeyError of an unknown role.
-    pub fn role_word(person: &Value, fk: &str, lang: &str) -> Result<String, String> {
-        let r = match person.get("r") {
-            Some(v) if truthy(v) => pystr(v),
-            _ => "scavenger".to_string(),
-        };
-        let i = if fk == "W" { 0 } else { 1 };
-        if lang == "pl" {
-            let pair = data::t("clan_story_pl", "ROLES").get(&r).and_then(|x| x.get(i)).ok_or_else(|| format!("KeyError: {}", r))?;
-            let k = if person.get("g").and_then(|v| v.as_str()) == Some("f") { 1 } else { 0 };
-            Ok(pair.get(k).map(pystr).unwrap_or_default())
-        } else {
-            Ok(data_roles().get(&r).and_then(|x| x.get(i)).map(pystr).ok_or_else(|| format!("KeyError: {}", r))?)
-        }
-    }
-
-    /// `CS.PRON[g][word]`.
-    pub fn pron(g: &str, word: &str) -> Result<String, String> {
-        data::t("clan_story", "PRON")
-            .get(g)
-            .and_then(|x| x.get(word))
-            .map(pystr)
-            .ok_or_else(|| format!("KeyError: PRON[{}][{}]", g, word))
-    }
-
-    fn cap_first(v: &str) -> String {
-        let mut it = v.chars();
-        match it.next() {
-            Some(c) => c.to_uppercase().collect::<String>() + it.as_str(),
-            None => String::new(),
-        }
-    }
-
-    // py: clan_alife_lex.py:325 render
-    /// Fill a template: variables first (their values may hold switches), then the {A?m|f} switches, then names / pronouns / roles.
-    /// `Err` = a Python exception (a letter missing from `people`, an unknown pronoun or role).
-    pub fn render(tpl: &str, people: &Value, vars: &Vars, lang: &str, fk: &str) -> Result<String, String> {
-        // 1. variables (the sentence-start test looks at the ORIGINAL template before the key)
-        let mut s = String::with_capacity(tpl.len() + 16);
-        let mut last = 0;
-        for m in KEY.captures_iter(tpl) {
-            let whole = m.get(0).map(|x| x).ok_or("re")?;
-            s.push_str(&tpl[last..whole.start()]);
-            let k = m.get(1).map(|x| x.as_str()).unwrap_or("");
-            match vars.get(k) {
-                Some(val) => {
-                    let before = tpl[..whole.start()].trim_end_matches(crate::py::is_py_space);
-                    let lower = val.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
-                    if lower && (before.is_empty() || before.chars().next_back().map(|c| ".!?\"'„”".contains(c)).unwrap_or(false)) {
-                        s.push_str(&cap_first(val));
-                    } else {
-                        s.push_str(val);
-                    }
-                }
-                None => s.push_str(whole.as_str()),
-            }
-            last = whole.end();
-        }
-        s.push_str(&tpl[last..]);
-        // 2. {AB?m|f} switches
-        let mut s2 = String::with_capacity(s.len());
-        let mut last = 0;
-        for m in SW.captures_iter(&s) {
-            let whole = m.get(0).ok_or("re")?;
-            s2.push_str(&s[last..whole.start()]);
-            let mut fem = true;
-            for ch in m.get(1).map(|x| x.as_str()).unwrap_or("").chars() {
-                let p = people.get(ch.to_string()).ok_or_else(|| format!("KeyError: {}", ch))?;
-                if p.get("g").and_then(|v| v.as_str()) != Some("f") {
-                    fem = false;
-                    break; // Python all() stops at the first non-f: later letters need not exist
-                }
-            }
-            s2.push_str(m.get(if fem { 3 } else { 2 }).map(|x| x.as_str()).unwrap_or(""));
-            last = whole.end();
-        }
-        s2.push_str(&s[last..]);
-        // 3. names, pronouns, roles
-        let mut out = String::with_capacity(s2.len());
-        let mut last = 0;
-        for m in KEY.captures_iter(&s2) {
-            let whole = m.get(0).ok_or("re")?;
-            out.push_str(&s2[last..whole.start()]);
-            let k = m.get(1).map(|x| x.as_str()).unwrap_or("");
-            if let Some(pm) = PERSON.captures(k) {
-                let letter = pm.get(1).map(|x| x.as_str()).unwrap_or("");
-                let p = people.get(letter).ok_or_else(|| format!("KeyError: {}", letter))?;
-                let w = pm.get(2).map(|x| x.as_str()).unwrap_or("");
-                if w == "role" {
-                    out.push_str(&role_word(p, fk, lang)?);
-                } else {
-                    let g = p.get("g").map(pystr).unwrap_or_default();
-                    let r = pron(&g, &w.to_lowercase())?;
-                    if w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        out.push_str(&cap_first(&r));
-                    } else {
-                        out.push_str(&r);
-                    }
-                }
-            } else if let Some(p) = people.get(k) {
-                out.push_str(&p.get("n").map(pystr).unwrap_or_default());
-            } else {
-                out.push_str(whole.as_str());
-            }
-            last = whole.end();
-        }
-        out.push_str(&s2[last..]);
-        Ok(out)
-    }
-
-    // py: clan_alife_lex.py:359 letters_of
-    pub fn letters_of(tpl: &str) -> BTreeSet<char> {
-        let mut out: BTreeSet<char> = LETTER.captures_iter(tpl).filter_map(|m| m.get(1)?.as_str().chars().next()).collect();
-        for m in SW.captures_iter(tpl) {
-            out.extend(m.get(1).map(|x| x.as_str()).unwrap_or("").chars());
-        }
-        out
-    }
-
-    // py: clan_alife_lex.py:366 vars_of
-    /// Variable keys (not people) of a template.
-    pub fn vars_of(tpl: &str) -> BTreeSet<String> {
-        KEY.captures_iter(tpl).filter_map(|m| m.get(1)).map(|x| x.as_str().to_string()).filter(|k| !PERSON_ONLY.is_match(k)).collect()
-    }
-}
+// clan_alife_lex.py is the real port (src/clan/clan_alife_lex.rs)
+pub use crate::clan::clan_alife_lex as lex;
 
 // ---------------------------------------------------------------------------------------------------- clan_story.py
 pub mod story {

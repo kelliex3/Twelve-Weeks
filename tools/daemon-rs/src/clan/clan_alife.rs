@@ -9,7 +9,6 @@ use crate::clan::clan_story as cs;
 use crate::clan::clan_story_pl as pln;
 use crate::clan::data;
 use crate::{clock, py};
-use regex::Regex;
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -350,12 +349,12 @@ fn render_ids(ids: &[&str], people: &Value, sym: &Value, lang: &str, fk: &str) -
             if vp.is_none() {
                 vp = Some(opt(x::expand_pl(sym), "expand_pl")?);
             }
-            parts.push(opt(x::render(t.pl, people, vp.as_ref().expect("vp"), "pl", fk), "render")?);
+            parts.push(x::render(t.pl, people, vp.as_ref().expect("vp"), "pl", fk)?);
         } else {
             if ve.is_none() {
                 ve = Some(opt(x::expand_en(sym), "expand_en")?);
             }
-            parts.push(opt(x::render(t.en, people, ve.as_ref().expect("ve"), "en", fk), "render")?);
+            parts.push(x::render(t.en, people, ve.as_ref().expect("ve"), "en", fk)?);
         }
     }
     Ok(parts.join(" "))
@@ -1703,7 +1702,6 @@ pub struct Fact {
 // py: clan_alife.py:927 facts
 /// The current facts of the clan's simulated life that may be told, validated against the live roster (alive, right state).
 pub fn facts(al: &Value, st: &Value) -> R<Vec<Fact>> {
-    let fk = fk_of(st);
     let mut out: Vec<(String, String, String, Value, Value)> = Vec::new();
     let day = vi(st, "day");
     let base = base_sym(st, day);
@@ -1994,7 +1992,7 @@ pub fn ticker_lines(c: &Connection, tid: &str, st: &Value, slot: i64, n: usize, 
         if kd::any_kid(&f.people) && !kd::kid_text_ok(&text, &f.people, lg) {
             continue; // (a kid's fact that came out as combat is not told)
         }
-        out.push((Value::String(format!("a{:02}", 0).replace("a00", &format!("a{}{:02}", py::pymod(slot, 100000), i))), cs::widget_text(&text)));
+        out.push((Value::String(format!("a{}{:02}", py::pymod(slot, 100000), i)), cs::widget_text(&text)));
     }
     Ok(out)
 }
