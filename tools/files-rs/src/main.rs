@@ -286,6 +286,17 @@ fn get(sh: &Shared, s: &mut TcpStream, req: &Request, peer: &SocketAddr) -> io::
             None => send_json(s, 404, nofile, head),
         };
     }
+    if path == "/part1-importer.json" {
+        let base = base_url(sh, req, peer);
+        let e = encode(guarded(sh, || sh.api.part1_importer(&base)));
+        return send_encoded(s, req, &e, head);
+    }
+    if let Some(n) = path.strip_prefix("/part1-importer-files/") {
+        if !is_sha(n) {
+            return send_json(s, 404, nofile, head);
+        }
+        return serve_file(sh, s, req, &data.join("part1-importer").join("blobs").join(n), &plain(n, nofile));
+    }
     let q = req.query();
     if path == "/part1-maps.json" || path.starts_with("/part1-files/") {
         let sid = match sh.api.part1_sid(q.first("sid").unwrap_or("")) {

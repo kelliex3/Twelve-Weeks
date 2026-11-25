@@ -268,6 +268,62 @@ impl Api {
         raw.split(',').take(8).map(str::trim).find(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_digit()) && g.1.contains(*x)).map(str::to_string)
     }
 
+    /// GET /part1-importer.json (live part1_importer.py public()): importer.json with an absolute url per file, public like the manifest.
+    /// Complete and sane only: a 32-hex build id, the recipe and at least one converter (win32 / linux), every file a 64-hex sha256 with a
+    /// positive size and either an https url (a GitHub release asset, passed through) or a blob of exactly that size here.
+    pub fn part1_importer(&self, base: &str) -> Reply {
+        let none = || error(404, "no Part I importer published");
+        let root = self.data.join("part1-importer");
+        let m = match read_json(&root.join("importer.json")) {
+            Some(Value::Object(m)) => m,
+            _ => return none(),
+        };
+        let bid = m.get("build_id").and_then(Value::as_str).unwrap_or("");
+        if bid.len() != 32 || !bid.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+            return none();
+        }
+        let file = |f: Option<&Value>| -> Option<Value> {
+            let o = f?.as_object()?;
+            let sha = o.get("sha256")?.as_str()?;
+            let size = o.get("size")?.as_i64()?;
+            if !is_sha(sha) || size <= 0 || o.get("size")?.is_f64() {
+                return None;
+            }
+            let remote = o.get("url").and_then(Value::as_str).filter(|u| u.starts_with("https://"));
+            let url = match remote {
+                Some(u) => u.to_string(),
+                None => {
+                    if fs::metadata(root.join("blobs").join(sha)).ok().map(|x| x.len() as i64) != Some(size) {
+                        return None;
+                    }
+                    format!("{}/part1-importer-files/{}", base.trim_end_matches('/'), sha)
+                }
+            };
+            Some(json!({"sha256": sha, "size": size, "url": url}))
+        };
+        let recipe = match file(m.get("recipe")) {
+            Some(r) => r,
+            None => return none(),
+        };
+        let conv = match m.get("converter").and_then(Value::as_object) {
+            Some(c) if c.keys().any(|k| k == "win32" || k == "linux") => c,
+            _ => return none(),
+        };
+        let mut out = serde_json::Map::new();
+        for (k, v) in conv {
+            if k != "win32" && k != "linux" {
+                return none();
+            }
+            match file(Some(v)) {
+                Some(f) => {
+                    out.insert(k.clone(), f);
+                }
+                None => return none(),
+            }
+        }
+        reply(200, &json!({"build_id": bid, "published": m.get("published").cloned().unwrap_or(json!("")), "recipe": recipe, "converter": Value::Object(out)}))
+    }
+
     pub fn part1_maps(&self, base: &str, sid: &str) -> Reply {
         let none = || error(404, "no Part I map pack published");
         let root = self.data.join("part1");
