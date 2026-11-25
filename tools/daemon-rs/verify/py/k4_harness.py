@@ -112,6 +112,7 @@ def setup():
         return [t for t in o if t in players] + [t for t in players if t not in o]
 
     d.best_host_order = bho
+    d.MODEQ.now = lambda: T[0]      # (MODEQ was built with the steady clock at import)
     d.MM_PING_GATE = True
     d.PING_KICK_MS = 190
     d.PRES_TOKENS = lambda: list(WORLD.get("online", []))
@@ -366,6 +367,21 @@ def mm_op(d, c):
         why = []
         r = m.jip_join(c["tok"], why, c["need"], c.get("only"), c.get("team"))
         r = [None if r is None else [r[0], r[1], r[2], sorted(r[3])], why]
+    elif k == "modes":
+        r = [{t[:2]: d._search_mode(t) for t in WORLD["all"]}, {t[:2]: [d.MODEQ.pref_of(t) if hasattr(d.MODEQ, "pref_of") else d.MODEQ.pref.get(t)] for t in WORLD["all"]}]
+    elif k == "freshjoin":
+        tk = next((t for t in WORLD["all"] if t not in m.queue and not m.in_match(t)), None)
+        if tk is None:
+            r = None
+        else:
+            e = m.enqueue(tk)
+            for t in list(m.queue):
+                m.poll(t)
+            if mid in m.matches:
+                m.jip_clock(m.matches[mid][0], c["rem"], c["dur"], c["ended"])
+            why = []
+            j = m.jip_join(tk, why, c["need"], None, None)
+            r = [tk, e, None if j is None else [j[0], j[1], j[2], sorted(j[3])], why]
     elif k == "jip_acked":
         r = m.jip_acked(c["tok"])
     elif k == "jip_done":
@@ -385,6 +401,7 @@ def mm_op(d, c):
 
 
 def gen_mm(r, n):
+    global ALLT
     toks = [tok(i) for i in range(10)]
     t = 9000.0
     w = {"names": {}, "sids": {}, "pings": {}, "noh": [], "bho": [], "perf": {}, "lim": 175, "parties": [], "rules": None, "top": None, "players": [],
@@ -434,17 +451,18 @@ def gen_mm(r, n):
             seq += [dict(m="start", i=r.randrange(5), map=r.randrange(5)), dict(m="clockm", i=r.randrange(5), rem=r.choice([40.0, 200.0, 600.0]), dur=900.0, ended=False),
                     dict(m="jip_lives", tok=tk, team=r.choice([0, 1, 2]), ally=r.randrange(0, 22), enemy=r.randrange(0, 22))]
         elif x < 0.96:
-            for _ in range(r.randint(1, 3)):
-                seq.append(dict(m="enqueue", tok=r.choice(toks)))
-            seq += [dict(m="pollall"), dict(m="clockm", i=r.randrange(5), rem=r.choice([40.0, 200.0, 600.0]), dur=900.0, ended=r.random() < 0.1),
-                    dict(m="jip_join", tok=r.choice(toks), need=r.choice([1, 1, 2])), dict(m="jip_ready"), dict(m="late", tok=r.choice(toks), i=r.randrange(5)),
-                    dict(m=r.choice(["jip_acked", "jip_done"]), tok=r.choice(toks))]
+            seq += [dict(m="departm", i=r.randrange(5), j=r.randrange(8), vol=r.random() < 0.5), dict(m="start", i=r.randrange(5), map=r.randrange(5)),
+                    dict(m="freshjoin", i=r.randrange(5), need=r.choice([1, 1, 2]), dt=r.choice([5.0, 20.0, 20.0, 40.0]), rem=r.choice([40.0, 200.0, 600.0]),
+                         dur=900.0, ended=r.random() < 0.1),
+                    dict(m="jip_ready"), dict(m="late", tok=r.choice(toks), i=r.randrange(5)), dict(m=r.choice(["jip_acked", "jip_done"]), tok=r.choice(toks))]
         elif x < 0.99:
             seq.append(dict(m="query", tok=tk, i=r.randrange(5)))
         else:
             seq.append(dict(m="gc", keep=r.sample(toks, 3)))
         for c in seq:
+            t += c.pop("dt", 0.0)
             c.update(base)
+            c["t"] = t
             yield c
             out += 1
 

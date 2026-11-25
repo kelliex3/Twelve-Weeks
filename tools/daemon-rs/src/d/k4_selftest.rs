@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 
+static ALL: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
 fn strs(v: &Value) -> Vec<String> {
     v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()).unwrap_or_default()
 }
@@ -93,6 +95,7 @@ fn world(w: &Value) {
         wd.online = strs(&w["online"]);
         wd.regions = w["regions"].as_object().map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
     }
+    *ALL.lock() = strs(&w["all"]);
     *MM.lock.lock() = MMState::new();
     TEST_MM.lock().clear();
     JIP_BACK.lock().clear();
@@ -230,6 +233,37 @@ fn mm_op(c: &Value) -> Value {
             match pl {
                 Some(p) if !p.is_empty() => json!(MM.depart(&p[c["j"].as_u64().unwrap_or(0) as usize % p.len()], c["vol"].as_bool().unwrap_or(false))),
                 _ => Value::Null,
+            }
+        }
+        "modes" => {
+            let all = ALL.lock().clone();
+            let a: serde_json::Map<String, Value> = all.iter().map(|t| (t[..2].to_string(), json!(_search_mode(t)))).collect();
+            let b: serde_json::Map<String, Value> = all.iter().map(|t| (t[..2].to_string(), json!([MODEQ.pref_of(t).map(|p| json!([p.0, p.1]))]))).collect();
+            json!([a, b])
+        }
+        "freshjoin" => {
+            let all = ALL.lock().clone();
+            let tk = {
+                let g = MM.lock.lock();
+                all.iter().find(|t| !g.queue.contains_key(*t) && !g.in_match_locked(t)).cloned()
+            };
+            match tk {
+                None => Value::Null,
+                Some(tk) => {
+                    let e = formed_json(MM.enqueue(&tk));
+                    let q: Vec<String> = MM.lock.lock().queue.keys().cloned().collect();
+                    for t in q {
+                        MM.poll(&t);
+                    }
+                    let first = MM.lock.lock().matches.get(&mid).and_then(|p| p.first().cloned());
+                    if let Some(f) = first {
+                        MM.jip_clock(&f, c["rem"].as_f64().unwrap_or(0.0), c["dur"].as_f64().unwrap_or(0.0), c["ended"].as_bool().unwrap_or(false));
+                    }
+                    let mut why: Vec<String> = Vec::new();
+                    let j = MM.jip_join(&tk, &mut why, c["need"].as_i64().unwrap_or(1), None, None);
+                    let j = j.map(|(m, s, p, k)| json!([m, s, p, k.iter().cloned().collect::<Vec<_>>()]));
+                    json!([tk, e, j, why])
+                }
             }
         }
         "jip_lives" => {
