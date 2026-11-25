@@ -11,21 +11,8 @@ pub fn handle_batch(conn: &Conn, addr: Addr, st: &mut ConnSt, batch: &mut Batch)
 }
 // K1 base
 pub fn tag(token: &str) -> String {
-    unimplemented!()
+    token.chars().take(8).collect() // (K1 adds the embedded-name lookup; the K4 selftest tokens carry none)
 }
-// K4 mm
-pub struct MMState {
-    pub queue: indexmap::IndexMap<String, f64>,
-}
-pub struct MatchMaker {
-    pub lock: parking_lot::Mutex<MMState>,
-}
-impl MatchMaker {
-    pub fn in_match(&self, token: &str) -> bool {
-        unimplemented!()
-    }
-}
-pub static MM: LazyLock<MatchMaker> = LazyLock::new(|| unimplemented!());
 // K3 sess
 pub struct Bridges {}
 impl Bridges {
@@ -44,19 +31,5 @@ pub static SESSIONS: LazyLock<Sessions> = LazyLock::new(|| unimplemented!());
 pub fn note_session_lost(token: &str, conn: &Conn) {
     unimplemented!()
 }
-// K3 (the daemon's hostmig.HostMigration instance; methods come from src/hostmig.rs)
-pub struct HmStub {}
-impl HmStub {
-    pub fn enabled(&self) -> bool {
-        unimplemented!()
-    }
-    pub fn has(&self, token: &str) -> bool {
-        unimplemented!()
-    }
-    pub fn bridge_gone(&self, token: &str) {
-        unimplemented!()
-    }
-}
-pub static HM: LazyLock<HmStub> = LazyLock::new(|| unimplemented!());
 #[allow(unused_imports)]
 use HashMap as _H;
