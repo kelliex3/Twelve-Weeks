@@ -1102,7 +1102,7 @@ impl Admin {
             if self.db.exists() {
                 if let Ok(c) = self.connect() {
                     feed = Self::read_feed(&c, k);
-                    people = t2r_clan::read_people(&c, k, 40);
+                    people = t2r_clan::read_people(&c, k, 40, "en");
                     let pl = t2r_clan::feed_pl_texts(&c, k, 40);
                     for m in feed.iter_mut() {
                         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);

@@ -10,5 +10,5 @@ pub fn view(admin: &Admin, key: &str, name: &str, lang: &str) -> Value {
     };
     let now = timeutil::now();
     json!({"ok": true, "name": name, "clan": t2r_clan::clan_view(&c, "", Some(key)),
-           "feed": t2r_clan::clanfeed(&c, "", "40", "0", lang, now, Some(key))})
+           "feed": t2r_clan::admin_feed(&c, key, lang, now)})
 }

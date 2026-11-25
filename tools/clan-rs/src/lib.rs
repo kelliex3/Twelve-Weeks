@@ -1,3 +1,4 @@
+mod admin;
 mod alife;
 mod data;
 mod pyrand;
@@ -8,7 +9,8 @@ mod view;
 
 pub use rules::{booster_next, event_name, event_today, event_window, mission_goals, needed, token_id, week_day};
 pub use rules::{ALIVE, DEAD, NONE, SERAPHITES, WEEKS, WIN_DAY, WLF, WON};
-pub use story::{feed_pl_texts, norm_lang, read_people, slot_of};
+pub use admin::{admin_feed, read_people};
+pub use story::{feed_pl_texts, norm_lang, slot_of};
 pub use view::{clan_view, clanfeed, resolve_key, valid_player};
 
 pub fn menu_lines(conn: &rusqlite::Connection, key: &str, limit: usize, lang: &str, now: f64) -> Vec<(String, String)> {

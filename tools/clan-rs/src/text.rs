@@ -245,7 +245,7 @@ pub fn render_pl(tpl: &str, people: &People, vars: &Vars) -> Option<String> {
     })
 }
 
-fn role_word(d: &Data, p: &Person, fk: &str, pl: bool) -> Option<String> {
+pub(crate) fn role_word(d: &Data, p: &Person, fk: &str, pl: bool) -> Option<String> {
     let r = if p.r.is_empty() { "scavenger" } else { p.r.as_str() };
     if pl {
         let pair = &d.pl.roles.get(r)?[if fk == "W" { 0 } else { 1 }];

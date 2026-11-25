@@ -200,7 +200,7 @@ struct ClanRow {
     sick: i64,
 }
 
-fn sql_val(v: rusqlite::types::Value) -> Value {
+pub(crate) fn sql_val(v: rusqlite::types::Value) -> Value {
     match v {
         rusqlite::types::Value::Null => Value::Null,
         rusqlite::types::Value::Integer(i) => Value::from(i),
@@ -886,7 +886,7 @@ fn chron_vars(d: &Data, sym: &Map<String, Value>, pl: bool) -> Option<crate::tex
     Some(v)
 }
 
-fn render_stored_pl(d: &Data, lid: &str, params: &Value) -> Option<String> {
+pub(crate) fn render_stored_pl(d: &Data, lid: &str, params: &Value) -> Option<String> {
     let params = params.as_object()?;
     if let Some(ids) = lid.strip_prefix("al/") {
         let ids: Vec<&str> = ids.split('+').collect();
@@ -964,7 +964,7 @@ fn style_arc(lid: &str) -> bool {
     lid.starts_with("arc/")
 }
 
-fn days_done(c: &Connection, tid: &str) -> Option<i64> {
+pub(crate) fn days_done(c: &Connection, tid: &str) -> Option<i64> {
     let v: Option<rusqlite::types::Value> = c.query_row("SELECT day FROM clans WHERE token_id=?", params![tid], |r| r.get(0)).optional().ok()?;
     match v {
         None | Some(rusqlite::types::Value::Null) => None,
@@ -1221,57 +1221,4 @@ pub fn feed_pl_texts(c: &Connection, tid: &str, limit: i64) -> std::collections:
         }
     }
     out
-}
-
-/// Roster summary of a clan's story (English): {"morale", "people", "alive", "dead"}; an empty object when the clan has no story state.
-pub fn read_people(c: &Connection, tid: &str, limit: usize) -> Value {
-    let Some(raw) = load_state(c, tid) else { return Value::Object(Map::new()) };
-    let st = &raw.value;
-    let Some(d) = data() else { return Value::Object(Map::new()) };
-    let w = st.get("fac").and_then(py_int) != Some(SERAPHITES);
-    let day = st.get("day").and_then(Value::as_f64).unwrap_or(0.0);
-    let morale = st.get("morale").cloned().unwrap_or(Value::Null);
-    let mf = morale.as_f64().unwrap_or(0.0);
-    let people_v: Vec<Value> = st.get("people").and_then(Value::as_array).cloned().unwrap_or_default();
-    let mut people = Vec::new();
-    for p in people_v.iter().take(limit) {
-        let g = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("");
-        let role = d.story.roles.iter().find(|x| x.0 == g("r")).map(|x| if w { x.1.clone() } else { x.2.clone() }).unwrap_or_default();
-        let state = match g("s") {
-            "u" => "hungry",
-            "s" => "sick",
-            _ => "healthy",
-        };
-        let mood = if g("s") == "s" {
-            "ill"
-        } else if g("s") == "u" {
-            "hungry"
-        } else if p.get("gr").and_then(Value::as_f64).unwrap_or(0.0) > day {
-            "grieving"
-        } else if mf >= 70.0 {
-            "cheerful"
-        } else if mf >= 50.0 {
-            "steady"
-        } else if mf >= 30.0 {
-            "tired"
-        } else {
-            "hollow"
-        };
-        let ill = d.story.illness.iter().find(|x| x.0 == g("il")).map(|x| x.1.clone()).unwrap_or_default();
-        people.push(serde_json::json!({"name": g("n"), "gender": g("g"), "role": role, "state": state, "mood": mood, "illness": ill}));
-    }
-    let label = if mf >= 70.0 {
-        "hopeful"
-    } else if mf >= 50.0 {
-        "steady"
-    } else if mf >= 30.0 {
-        "strained"
-    } else {
-        "grim"
-    };
-    let dead: Vec<Value> = st.get("dead").and_then(Value::as_array).map(|a| {
-        let from = a.len().saturating_sub(8);
-        a[from..].iter().map(|x| serde_json::json!({"name": x.get("n").cloned().unwrap_or(Value::Null), "day": x.get("d").cloned().unwrap_or(Value::Null)})).collect()
-    }).unwrap_or_default();
-    serde_json::json!({"morale": {"value": morale, "label": label}, "people": people, "alive": people_v.len(), "dead": dead})
 }

@@ -58,11 +58,12 @@ The binary is `target/x86_64-unknown-linux-musl/release/t2r-admin` (about 5 MB).
 - **Clan A-Life section** of the player page (`alife` is `null`, so `admin.js` hides it). It needed the ~17k-line Python story engine,
   and its texts come from the clan modules admin.py imports, which are older than the daemon's. The user decided this on 2026-11-23.
   The player fields `people`, `alive` and `alifeServerOn` are back (read from `clan_story` state by the shared `t2r_clan` crate).
-- **Clan iframe** (`/api/clanview`): it gets the clan card and the menu lines from the shared `t2r_clan` crate (`tools/clan-rs`, the same code
-  the Rust update server uses). Its SURVIVORS / RAIDS / JOURNAL tabs stay empty, by the same decision; the launcher's `clan.js` handles the
-  missing blocks. The crate follows the clan modules the daemon runs (`host186`), not the older `tools/clan.py` admin.py imported. So event and
-  mission names now match what players see in game, e.g. `DYSENTERY OUTBREAK` where admin.py said `RESCUED HOSTAGES`. Of 564 clan cards
-  compared, those names are the only differences.
+- **Clan iframe** (`/api/clanview`): the clan card and the menu lines come from the shared `t2r_clan` crate (`tools/clan-rs`, the same code
+  the Rust update server uses), and so do the SURVIVORS / RAIDS / JOURNAL blocks (`feed.feed`, `morale`, `people`, `alive`, `dead`, `chron`;
+  `t2r_clan::admin_feed`). The crate follows the clan modules the daemon runs (`host186`), not the older `tools/clan.py` admin.py imported.
+  So event and mission names, the menu lines and some journal / roster texts match what players see in game, e.g. `DYSENTERY OUTBREAK`
+  where admin.py said `RESCUED HOSTAGES`. The journal keeps 100 rows (the daemon runs with the A-Life and the chronicle on; admin.py kept 60).
+  Not ported: the A-Life block of the feed (`alife`, off on the live site).
 - `textPl` on the player's clan feed rows is back, rendered by the `t2r_clan` crate (the daemon's line set, arc steps from
   `clan-rs/data/arcs.json`). Rows written by newer templates are empty in admin.py (its older registry does not know them), so
   some rows differ: the Rust side is the one that reads them.
