@@ -28,6 +28,7 @@ t2r-clanstory = { path = "../clanstory-rs" }
 parking_lot = "0.12"
 getrandom = "0.2"
 sha2 = "0.10"
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case", "unicode-gencat"] }
 
 [profile.release]
 opt-level = 3
