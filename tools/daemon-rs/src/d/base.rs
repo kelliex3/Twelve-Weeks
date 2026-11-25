@@ -1224,6 +1224,39 @@ pub fn elo_key(c: &Connection, token: &str) -> ER<(String, i64)> {
     Ok((key, sid))
 }
 
+/// glibc's `log10` (sysdeps/ieee754/dbl-64/e_log10.c) so the rating matches Python's `math.log10` to the last bit (musl's log10 differs by 1 ulp now and then)
+pub fn glibc_log10(x: f64) -> f64 {
+    const IVLN10: f64 = 4.34294481903251816668e-01;
+    const LOG10_2HI: f64 = 3.01029995663611771306e-01;
+    const LOG10_2LO: f64 = 3.69423907715893078616e-13;
+    let mut x = x;
+    let bits = x.to_bits();
+    let mut hx = (bits >> 32) as i32;
+    let lx = bits as u32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        if ((hx & 0x7fff_ffff) as u32 | lx) == 0 {
+            return f64::NEG_INFINITY;
+        }
+        if hx < 0 {
+            return f64::NAN;
+        }
+        k -= 54;
+        x *= 18014398509481984.0; // 2^54
+        hx = (x.to_bits() >> 32) as i32;
+    }
+    if hx >= 0x7ff0_0000 {
+        return x + x;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32) & 0x8000_0000) >> 31;
+    hx = (hx & 0x000f_ffff) | ((0x3ff - i as i32) << 20);
+    let y = (k + i as i32) as f64;
+    x = f64::from_bits(((hx as u32 as u64) << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * x.ln();
+    z + y * LOG10_2HI
+}
+
 // py: daemon.py:1411 elo_seed
 pub fn elo_seed(c: &Connection, _key: &str, sid: i64, token: &str, record: Option<(i64, i64, i64)>) -> ER<f64> {
     let (w, l, d);
@@ -1251,7 +1284,7 @@ pub fn elo_seed(c: &Connection, _key: &str, sid: i64, token: &str, record: Optio
     if !(arg > 0.0) || !arg.is_finite() {
         return Err("math domain error".to_string());
     }
-    Ok(ELO_BASE + 400.0 * arg.log10())
+    Ok(ELO_BASE + 400.0 * glibc_log10(arg))
 }
 
 // py: daemon.py:1428 elo_ensure
