@@ -4,7 +4,7 @@ so the Rust clan engine uses the exact same text and numbers (no hand copies).
 
 usage: python3 gen/export_clan.py <dir with the deployed .py files> data/clan_tables.json
 
-Format (JSON, keys sorted): {"<module>": {"<NAME>": <value>}} with
+Format (JSON; modules sorted by name, every dict keeps its Python insertion order): {"<module>": {"<NAME>": <value>}} with
   str / int / float (repr round-trip) / bool / null / list (list AND tuple) as plain JSON,
   {"$d": [[key, value], ...]}   dict whose keys are not all str (insertion order kept),
   {"$s": [...]}                 set / frozenset (sorted by repr, Python never relies on set order),
@@ -73,7 +73,7 @@ for m in MODS:
     data[m] = d
 
 with open(out, "w", encoding="utf-8", newline="\n") as f:
-    json.dump(data, f, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))      # no sort_keys: dict order is Python insertion order (rng.choices over list(d) depends on it)
     f.write("\n")
 print("modules", len(data), "values", sum(len(x) for x in data.values()), "bytes", os.path.getsize(out))
 for s in skipped:
