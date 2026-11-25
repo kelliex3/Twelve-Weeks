@@ -95,6 +95,7 @@ fn world(w: &Value) {
         wd.online = strs(&w["online"]);
         wd.regions = w["regions"].as_object().map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
     }
+    WORLD_ON.store(true, std::sync::atomic::Ordering::Relaxed);
     *ALL.lock() = strs(&w["all"]);
     *MM.lock.lock() = MMState::new();
     TEST_MM.lock().clear();
