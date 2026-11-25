@@ -751,7 +751,7 @@ pub fn tcp_conn(conn: Conn, addr: Addr) {
         }
         if st.is_bridge && BRIDGES.unregister(&tok, &conn) {
             evt!("bridge-gone", tag(&tok), "Steam helper disconnected");
-            if HM.enabled() && HM.has(&tok) {
+            if HM.enabled && HM.has(&tok) {
                 HM.bridge_gone(&tok);
             }
         }
