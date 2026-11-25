@@ -60,3 +60,8 @@ input (JSON lines on stdin, one call per line, with the frozen time) and prints 
 `t2r-daemon selftest <module>` reads the same script and must print the same bytes. Scripts are generated
 (random but seeded) to hit every branch. Run both on sfo3 (`~/rsverify/daemon/`) and `cmp` the outputs.
 A module is done when the outputs are identical on at least 10 seeds x 2,000 calls (or every branch for small modules).
+
+## Float math (libm)
+musl libm is not glibc libm: `log10` differed by 1 ulp in the Elo seed (K1 ported glibc's as `glibc_log10`). Python on the server uses
+glibc. Any `math.log/log10/exp/pow/sqrt-free transcendental` whose result is stored, printed or compared must use a glibc-exact port
+(or be proven identical over the inputs by the differential test). `sqrt`, `+ - * /`, `floor`, `round` are exact in both.

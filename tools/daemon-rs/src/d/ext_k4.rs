@@ -227,31 +227,3 @@ impl Sessions {
         unimplemented!()
     }
 }
-
-// K1 range (daemon.py 266-291, aa352166): region groups of the lobby book. Real code; K1 takes it over at integration.
-pub static MM_REGION_LOBBY: LazyLock<bool> = LazyLock::new(|| crate::env_on("T2R_MM_REGION_LOBBY", true));
-pub fn mm_region_group(r: &str) -> Option<&'static str> {
-    match r {
-        "EU" => Some("EU"),
-        "NA-east" | "NA-west" => Some("NA"),
-        "other" => Some("other"),
-        _ => None,
-    }
-}
-/// The region group (EU / NA / other) most of `tokens` are in (a tie: the first token's that has one); None = none known.
-pub fn region_group(tokens: &[String]) -> Option<String> {
-    let mut cnt: indexmap::IndexMap<&'static str, i64> = indexmap::IndexMap::new();
-    let mut first: Option<&'static str> = None;
-    for t in tokens {
-        if let Some(g) = mm_region(t).as_deref().and_then(mm_region_group) {
-            *cnt.entry(g).or_insert(0) += 1;
-            first = first.or(Some(g));
-        }
-    }
-    let first = first?;
-    let top = *cnt.values().max()?;
-    if cnt[first] == top {
-        return Some(first.to_string());
-    }
-    cnt.iter().find(|(_, n)| **n == top).map(|(g, _)| g.to_string())
-}
