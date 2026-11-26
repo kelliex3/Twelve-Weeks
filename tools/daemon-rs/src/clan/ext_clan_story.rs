@@ -9,6 +9,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static FAKE: AtomicBool = AtomicBool::new(false);
 static FAKE_ALIFE: AtomicBool = AtomicBool::new(false);
 static FAKE_CHRON: AtomicBool = AtomicBool::new(false);
+static REAL_AJ: AtomicBool = AtomicBool::new(false);
+
+/// Test only (clan_alife / clan_journal selftests): the A-Life and the journal stand-ins call the real ports.
+pub fn set_test_real(on: bool) {
+    REAL_AJ.store(on, Ordering::SeqCst);
+}
+
+fn real() -> bool {
+    REAL_AJ.load(Ordering::SeqCst)
+}
 
 /// Test only: the stand-ins answer with the deterministic fakes of the harness.
 pub fn set_test_fake(on: bool) {
@@ -71,11 +81,17 @@ pub mod alife {
 
     // py: clan_alife.py:90 enabled
     pub fn enabled() -> bool {
+        if real() {
+            return crate::clan::clan_alife::enabled();
+        }
         fake() && FAKE_ALIFE.load(Ordering::SeqCst)
     }
 
     // py: clan_alife.py:156 reset
     pub fn reset(c: &Connection, tid: &str) -> Result<(), String> {
+        if real() {
+            return crate::clan::clan_alife::reset(c, tid);
+        }
         if fake() {
             note(c, tid, "alife.reset");
             return Ok(());
@@ -85,6 +101,9 @@ pub mod alife {
 
     // py: clan_alife.py:886 on_day
     pub fn on_day(c: &Connection, tid: &str, st: &mut Value, newc: &Value, r: &Value, msgs: &[Value]) -> Result<Vec<Value>, String> {
+        if real() {
+            return crate::clan::clan_alife::on_day(c, tid, st, newc, r, msgs);
+        }
         if fake() {
             let _ = (newc, r);
             let day = vi(st, "day");
@@ -98,6 +117,9 @@ pub mod alife {
 
     // py: clan_alife.py:1072 ticker_lines
     pub fn ticker_lines(c: &Connection, tid: &str, st: &Value, slot: i64, n: usize, lang: &str, now: Option<f64>, save: bool) -> Result<Vec<(Value, String)>, String> {
+        if real() {
+            return crate::clan::clan_alife::ticker_lines(c, tid, st, slot, n, lang, now, save);
+        }
         if fake() {
             let _ = (c, tid, st, now, save);
             return Ok((0..n).map(|i| (Value::String(format!("a{}{:02}", slot.rem_euclid(100000), i)), format!("AL tick {} {} {}", slot, i, lang))).collect());
@@ -108,6 +130,9 @@ pub mod alife {
 
     // py: clan_alife.py:239 render_msg
     pub fn render_msg(lid: &str, params: &Value, lang: &str) -> Option<String> {
+        if real() {
+            return crate::clan::clan_alife::render_msg(lid, params, lang);
+        }
         if fake() {
             let _ = params;
             return if lid == "al/none" { None } else { Some(format!("AL[{}|{}]", lid, lang)) };
@@ -126,7 +151,7 @@ pub mod chronicle {
         if fake() {
             return FAKE_CHRON.load(Ordering::SeqCst);
         }
-        crate::clan::clan_chronicle::enabled() // (the chronicle is ported: its real switch outside the clan_story selftest)
+        crate::clan::clan_chronicle::enabled()
     }
 
     // py: clan_chronicle.py:492 day_rows
@@ -156,6 +181,9 @@ pub mod journal {
 
     // py: clan_journal.py:470 purge
     pub fn purge(c: &Connection, tid: &str) -> Result<(), String> {
+        if real() {
+            return crate::clan::clan_journal::purge(c, tid);
+        }
         if fake() {
             note(c, tid, "journal.purge");
             return Ok(());
@@ -164,7 +192,10 @@ pub mod journal {
     }
 
     // py: clan_journal.py:493 on_new_run
-    pub fn on_new_run(c: &Connection, tid: &str, st: &Value) -> Result<(), String> {
+    pub fn on_new_run(c: &Connection, tid: &str, st: &mut Value) -> Result<(), String> {
+        if real() {
+            return crate::clan::clan_journal::on_new_run(c, tid, st).map(|_| ());
+        }
         if fake() {
             note(c, tid, &format!("journal.on_new_run {}", st.get("people").and_then(|p| p.as_array()).map_or(0, |a| a.len())));
             return Ok(());
@@ -175,6 +206,9 @@ pub mod journal {
 
     // py: clan_journal.py:178 snapshot
     pub fn snapshot(st: &Value) -> Result<Value, String> {
+        if real() {
+            return crate::clan::clan_journal::snapshot(st);
+        }
         if fake() {
             let mut m = Map::new();
             m.insert("people".into(), Value::from(st.get("people").and_then(|p| p.as_array()).map_or(0, |a| a.len()) as i64));
@@ -187,6 +221,9 @@ pub mod journal {
 
     // py: clan_journal.py:508 on_day
     pub fn on_day(c: &Connection, tid: &str, st: &mut Value, before: &Value, newc: &Value, r: &Value) -> Result<(), String> {
+        if real() {
+            return crate::clan::clan_journal::on_day(c, tid, st, before, newc, r).map(|_| ());
+        }
         if fake() {
             let _ = (newc, r);
             let after = st.get("people").and_then(|p| p.as_array()).map_or(0, |a| a.len());
@@ -198,7 +235,6 @@ pub mod journal {
     }
 }
 
-/// clan_arcs / clan_saga / clan_chronicle are ported: the real render, the stand-in text only under the clan_story selftest's `set_test_fake`.
 macro_rules! render_real {
     ($m:ident, $py:expr, $tag:expr, $real:path) => {
         #[doc = $py]
@@ -217,16 +253,5 @@ macro_rules! render_real {
 }
 
 render_real!(arcs, "py: clan_arcs.py:521 render_msg", "ARC", crate::clan::clan_arcs::render_msg);
-/// clan_perks is ported (CL6): the real render, the stand-in text only under the clan_story selftest's `set_test_fake`.
-pub mod perks {
-    use super::*;
-
-    pub fn render_msg(lid: &str, params: &Value, lang: &str) -> Option<String> {
-        if fake() {
-            let _ = params;
-            return Some(format!("PK[{}|{}]", lid, lang));
-        }
-        crate::clan::clan_perks::render_msg(lid, params, lang)
-    }
-}
+render_real!(perks, "py: clan_perks.py:221 render_msg", "PK", crate::clan::clan_perks::render_msg);
 render_real!(saga, "py: clan_saga.py:929 render_msg", "SG", crate::clan::clan_saga::render_msg);

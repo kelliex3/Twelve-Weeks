@@ -228,6 +228,13 @@ impl PerfScores {
         }
     }
 
+    /// (tests) forget every report
+    pub fn clear(&self) {
+        let mut g = self.inner.lock();
+        g.by_token.clear();
+        g.by_steam.clear();
+    }
+
     pub fn prune(&self) -> usize {
         let now = (self.now)();
         let fresh = cfg().perf_fresh_s as f64;

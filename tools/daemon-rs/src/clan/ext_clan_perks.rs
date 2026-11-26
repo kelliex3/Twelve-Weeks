@@ -1,5 +1,5 @@
-//! TEMPORARY: removed at integration. The functions of clan_journal / clan_journal_entries (CL3, not merged here) that clan_perks, clan_status and
-//! clan_ingame call. In production they are `unimplemented!()` until CL3's port lands; `doubles(true)` (selftest only) runs the deterministic test
+//! TEMPORARY: removed at integration (call clan_journal / clan_journal_entries directly). Thin wrappers of the real CL3 ports that clan_perks, clan_status and
+//! clan_ingame call; `doubles(true)` (selftest only) runs the deterministic test
 //! doubles that verify/py/clan_ingame_harness.py installs on the Python side (same specs).
 use crate::clan::clan::{int_of, pystr};
 use rusqlite::Connection;
@@ -13,10 +13,8 @@ pub fn doubles(on: bool) {
     DOUBLES.store(on, Ordering::SeqCst);
 }
 
-fn need_doubles(what: &str) {
-    if !DOUBLES.load(Ordering::SeqCst) {
-        unimplemented!("{} is not merged yet (src/clan/ext_clan_perks.rs)", what);
-    }
+fn is_doubles() -> bool {
+    DOUBLES.load(Ordering::SeqCst)
 }
 
 pub mod journal {
@@ -24,7 +22,9 @@ pub mod journal {
 
     // py: clan_journal.py render  (TEST DOUBLE)  "" = unreadable
     pub fn render(sent: &Value, lang: &str) -> String {
-        need_doubles("clan_journal::render");
+        if !is_doubles() {
+            return crate::clan::clan_journal::render(sent, lang);
+        }
         match sent.as_str() {
             Some(s) if s != "x" => format!("JL:{}:{}", s, lang),
             _ => String::new(),
@@ -33,7 +33,9 @@ pub mod journal {
 
     // py: clan_journal.py add_perk  (TEST DOUBLE)
     pub fn add_perk(c: &Connection, tid: &str, st: &mut Value, day: i64, cat: &str, who: &Value, mapname: &str) -> Result<bool, String> {
-        need_doubles("clan_journal::add_perk");
+        if !is_doubles() {
+            return crate::clan::clan_journal::add_perk(c, tid, st, day, cat, who, mapname);
+        }
         let _ = (c, tid);
         if day % 11 == 0 {
             return Err("ValueError: double".into());
@@ -53,7 +55,9 @@ pub mod journal {
 
     // py: clan_journal.py entries  (TEST DOUBLE)  oldest first; fields the in-game page reads
     pub fn entries(c: &Connection, tid: &str, lang: &str, days_done: Option<i64>) -> Vec<Value> {
-        need_doubles("clan_journal::entries");
+        if !is_doubles() {
+            return crate::clan::clan_journal::entries(c, tid, lang, days_done);
+        }
         let _ = (c, tid);
         let dd = days_done.unwrap_or(0);
         let n = if dd % 5 == 0 { 0 } else { dd.clamp(0, 90) }; // (no entries every 5th day: the older feed rows then fill the page)
@@ -75,7 +79,9 @@ pub mod journal_entries {
 
     // py: clan_journal_entries.py compose_entries  (TEST DOUBLE)  rows = the story rows, newest first
     pub fn compose_entries(rows: &[Value], roster: &[Value], seen_id: i64) -> Vec<Value> {
-        need_doubles("clan_journal_entries::compose_entries");
+        if !is_doubles() {
+            return crate::clan::clan_journal_entries::compose_entries(rows, roster, seen_id);
+        }
         let _ = roster;
         rows.iter()
             .map(|m| {

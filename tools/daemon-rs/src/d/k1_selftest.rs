@@ -205,6 +205,7 @@ fn call(f: &str, a: &[Value]) -> Value {
 
 pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     std::env::set_var("T2R_ELO_NO_PERF", "0");
+    set_server_version("sv-test");
     let mut n = 0usize;
     for c in script(input) {
         n += 1;

@@ -654,7 +654,7 @@ impl Parties {
         let pid = match pid.take() {
             Some(p) => p,
             None => {
-                let p = crate::rnd::token_hex(3);
+                let p = crate::rnd::token_hex("social:accept_token", 3);
                 g.of.insert(inviter.to_string(), p.clone());
                 g.leaders.insert(p.clone(), inviter.to_string());
                 p
