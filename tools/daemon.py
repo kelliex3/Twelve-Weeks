@@ -2455,7 +2455,8 @@ def feed_latest(token, limit=FEED_LINES, lang="en"):
         log("CLAN feed failed", ex)
         return []
 
-_FEED_CACHE = {}                   # (token, lang, slot) -> (time.monotonic(), reply bytes): feed_op, 20 s
+_FEED_CACHE = {}                   # (token, lang, slot) -> (time.monotonic(), reply bytes): feed_op, the whole 60 s slot (FEED_CACHE_S)
+FEED_CACHE_S = float(os.environ.get("T2R_FEED_CACHE_S", "60"))   # was 20 s; at ~190 online feed_op was about 22 % of the daemon's CPU
 
 def feed_op(pl):
     """Op 0xB4 [64B token][u8 language] -> reply 0xB5 "n=<k>\\n<id>|<text>\\n..." (<= 6 lines (FEED_LINES), text <= 150 bytes of UTF-8, no '|' / newline inside;
@@ -2475,7 +2476,7 @@ def feed_op(pl):
     #  daemon's CPU on fra1 with 20 players, so friends / clan replies missed the clients' 3.5 s timeout. Cached per token + language + slot, 20 s.)
     ck = (token, lang, clan_story.slot_of() if clan_story else 0)
     hit = _FEED_CACHE.get(ck)
-    if hit and time.monotonic() - hit[0] < 20.0:
+    if hit and time.monotonic() - hit[0] < FEED_CACHE_S:
         return hit[1]
     if len(_FEED_CACHE) > 4000:
         _FEED_CACHE.clear()
@@ -2765,6 +2766,16 @@ SENDQ_LINGER_S = 5.0                                                          # 
 TCP_SNDBUF = int(os.environ.get("T2R_TCP_SNDBUF", "0"))                      # 0 = OS default (tests set a few KB)
 SENDQ_STATS = collections.Counter()                                           # dropped / killed
 
+def _writable(sock, timeout_s):
+    """True when the socket takes bytes now (or has an error that the next send() reports).
+    poll(), not select(): select() raises ValueError for any fd >= 1024 (FD_SETSIZE). With T2R_MAX_CONNS=1500 the
+    daemon passes 1024 open fds at ~190 online, and every connection that got such an fd died on its first send."""
+    if not hasattr(select, "poll"):                       # Windows (local tests): no poll(), and no fd limit there
+        return bool(select.select([], [sock], [], timeout_s)[1])
+    p = select.poll()
+    p.register(sock, select.POLLOUT)
+    return bool(p.poll(int(timeout_s * 1000)))
+
 class OutConn:
     """A TCP connection whose WRITES are owned by the connection, not by the calling thread.
     sendall() never blocks: it sends inline when the kernel buffer takes everything (the normal case, no extra
@@ -2808,8 +2819,7 @@ class OutConn:
             if not self._q and not self._writer:
                 # fast path: nothing waiting, so write directly, but only what the kernel takes without blocking
                 try:
-                    _, w, _ = select.select([], [self._sock], [], 0)
-                    sent = self._sock.send(data) if w else 0
+                    sent = self._sock.send(data) if _writable(self._sock, 0) else 0
                 except (BlockingIOError, socket.timeout, InterruptedError):
                     sent = 0
                 except (OSError, ValueError) as e:
@@ -2864,8 +2874,7 @@ class OutConn:
                 if linger_end is not None and now > linger_end:
                     self._kill("close(): queue not flushed in %.0f s" % SENDQ_LINGER_S); return
                 try:
-                    _, w, _ = select.select([], [self._sock], [], 0.5)
-                    if not w: continue
+                    if not _writable(self._sock, 0.5): continue
                     n = self._sock.send(buf)
                 except (BlockingIOError, socket.timeout, InterruptedError):
                     continue
