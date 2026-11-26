@@ -143,8 +143,7 @@ pub mod chronicle {
             let _ = params;
             return Some(format!("CH[{}|{}]", lid, lang));
         }
-        let _ = (lid, params, lang);
-        unimplemented!("clan_chronicle::render_msg")
+        crate::clan::clan_chronicle::render_msg(lid, params, lang)
     }
 }
 
@@ -196,8 +195,9 @@ pub mod journal {
     }
 }
 
-macro_rules! render_only {
-    ($m:ident, $py:expr, $tag:expr) => {
+/// clan_arcs / clan_saga / clan_chronicle are ported: the real render, the stand-in text only under the clan_story selftest's `set_test_fake`.
+macro_rules! render_real {
+    ($m:ident, $py:expr, $tag:expr, $real:path) => {
         #[doc = $py]
         pub mod $m {
             use super::*;
@@ -207,13 +207,23 @@ macro_rules! render_only {
                     let _ = params;
                     return Some(format!("{}[{}|{}]", $tag, lid, lang));
                 }
-                let _ = (lid, params, lang);
-                unimplemented!(concat!($py, " render_msg"))
+                $real(lid, params, lang)
             }
         }
     };
 }
 
-render_only!(arcs, "py: clan_arcs.py:521 render_msg", "ARC");
-render_only!(perks, "py: clan_perks.py:221 render_msg", "PK");
-render_only!(saga, "py: clan_saga.py:929 render_msg", "SG");
+render_real!(arcs, "py: clan_arcs.py:521 render_msg", "ARC", crate::clan::clan_arcs::render_msg);
+/// clan_perks is ported (CL6): the real render, the stand-in text only under the clan_story selftest's `set_test_fake`.
+pub mod perks {
+    use super::*;
+
+    pub fn render_msg(lid: &str, params: &Value, lang: &str) -> Option<String> {
+        if fake() {
+            let _ = params;
+            return Some(format!("PK[{}|{}]", lid, lang));
+        }
+        crate::clan::clan_perks::render_msg(lid, params, lang)
+    }
+}
+render_real!(saga, "py: clan_saga.py:929 render_msg", "SG", crate::clan::clan_saga::render_msg);

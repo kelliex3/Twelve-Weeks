@@ -15,10 +15,21 @@ use t2r_clanstory::pyrand::PyRandom;
 
 static DOUBLES: AtomicBool = AtomicBool::new(false);
 static REAL_SAGA: AtomicBool = AtomicBool::new(false);
+static REAL_STATUS: AtomicBool = AtomicBool::new(false);
 
 /// Selftest only: with the doubles on, the saga and loot calls still go to the REAL clan_saga / clan_loot (`selftest clan_saga`).
 pub fn real_saga(on: bool) {
     REAL_SAGA.store(on, Ordering::SeqCst);
+}
+
+/// Selftest only: with the doubles on, clan_status still goes to the REAL clan_status (`selftest clan_status`, `T2R_REAL_STATUS=1` for clan_chronicle).
+pub fn real_status_on(on: bool) {
+    REAL_STATUS.store(on, Ordering::SeqCst);
+}
+
+/// clan_status is real in production and in `selftest clan_status`; `selftest clan_chronicle` runs its doubles unless T2R_REAL_STATUS is set.
+fn real_status() -> bool {
+    !DOUBLES.load(Ordering::SeqCst) || REAL_STATUS.load(Ordering::SeqCst)
 }
 
 /// The saga / loot functions are real in production and in `selftest clan_saga`; only `selftest clan_chronicle` runs their doubles.
@@ -411,28 +422,35 @@ pub mod loot {
 pub mod status {
     use super::*;
 
-    pub const HEALTHY: i64 = 0;
-    pub const NAMES: [&str; 10] = ["healthy", "hungry", "sad", "sick", "dead", "injured", "recovered", "new", "depressed", "shock"];
-    pub const EXPR: [&str; 10] = ["neutral", "hungry", "sad", "sick", "dead", "sick", "neutral", "neutral", "depressed", "shock"];
+    pub use crate::clan::clan_status::{EXPR, HEALTHY, NAMES};
 
-    // py: clan_status.py:46 code_of  (TEST DOUBLE)
+    // py: clan_status.py:46 code_of  (TEST DOUBLE unless real)
     pub fn code_of(st: &Value, p: &Value) -> i64 {
+        if real_status() {
+            return crate::clan::clan_status::code_of(st, p);
+        }
         need_doubles("clan_status::code_of");
         let day = st.get("day").map(int_of).unwrap_or(0);
         let i = p.get("i").map(int_of).unwrap_or(0);
         [0, 1, 2, 3, 5, 8, 9][((i * 5 + day) % 7) as usize]
     }
 
-    // py: clan_status.py:85 observe  (TEST DOUBLE)
+    // py: clan_status.py:85 observe  (TEST DOUBLE unless real)
     pub fn observe(st: &mut Value, rows: &[Value]) -> Result<(), String> {
+        if real_status() {
+            return crate::clan::clan_status::observe(st, rows).map(|_| ());
+        }
         need_doubles("clan_status::observe");
         let n = st["ch"].get("obs").map(int_of).unwrap_or(0) + rows.len() as i64;
         st["ch"]["obs"] = json!(n);
         Ok(())
     }
 
-    // py: clan_status.py:183 public  (TEST DOUBLE)
+    // py: clan_status.py:183 public  (TEST DOUBLE unless real)
     pub fn public(st: &Value, fk: &str, lang: &str) -> Result<Value, String> {
+        if real_status() {
+            return crate::clan::clan_status::public(st, fk, lang);
+        }
         need_doubles("clan_status::public");
         if st.get("day").map(int_of).unwrap_or(0) % 2 != 0 {
             return Ok(json!({}));

@@ -1,21 +1,27 @@
 //! The clan engine (Python clan*.py + achievements.py), one Rust module per Python module, data from `data`.
 pub mod data;
+pub mod achievements;
 pub mod clan;
 pub mod clan_arcs;
 pub mod clan_chronicle;
 pub mod clan_continuity;
+pub mod clan_ingame;
 pub mod clan_kids;
 pub mod clan_loot;
+pub mod clan_perks;
 pub mod clan_portraits;
 pub mod clan_reset;
 pub mod clan_saga;
 pub mod clan_saga_pl;
+pub mod clan_status;
 pub mod clan_supply;
 pub mod clan_story;
 pub mod clan_story_pl;
 pub mod ext_clan_chronicle;
+pub mod ext_clan_perks;
 pub mod ext_clan_story;
 pub mod selftest_base;
 pub mod selftest_chronicle;
+pub mod selftest_cl6;
 pub mod selftest_saga;
 pub mod selftest_story;
