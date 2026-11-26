@@ -11,7 +11,7 @@ tmp=${TMPDIR:-/tmp}/al_cmp
 mkdir -p "$tmp"
 bad=0
 for s in $(seq "$a" "$b"); do
-  export T2R_PY_DIR=$pydir
+  export T2R_PY_DIR=$pydir T2R_CLAN_CHRONICLE=0   # the harnesses replace clan_chronicle by a switched-off module
   python3 "$here/${T2R_HARNESS:-clan_alife_harness}.py" gen "$s" "$n" > "$tmp/in.$s"
   (cd "$pydir" && T2R_CL_DB=$tmp/py.$s.db python3 "$here/${T2R_HARNESS:-clan_alife_harness}.py" run < "$tmp/in.$s" > "$tmp/py.$s" 2> "$tmp/py.err.$s")
   (cd "$pydir" && T2R_CL_DB=$tmp/rs.$s.db "$bin" selftest ${T2R_MOD:-clan_alife} < "$tmp/in.$s" > "$tmp/rs.$s" 2> "$tmp/rs.err.$s")
