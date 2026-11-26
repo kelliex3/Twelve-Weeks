@@ -141,7 +141,7 @@ impl LobbyBook {
     fn new_lobby(&mut self, now: f64, src: Option<&str>, lid: Option<&str>) -> String {
         let lid = match lid {
             Some(l) if !self.lobbies.contains_key(l) => l.to_string(),
-            _ => format!("L{}", rnd::token_hex(4)),
+            _ => format!("L{}", rnd::token_hex("lobbybook:_new", 4)),
         };
         let lb = Lobby::new(&lid, now, src);
         self.lobbies.insert(lid.clone(), lb);

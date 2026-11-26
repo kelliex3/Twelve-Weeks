@@ -112,13 +112,7 @@ pub fn print_line(s: &str) {
 }
 
 /// `random.Random()` of clan.py (`clan.rng`): seeded from `T2R_TEST_SEED + 1` when set (the Python tests do `clan.rng = random.Random(seed + 1)`), else entropy.
-pub static RNG: LazyLock<Mutex<PyRandom>> = LazyLock::new(|| {
-    let r = match std::env::var("T2R_TEST_SEED").ok().and_then(|v| v.trim().parse::<i64>().ok()) {
-        Some(s) => PyRandom::from_i64(s + 1),
-        None => PyRandom::from_entropy(),
-    };
-    Mutex::new(r)
-});
+pub static RNG: LazyLock<Mutex<PyRandom>> = LazyLock::new(|| Mutex::new(crate::rnd::unseeded()));
 
 fn rng() -> parking_lot::MutexGuard<'static, PyRandom> {
     RNG.lock()
@@ -1364,7 +1358,7 @@ pub fn booster_next(clan: &Value) -> i64 {
 }
 
 /// Python `random.sample(range(n), k)` on the global `random` module (`crate::rnd` stream).
-fn global_sample_indices(n: usize, k: usize) -> Vec<usize> {
+fn global_sample_indices(key: &str, n: usize, k: usize) -> Vec<usize> {
     let mut setsize = 21usize;
     if k > 5 {
         let e = ((k * 3) as f64).ln() / 4f64.ln();
@@ -1374,16 +1368,16 @@ fn global_sample_indices(n: usize, k: usize) -> Vec<usize> {
     if n <= setsize {
         let mut pool: Vec<usize> = (0..n).collect();
         for i in 0..k {
-            let j = rnd::randbelow((n - i) as u64) as usize;
+            let j = rnd::randbelow(key, (n - i) as u64) as usize;
             out.push(pool[j]);
             pool[j] = pool[n - i - 1];
         }
     } else {
         let mut selected = std::collections::HashSet::new();
         for _ in 0..k {
-            let mut j = rnd::randbelow(n as u64) as usize;
+            let mut j = rnd::randbelow(key, n as u64) as usize;
             while selected.contains(&j) {
-                j = rnd::randbelow(n as u64) as usize;
+                j = rnd::randbelow(key, n as u64) as usize;
             }
             selected.insert(j);
             out.push(j);
@@ -1415,8 +1409,8 @@ pub fn meta_text(c: &Connection, tid: &str, pick: i64, active: i64) -> rusqlite:
         let mut pool: Vec<i64> = meta.get("pool").filter(|v| truthy(v)).and_then(|v| v.as_array()).map(|a| a.iter().map(int_of).filter(|i| OFFER_POOL.contains(i)).collect()).unwrap_or_default();
         if pool.is_empty() {
             // roll the pool missions on offer for this choice (kept until one is chosen)
-            let kp = EXEC_POOL_PICK[rnd::choice_index(EXEC_POOL_PICK.len())] as usize;
-            let mut p: Vec<i64> = global_sample_indices(OFFER_POOL.len(), kp).into_iter().map(|i| OFFER_POOL[i]).collect();
+            let kp = EXEC_POOL_PICK[rnd::choice_index("clan:meta_text", EXEC_POOL_PICK.len())] as usize;
+            let mut p: Vec<i64> = global_sample_indices("clan:meta_text", OFFER_POOL.len(), kp).into_iter().map(|i| OFFER_POOL[i]).collect();
             p.sort();
             pool = p;
             meta.insert("pool".into(), json!(pool));
