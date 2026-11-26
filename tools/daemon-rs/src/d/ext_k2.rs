@@ -193,31 +193,6 @@ pub mod achievements {
     }
 }
 
-// ---------------------------------------------------------------- KP: anti-cheat (private; this build has none: AC = None)
-pub struct AcStub;
-impl AcStub {
-    pub fn rate_ok(&self, token: &str) -> bool {
-        true
-    }
-    pub fn first_time(&self, token: &str, mid: &str, parts: i64, counts: &IndexMap<i64, i64>) -> bool {
-        false
-    }
-    /// -> (parts, counts, issues = [(kind, weight, evidence)])
-    pub fn check_report(&self, token: &str, mid: &str, parts: i64, counts: IndexMap<i64, i64>, flags: i64) -> (i64, IndexMap<i64, i64>, Vec<(i64, f64, String)>) {
-        (parts, counts, Vec::new())
-    }
-    pub fn note_report(&self, token: &str, mid: &str, parts: i64, counts: &IndexMap<i64, i64>) -> Vec<(i64, f64, String)> {
-        Vec::new()
-    }
-    pub fn match_started(&self, mid: &str, slots: &[String], players: &[String], names: &HashMap<String, String>, sids: &HashMap<String, u64>) {}
-    pub fn match_ended(&self, mid: &str) {}
-}
-pub static AC: Option<AcStub> = None;
-/// `anticheat.S_ORPHAN`
-pub const S_ORPHAN: i64 = 3;
-/// `ac_server_event(token, mid, kind, w, evidence)`
-pub fn ac_server_event(token: &str, mid: Option<&str>, kind: i64, w: f64, evidence: &str) {}
-
 // ---------------------------------------------------------------- K5 batch
 /// `loaded_clear_match(mid, players)` (double: no-op)
 pub fn loaded_clear_match(mid: &str, players: &[String]) {}

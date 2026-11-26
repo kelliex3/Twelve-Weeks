@@ -2,6 +2,8 @@
 //! sections call each other by the Python names (as the one Python namespace did).
 #![allow(unused_imports)]
 pub use crate::{dlog, evt};
+// KP: the private hooks (identity / hardware / bans / install check / anti-cheat): crate::private = private/ (feature "private") or the neutral src/privstub.rs
+pub use crate::private::{ac_note_login_ip, ac_op, ac_server_event, ac_tick, attest_op, hwid_op, ident_backfill, ident_note, ident_pid, install_refusal, ip_banned, is_banned, MidArg, AC, HWID_HEX, S_ORPHAN};
 pub mod db;
 pub mod conn;
 pub use conn::*;
