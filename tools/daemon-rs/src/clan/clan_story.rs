@@ -2133,7 +2133,7 @@ pub fn on_new_run(c: &Connection, tid: &str, faction: i64) -> rusqlite::Result<V
     w.add(&mut rng, &mut st, "founding", &Value::Object(ppl), &Opts::default());
     let mut out = w.out;
     _store(c, tid, &mut st, &mut out, faction, 0, 1)?;
-    if let Err(ex) = ext::journal::on_new_run(c, tid, &st) {
+    if let Err(ex) = ext::journal::on_new_run(c, tid, &mut st) {
         eprintln!("clan_journal (new run) failed: {}", ex);
     }
     _save(c, tid, &st)?;
