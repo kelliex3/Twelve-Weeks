@@ -300,6 +300,12 @@ def mm_set(d, m):
         d.MM.late_mult[t] = (mid, x)
     for t, (mid, n) in m.get("late_bonus", {}).items():
         d.MM.late_bonus[t] = (mid, n)
+    for t, (mid, p, b) in m.get("late_prog", {}).items():
+        d.MM.late_prog[t] = (mid, p, b)
+    for mid, v in m.get("pres", {}).items():
+        d.MATCH_PRES[mid] = {t: list(x) for t, x in v.items()}
+    for t, (mid, tm) in m.get("jlate", {}).items():
+        d.JIP_LATE[t] = (mid, tm)
 
 
 def world(d, w):
@@ -328,6 +334,8 @@ def world(d, w):
     d._name_ver[0] = 0
     d._elo_pool.update(t=0.0, p=0.4)
     d.MM.__init__()
+    d.JIP_LATE.clear()
+    d.MATCH_PRES.clear()
     d.TEAM_SWAP.clear()
     for mid, m in w.get("swap", {}).items():
         d.TEAM_SWAP[mid] = dict(m)
@@ -366,7 +374,9 @@ def S(d):
         "etimers": sorted(d._end_timers), "ntimers": len(TIMERS),
         "mm": {"m": sorted([m, list(p)] for m, p in mm.matches.items()), "st": sorted(mm.started), "en": sorted(mm.ended),
                "dep": sorted([m, sorted(s)] for m, s in mm.departed.items()), "join": sorted([t, list(v)] for t, v in mm.joining.items()),
-               "lm": sorted([t, list(v)] for t, v in mm.late_mult.items()), "lb": sorted([t, list(v)] for t, v in mm.late_bonus.items())},
+               "lm": sorted([t, list(v)] for t, v in mm.late_mult.items()), "lb": sorted([t, list(v)] for t, v in mm.late_bonus.items()),
+               "lp": sorted([t, list(v)] for t, v in mm.late_prog.items()), "pres": sorted([m, sorted([t, list(x)] for t, x in v.items())] for m, v in d.MATCH_PRES.items()),
+               "jl": sorted([t, list(v)] for t, v in d.JIP_LATE.items())},
     }
 
 
@@ -700,6 +710,12 @@ def gen(r, n):
                 mm.setdefault("late_mult", {})[tkn] = [m, r.choice([1.0, 1.25, 1.5, 2.9, 3.0])]
             if r.random() < 0.15:
                 mm.setdefault("late_bonus", {})[tkn] = [m, r.choice([100, 200, 300])]
+            if r.random() < 0.2:
+                mm.setdefault("late_prog", {})[tkn] = [m if r.random() < 0.9 else "other", r.choice([0.0, 0.2, 0.49, 0.5, 0.55, 0.69, 0.7, 0.85, 1.0]), r.choice([0, 0, 1])]
+            if r.random() < 0.1:
+                mm.setdefault("pres", {}).setdefault(m, {})[tkn] = [r.choice([0.0, 20.0, 30.0, 60.0, 300.0]), r.choice([0.0, 10.0, 15.0, 30.0, 59.9, 300.0])]
+            if r.random() < 0.1:
+                mm.setdefault("jlate", {})[tkn] = [m, t[0] - 5.0]
         emit_(op="mmset", m=mm)
         if r.random() < 0.05:
             emit_(op="silent", m={tkn: r.choice([0.0, 5.0, 100.0, 4000.0]) for tkn in pl})

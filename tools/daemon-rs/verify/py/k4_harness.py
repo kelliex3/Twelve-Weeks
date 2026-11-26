@@ -61,6 +61,13 @@ def world_py(w):
     c.commit()
     c.close()
     d.MM.__init__()
+    d.DED.prefs.clear()
+    for t, b in (w.get("prefs") or {}).items():
+        d.DED.caps_report(t, bytes([0, 0, b]))        # the preference byte of an op 0xC4 report (no region list)
+    d.REGION_LOCK_LOG.clear()
+    d.JIP_UNREACH.clear()
+    d.JIP_LATE.clear()
+    d.MATCH_PRES.clear()
     d.MATCH_MAP.clear()
     d.JIP_BACK.clear()
     d.TEAM_SWAP.clear()
@@ -123,6 +130,7 @@ def setup():
     d.jip_ping_block = lambda *a, **k: None
     d._ping_gate = lambda a, b, now=None: pp(a, b)
     d.mm_region = lambda t: WORLD.get("regions", {}).get(t)
+    d.acscan = None                     # (private: not ported; the hook is absent on both sides)
     d.p1_pref_on = lambda: False
     d.p1_always = lambda t, ld=None: False
     d.p1_owner = lambda t, ld=None: False
@@ -177,6 +185,13 @@ def run():
             r = d.host_from_team(a[0], a[1])
         elif f == "team_order":
             r = d.team_order(a[0])
+        elif f == "join_progress":
+            r = list(d.join_progress(tuple(a[0]) if a[0] is not None else None, tuple(a[1]) if a[1] is not None else None, a[2], a[3]))
+        elif f == "caps":
+            rep = d.dedicated_caps_op(bytes.fromhex(a[0]))
+            r = [None if rep is None else rep.hex(), d.DED.prefs.get(a[1], 0), d.DED.pref_of(a[1])]
+        elif f == "region_filter":
+            r = d.region_lock_filter(a[0])
         else:
             raise SystemExit("unknown f " + f)
         emit(n, r, None)
@@ -226,7 +241,9 @@ def gen(r, n):
                 stats.append([t, r.choice([-1, 0, 3, 12, 30, None]), r.choice([0, 2, 9, 25, None, -3]), fl(r.random() * 1000)])
         return {"names": names, "sids": sids, "pings": pings, "noh": r.sample(ts, r.choice([0, 0, 1, 2])), "bho": r.sample(ts, len(ts)),
                 "perf": {t: r.choice([0, 0, 0, 40]) for t in ts}, "lim": r.choice([175, 175, 190, 120]), "parties": parties, "rules": rules,
-                "top": top, "players": players, "stats": stats, "all": toks, "ts": ts}
+                "top": top, "players": players, "stats": stats, "all": toks, "ts": ts,
+                "prefs": {x: r.choice([1, 2]) for x in ts if r.random() < 0.4} if r.random() < 0.7 else {},
+                "regions": {x: r.choice(["EU", "NA-east", "NA-west", "other"]) for x in ts if r.random() < 0.9}}
 
     t = 5000.0
     for i in range(n):
@@ -286,9 +303,26 @@ def gen(r, n):
         elif x < 0.88:
             pl = r.sample(ts, r.randint(3, min(8, len(ts))))
             c.update(f="host_from_team", a=[pl[:max(1, len(pl) // 2 + 1)], pl])
-        else:
+        elif x < 0.92:
             pl = r.sample(ts, r.randint(2, min(8, len(ts))))
             c.update(f="team_order", a=[pl])
+        elif x < 0.95:
+            now = t
+            ck = None if r.random() < 0.2 else [fl(r.choice([0.0, 30.0, 300.0, 700.0, -20.0, 1200.0])), fl(r.choice([0.0, 900.0, 600.0])), r.random() < 0.15, fl(now - r.choice([0.0, 5.0, 30.0, 40.0, 100.0]))]
+            lv = None if r.random() < 0.2 else [r.randrange(0, 22), r.randrange(0, 22), fl(now - r.choice([0.0, 5.0, 30.0, 40.0, 100.0]))]
+            c.update(f="join_progress", a=[ck, lv, r.choice([0, 1, 0, 1, 2, -1]), fl(now)])
+        elif x < 0.98:
+            tk = r.choice(ts + ["zz" * 32])
+            k = r.choice([0, 1, 2, 3])
+            body = bytes([r.choice([0, 1, 3]), k]) + b"".join(bytes([r.randrange(0, 3), r.randrange(0, 256), r.randrange(0, 256)]) for _ in range(k))
+            if r.random() < 0.85:
+                body += bytes([r.choice([0, 1, 2, 2, 1, 3, 255])])
+            if r.random() < 0.1:
+                body = body[:r.randrange(0, len(body) + 1)]
+            raw = tk.encode() if r.random() < 0.95 else tk.encode()[:r.randrange(0, 64)]
+            c.update(f="caps", a=[(raw + body).hex(), tk])
+        else:
+            c.update(f="region_filter", a=[r.sample(ts, r.randint(0, len(ts)))])
         yield c
 
 
@@ -304,7 +338,9 @@ def mmstate(d):
             "started": sorted(m.started), "started_t": sd(m.started_t), "clock": {k: list(v) for k, v in sorted(m.clock.items())},
             "polled": {k: sd(v) for k, v in sorted(m.polled.items())}, "joining": [[k, list(v)] for k, v in m.joining.items()],
             "lives": {k: list(v) for k, v in sorted(m.lives.items())}, "late_bonus": {k: list(v) for k, v in sorted(m.late_bonus.items())},
-            "late_mult": {k: list(v) for k, v in sorted(m.late_mult.items())}, "move_team": [[k, list(v)] for k, v in m.move_team.items()],
+            "late_mult": {k: list(v) for k, v in sorted(m.late_mult.items())}, "late_prog": {k: list(v) for k, v in sorted(m.late_prog.items())},
+            "pres": {k: {t: list(x) for t, x in sorted(v.items())} for k, v in sorted(d.MATCH_PRES.items())},
+            "unreach": [[list(k), list(v)] for k, v in sorted(d.JIP_UNREACH.items(), key=lambda kv: kv[0])], "move_team": [[k, list(v)] for k, v in m.move_team.items()],
             "departed_t": sd(m.departed_t), "departed_vol": sorted(m.departed_vol), "last_arrival": m.last_arrival, "hold": m._hold_since,
             "book": {k: [list(l.members), l.hold, l.wait_until] for k, l in sorted(m.book.lobbies.items())}, "bookof": sd(m.book.of),
             "jip_back": {k: list(v) for k, v in sorted(d.JIP_BACK.items())},
@@ -379,6 +415,9 @@ def mm_op(d, c):
                 m.poll(t)
             if mid in m.matches:
                 m.jip_clock(m.matches[mid][0], c["rem"], c["dur"], c["ended"])
+            if c.get("ur", -1) >= 0 and mid in m.matches:
+                upl = m.matches[mid]
+                d.JIP_UNREACH[(tk, mid)] = (T[0] - c["ago"], None if c["ur"] == 0 else upl[(c["ur"] - 1) % len(upl)])
             why = []
             j = m.jip_join(tk, why, c["need"], None, None)
             r = [tk, e, None if j is None else [j[0], j[1], j[2], sorted(j[3])], why]
@@ -395,6 +434,40 @@ def mm_op(d, c):
              [list(x[:6]) + [sorted(x[6])] for x in m.snapshot()], m.jip_joiners(mid)]
     elif k == "gc":
         r = m.gc(set(c["keep"]), T[0])
+    elif k == "bksplit":
+        # a searching party mate that sits in a lobby of its own (the state the party wait of a launch pass cleans up)
+        bk = m.book
+        lid = bk.lobby_of(c["tok"])
+        if lid and c["tok"] in m.queue:
+            bk.remove(c["tok"], "")
+            nl = bk._new(T[0])
+            bk._add(nl, c["tok"], T[0])
+            r = [lid, nl.lid]
+        else:
+            r = None
+    elif k == "mk":
+        # a finished match with a post-match ticket for every player (the shape of the R-5ZCJ test: `finished`)
+        mk = c["mid"]
+        m.matches[mk] = list(c["players"])
+        m.launched.add(mk)
+        m.started.add(mk)
+        m.formed[mk] = T[0] - 600
+        for t in c["players"]:
+            d.RQ_CAP[t] = T[0]
+        m.end(mk)
+        r = None
+    elif k == "unreach":
+        pl = m.matches.get(mid)
+        d.JIP_UNREACH[(c["tok"], mid)] = (T[0] - c["ago"], pl[c["j"] % len(pl)] if (pl and c["j"] >= 0) else None)
+        r = None
+    elif k == "presence":
+        d.presence_tick(2.0)
+        r = None
+    elif k == "fair":
+        t = c["tok"]
+        if c.get("late"):
+            d.JIP_LATE[t] = (mid, T[0])
+        r = [d.clan_fair_reason(t, mid), d.boost_keep(t, mid), d.boost_keep(t, None), d.boost_keep_now(t)]
     else:
         raise SystemExit("unknown mm op " + k)
     return r
@@ -405,7 +478,9 @@ def gen_mm(r, n):
     toks = [tok(i) for i in range(10)]
     t = 9000.0
     w = {"names": {}, "sids": {}, "pings": {}, "noh": [], "bho": [], "perf": {}, "lim": 175, "parties": [], "rules": None, "top": None, "players": [],
-         "stats": [], "all": toks, "ts": toks, "online": toks[:], "regions": {x: r.choice(["EU", "NA-east", "NA-west", "other"]) for x in toks}}
+         "stats": [], "all": toks, "ts": toks, "online": toks[:], "regions": {x: r.choice(["EU", "NA-east", "NA-west", "other"]) for x in toks if r.random() < 0.9}}
+    if r.random() < 0.6:
+        w["prefs"] = {x: r.choice([1, 2]) for x in toks if r.random() < 0.3}
     if r.random() < 0.6:
         pool = toks[:]
         r.shuffle(pool)
@@ -417,6 +492,12 @@ def gen_mm(r, n):
         for b in toks:
             if a != b and r.random() < 0.9:
                 w["pings"]["%s|%s" % (a, b)] = r.choice([30, 80, 120, 170, 230, 300])
+    if w["parties"] and r.random() < 0.7:
+        # a locked party leader whose mate is measured in the other area: the mate can never join the leader's lobby (the party-wait path)
+        g0 = w["parties"][0]
+        w.setdefault("prefs", {})[g0[0]] = r.choice([1, 2])
+        w["regions"][g0[0]] = "EU" if w["prefs"][g0[0]] == 2 else "NA-east"
+        w["regions"][g0[1]] = "NA-east" if w["prefs"][g0[0]] == 2 else "EU"
     yield {"t": t, "op": "world", "w": w}
     out = 0
     while out < n:
@@ -425,7 +506,31 @@ def gen_mm(r, n):
         base = {"t": t, "op": "mm"}
         seq = []
         tk = r.choice(toks)
-        if x < 0.25:
+        if x < 0.04:
+            # R-5ZCJ shape: a finished match's post-match lobby (tickets) with parties searching again, one by one, the leader later
+            seq += [dict(m="start", i=0, map=r.randrange(5)), dict(m="end", i=0)]
+            for _ in range(r.randint(3, 8)):
+                seq.append(dict(m="enqueue", tok=r.choice(toks), dt=r.choice([0.0, 1.0, 5.0])))
+            seq += [dict(m="pollall"), dict(m="try_form"), dict(m="pollall", dt=r.choice([5.0, 35.0])), dict(m="try_form"), dict(m="try_form", dt=40.0)]
+        elif x < 0.06 and w["parties"]:
+            # R-5ZCJ: another lobby of 5 on post-match tickets, then a party's mates search one by one, the leader last; the wait ends later
+            g = r.choice(w["parties"])
+            others = [x2 for x2 in toks if x2 not in g]
+            r.shuffle(others)
+            seq.append(dict(m="mk", mid="f%d" % r.randrange(10 ** 6), players=others[:6]))
+            for x2 in others[:5]:
+                seq.append(dict(m="enqueue", tok=x2, dt=1.0))
+            seq += [dict(m="pollall"), dict(m="try_form")]
+            for x2 in g[1:] + g[:1]:
+                seq += [dict(m="enqueue", tok=x2, dt=r.choice([1.0, 2.0])), dict(m="pollall"), dict(m="try_form")]
+            seq += [dict(m="pollall", dt=35.0), dict(m="try_form"), dict(m="try_form", dt=5.0)]
+        elif x < 0.09 and w["parties"]:
+            g = w["parties"][0]
+            for x2 in [x3 for x3 in toks if x3 not in g][:5] + g:
+                seq.append(dict(m="enqueue", tok=x2))
+            seq += [dict(m="pollall"), dict(m="try_form", dt=1.0), dict(m="bksplit", tok=g[1]),
+                    dict(m="pollall", dt=5.0), dict(m="try_form", dt=1.0), dict(m="pollall", dt=5.0), dict(m="try_form", dt=20.0), dict(m="pollall"), dict(m="try_form", dt=40.0)]
+        elif x < 0.25:
             for _ in range(r.randint(1, 5)):
                 seq.append(dict(m="enqueue", tok=r.choice(toks)))
             seq.append(dict(m="pollall"))
@@ -453,10 +558,16 @@ def gen_mm(r, n):
         elif x < 0.96:
             seq += [dict(m="departm", i=r.randrange(5), j=r.randrange(8), vol=r.random() < 0.5), dict(m="start", i=r.randrange(5), map=r.randrange(5)),
                     dict(m="freshjoin", i=r.randrange(5), need=r.choice([1, 1, 2]), dt=r.choice([5.0, 20.0, 20.0, 40.0]), rem=r.choice([40.0, 200.0, 600.0]),
-                         dur=900.0, ended=r.random() < 0.1),
+                         dur=900.0, ended=r.random() < 0.1, ur=r.choice([-1, -1, 0, 1, 2]), ago=r.choice([5.0, 100.0, 700.0])),
                     dict(m="jip_ready"), dict(m="late", tok=r.choice(toks), i=r.randrange(5)), dict(m=r.choice(["jip_acked", "jip_done"]), tok=r.choice(toks))]
-        elif x < 0.99:
+        elif x < 0.97:
             seq.append(dict(m="query", tok=tk, i=r.randrange(5)))
+        elif x < 0.975:
+            seq.append(dict(m="unreach", tok=tk, i=r.randrange(5), j=r.randrange(-1, 8), ago=r.choice([5.0, 100.0, 700.0])))
+        elif x < 0.985:
+            seq += [dict(m="presence"), dict(m="presence")]
+        elif x < 0.995:
+            seq.append(dict(m="fair", tok=tk, i=r.randrange(5), late=r.random() < 0.5))
         else:
             seq.append(dict(m="gc", keep=r.sample(toks, 3)))
         for c in seq:

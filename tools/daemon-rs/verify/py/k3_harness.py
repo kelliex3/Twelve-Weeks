@@ -215,6 +215,8 @@ def do_call(d, f, a):
         return d._save_soon()
     if f == "map_pool":
         return d.map_pool(a[0], a[1])
+    if f == "public_map_pool":
+        return d.public_map_pool()
     if f == "map_index":
         return d.map_index(a[0])
     if f == "vote_options":
@@ -613,12 +615,12 @@ def gen(r, n):
                 c.update(f="norm_lang", a=r.choice([["none", None], ["bytes", ""], ["bytes", "01"], ["bytes", "05"], ["int", 1], ["int", 0], ["str", "pl-PL"],
                                                    ["str", " Polish "], ["str", "en"], ["str", "PL_pl"], ["str", "1"], ["str", ""], ["str", "pol"]]))
             elif k < 0.6:
-                key = r.choice(["update_refusal", "ver_mismatch", "ver_mismatch_linux", "files_edited", "kicked_why", "afk_kicked", "ping_kicked", "load_named", "loss_kicked", "moved"])
+                key = r.choice(["update_refusal", "ver_mismatch", "ver_mismatch_linux", "files_edited", "kicked_why", "afk_kicked", "ping_kicked", "load_named", "loss_kicked", "moved", "acscan_reshade", "acscan_tool"])
                 kw = {"a": "A1", "b": "B{x}", "f": "file.dll", "r": "why {a}", "s": 90, "ms": 250, "lim": 190, "pct": 40, "m": 5, "n": "Nme"}
                 use = {k2: kw[k2] for k2 in r.sample(list(kw), r.randint(0, 5))}
                 if key in ("ver_mismatch", "ver_mismatch_linux"):
                     use = {"a": "A1", "b": "B{x}"}
-                elif key == "files_edited":
+                elif key in ("files_edited", "acscan_reshade", "acscan_tool"):
                     use = {"f": "file.dll"}
                 elif key == "kicked_why":
                     use = {"r": "why {a}"}
@@ -648,6 +650,8 @@ def gen(r, n):
             k = r.random()
             if k < 0.2:
                 c.update(f="map_pool", a=[sub, r.choice([None, None, r.sample(toks, r.randint(0, 3))])])
+            elif k < 0.22:
+                c.update(f="public_map_pool", a=[])
             elif k < 0.32:
                 c.update(f="map_index", a=[sub])
             elif k < 0.42:

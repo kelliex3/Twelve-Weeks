@@ -60,6 +60,18 @@ def tok(i):
     return ("%02x" % i + "c0ffee11deadbeef" * 4)[:64]
 
 
+def _slurs():
+    try:
+        sys.path.insert(0, os.environ.get("T2R_PY_DIR", "."))
+        import slurs
+        return list(slurs._ANY[:6]) + list(slurs._WORD[:6])
+    except Exception:       # noqa: BLE001
+        return []
+
+
+SLURS = _slurs()
+
+
 def hx(b):
     return None if b is None else bytes(b).hex()
 
@@ -181,6 +193,7 @@ def setup():
     d.AC = types.SimpleNamespace(note_ip=lambda t, ip: (7, 0.5, "stub evidence") if t in STUB["ac_ip"] else None)
     d.ac_server_event = lambda token, mid, kind, w, evidence: log("STUB", "ac_server_event", "%s %s %s %s %s" % (token, mid, kind, w, evidence))
     d._SILENT.clear()
+    d.acscan = None                     # (private: not ported; the hook is absent on both sides)
     return d
 
 
@@ -199,6 +212,11 @@ def clear_all(d):
     for ss in (d.LINUX_CLIENTS, d.LOADED, d.CD_GOT, d._POOL_LOGGED, d.RESULT_BOOKED, d.END_BY_REPORTS):
         ss.clear()
     del d.VOTE_RECENT[:]
+    d.VOICE_PUSH.last.clear()
+    d.DED.prefs.clear()
+    d.MATCH_PRES.clear()
+    d.JIP_UNREACH.clear()
+    d.REGION_LOCK_LOG.clear()
     d._save_due[0] = 0.0
     d._rotation[0] = 2
     d.MM.__init__()
@@ -329,6 +347,11 @@ def run_batch(d, c):
 def do_call(d, f, a):
     if f == "loaded_clear":
         return d.loaded_clear_match(a[0], a[1])
+    if f == "asay":
+        lid, err = d.SOCIAL.admin_say(a[0], a[1], a[2], a[3])
+        return [lid, err]
+    if f == "voice":
+        return [[t, pl.hex()] for t, pl in d.voice_room_tick(T[0])]
     if f == "jip_requeue":
         return d.jip_requeue_if_empty(a[0])
     if f == "prestart":
@@ -625,10 +648,24 @@ def gen(r, n):
             if r.random() < 0.3:
                 fr.append([0x02, ""])
             emit_(dict(base, frames=fr))
+        elif k < 0.95 and r.random() < 0.3:
+            # launcher social frames of the match chat family (op 0xD8): MATCH chat / admin lines (S_ACHAT) / mutes / voice spam; slur words come from the module's own lists
+            sub = r.choice([13, 14, 15, 16, 17, 17, 17, 18, 19, 20, 21, 22, 22, 22])
+            if sub in (16, 19, 22):
+                arg = str(r.choice([0, 0, 1, 2, 5, 100, 123456789012345678]))
+            elif sub in (17, 18, 15, 13, 14):
+                arg = r.choice(["hello there", "gg", "x" * 5, "", r.choice(SLURS) if SLURS else "slur", ("well " + r.choice(SLURS) + " fine") if SLURS else "w",
+                                 " ".join(r.choice(SLURS) for _ in range(3)) if SLURS else "z", "Ünï é", "a|b<c>"])
+            else:
+                arg = r.choice(["", "1", "0", "x", tok(r.randrange(12))])
+            pl = tok(r.choice([i, i, r.randrange(12)])).encode() + bytes([1, r.choice([0, 1]), sub]) + arg.encode("utf-8")
+            if r.random() < 0.04:
+                pl = pl[:r.randrange(60, len(pl) + 1)]
+            emit_(dict(base, cid="x%d" % len(out), new=True, frames=[[0xD8, pl.hex()]]))
         elif k < 0.95:
             # ext short connection ops
             ops_ = [0xD0, 0xD2, 0xCC, 0xCE, 0xD4, 0xD6, 0xE0, 0xE2, 0xE4, 0xB4, 0xBF, 0xA9, 0xAA, 0xAB, 0xB6, 0xE8, 0xEE, 0xEF, 0xE3, 0xE6, 0xE6, 0xB2, 0xA1,
-                    0xB0, 0xBA, 0xF8, 0xDA, 0xD8, 0xDE, 0xBC, 0xDC, 0xCA, 0xC8, 0xC6, 0xEA, 0xEC, 0x77, 0x08]
+                    0xB0, 0xBA, 0xF8, 0xDA, 0xD8, 0xDE, 0xBC, 0xDC, 0xCA, 0xC8, 0xC6, 0xEA, 0xEC, 0x77, 0x08, 0xC4, 0xC4, 0xC4]
             fr = []
             for _ in range(r.choice([1, 1, 1, 2])):
                 o = r.choice(ops_)
@@ -638,6 +675,9 @@ def gen(r, n):
                     pl = tok(i).encode() + bytes([r.choice([0, 1, 3, 9]), r.choice([0, 1, 5])])[:r.choice([2, 2, 1, 0])]
                 if o == 0xB0:
                     pl = bytes([r.choice([0, 1, 2])]) + b"sv-test"[:r.choice([0, 3, 7])]
+                if o == 0xC4 and r.random() < 0.8:
+                    nreg = r.choice([0, 1, 2, 3])
+                    pl = tok(r.randrange(12)).encode() + bytes([r.choice([0, 1]), nreg]) + bytes(r.getrandbits(8) for _ in range(3 * nreg)) + bytes([r.choice([0, 1, 2, 2, 1, 5])])[:r.choice([1, 1, 1, 0])]
                 fr.append([o, pl.hex()])
             if r.random() < 0.1:
                 fr.append(frame_login(i))
@@ -645,7 +685,7 @@ def gen(r, n):
         else:
             # direct calls
             mids = ["m0", "m1", "m2", "zz"]
-            f = r.choice(["loaded_clear", "jip_requeue", "prestart", "mgs", "mgs", "mgs", "leave"])
+            f = r.choice(["loaded_clear", "jip_requeue", "prestart", "mgs", "mgs", "mgs", "leave", "voice", "voice", "asay", "asay"])
             mid = r.choice(mids)
             if f == "loaded_clear":
                 a = [mid, r.sample(toks, r.randint(0, 5))]
@@ -655,6 +695,11 @@ def gen(r, n):
                 a = [mid, r.sample(toks, r.randint(1, 5)), r.sample(toks, r.randint(0, 4))]
             elif f == "mgs":
                 a = [r.choice(toks)]
+            elif f == "voice":
+                a = []
+            elif f == "asay":
+                a = [r.choice(["m0", "m1", "m2", "zz", "", " m0 "]), r.choice(["Server", "Kellie", "", "a|b", "x" * 40, "<b>"]),
+                     r.choice(["hello", "", "  spaced   out ", "x" * 300, r.choice(SLURS) if SLURS else "s"]), r.choice(["", "admin1"])]
             else:
                 a = [r.choice(toks + [None]), "Nm", addr(i)]
             emit_({"t": t, "op": "call", "f": f, "a": a})

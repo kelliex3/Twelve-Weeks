@@ -22,10 +22,10 @@ run clan_cl6 bash verify/py/clan_cl6_compare.sh 1 $S $N "$P"
 T2R_REAL_STATUS=1 run clan_chronicle_real bash verify/py/clan_chronicle_compare.sh 1 $S $N "$P"
 run wslink_loop bash -c "python3 verify/py/wslink_loop_test.py py $P > $TMPDIR/wl.py && python3 verify/py/wslink_loop_test.py rs ./t2r-daemon > $TMPDIR/wl.rs && cmp $TMPDIR/wl.py $TMPDIR/wl.rs || echo FAIL"
 run k1 bash verify/py/k1_compare.sh 1 $S $N
+run fwd bash verify/py/fwd_compare.sh 1 $S 60
 T2R_K2_DOUBLES=0 run k2 bash verify/py/k2_compare.sh 1 $S $N
 run k3 bash verify/py/k3_compare.sh 1 $S $N
 run k5 bash verify/py/k5_compare.sh 1 $S $N
-mkdir -p ~/rsverify/daemon/k4 && rm -rf ~/rsverify/daemon/k4/verify && cp -r verify ~/rsverify/daemon/k4/ && cp t2r-daemon ~/rsverify/daemon/k4/t2r-daemon.new && mv ~/rsverify/daemon/k4/t2r-daemon.new ~/rsverify/daemon/k4/t2r-daemon
 run k4 bash verify/py/k4_compare.sh 1 $S $N
 run k4mm bash verify/py/k4mm_compare.sh 1 $S $N
 rm -rf "$TMPDIR"

@@ -14,10 +14,10 @@ for s in $(seq $a $b); do
   case $((s % 7)) in 3) export T2R_NO_PARTY_LOBBY=1 ;; *) unset T2R_NO_PARTY_LOBBY ;; esac
   case $((s % 3)) in 0) export T2R_JIP=0 ;; *) unset T2R_JIP ;; esac
   case $((s % 8)) in 5) export T2R_LEAVE_KEEP=60 ;; *) unset T2R_LEAVE_KEEP ;; esac
-  rm -rf $tmp/tools; mkdir -p $tmp/tools; rm -f $tmp/py.db* $tmp/rs.db* $tmp/*.json $tmp/no_host.txt
+  rm -rf $tmp/tools; mkdir -p $tmp/tools; rm -f $tmp/py.db* $tmp/rs.db* $tmp/*.json $tmp/no_host.txt $tmp/mutes.txt $tmp/voicebans.txt $tmp/slurs.txt
   python3 $here/verify/py/k5_harness.py gen $s $n > $tmp/in.$s
   T2R_DB=$tmp/py.db python3 $here/verify/py/k5_harness.py run < $tmp/in.$s > $tmp/py.$s 2> $tmp/py.err.$s
-  rm -f $tmp/*.json $tmp/no_host.txt
+  rm -f $tmp/*.json $tmp/no_host.txt $tmp/mutes.txt $tmp/voicebans.txt $tmp/slurs.txt
   T2R_DB=$tmp/rs.db $here/t2r-daemon selftest k5 < $tmp/in.$s > $tmp/rs.$s 2> $tmp/rs.err.$s
   if [ "$(wc -l < $tmp/py.$s)" != "$(wc -l < $tmp/in.$s)" ]; then echo "seed $s HARNESS FAILED ($(wc -l < $tmp/py.$s) of $(wc -l < $tmp/in.$s) lines)"; tail -3 $tmp/py.err.$s; bad=$((bad+1));
   elif cmp -s $tmp/py.$s $tmp/rs.$s; then echo "seed $s OK $(wc -l < $tmp/py.$s) lines"; [ -n "${K5_KEEP:-}" ] || rm -f $tmp/in.$s $tmp/py.$s $tmp/rs.$s $tmp/py.err.$s $tmp/rs.err.$s
