@@ -540,7 +540,7 @@ def gen(r, n):
         c = {"t": t, "op": "mm", "matches": m, "launched": launched, "ended": [x for x in mids if r.random() < 0.1],
              "departed": {x: [y for y in m[x] if r.random() < 0.18] for x in mids}, "queue": q, "joining": joining, "started": started,
              "started_t": {x: t - r.choice([3.0, 50.0, 200.0]) for x in mids}, "loaded": loaded,
-             "jlate": {p: [r.choice(mids), t - r.choice([5.0, 150.0])] for x in mids for p in m[x] if r.random() < 0.08},
+             "jlate": {p: [x if r.random() < 0.8 else r.choice(mids), t - r.choice([5.0, 150.0])] for x in mids for p in m[x] if r.random() < 0.15},
              "hm": [x for x in started if r.random() < 0.6],
              "timing": [[m[x], t - 20.0] for x in mids if r.random() < 0.5]}
         return c
