@@ -141,6 +141,26 @@ fn has_pl_letters(t: &str) -> bool {
 /// True when a template / sentence (with or without {placeholders}) reads as combat, raid, patrol, danger-scavenging or weapon lore.
 /// lang "en" | "pl" picks the word list; None = Polish when the text has Polish letters, else English.
 pub fn combat_text(t: &str, lang: Option<&str>) -> bool {
+    // a pure function of (text, language): memoised (the big regexes ran on every candidate line of every menu / day)
+    static MEMO: LazyLock<parking_lot::Mutex<std::collections::HashMap<(String, u8), bool>>> = LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+    let lk = match lang {
+        None => 0u8,
+        Some("pl") => 1,
+        Some(_) => 2,
+    };
+    if let Some(v) = MEMO.lock().get(&(t.to_string(), lk)) {
+        return *v;
+    }
+    let r = combat_text_raw(t, lang);
+    let mut m = MEMO.lock();
+    if m.len() > 200_000 {
+        m.clear();
+    }
+    m.insert((t.to_string(), lk), r);
+    r
+}
+
+fn combat_text_raw(t: &str, lang: Option<&str>) -> bool {
     if t.is_empty() {
         return false;
     }
