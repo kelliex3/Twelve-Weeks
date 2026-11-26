@@ -58,6 +58,9 @@ pub mod story {
 
     // py: clan_story.py:880 _load
     pub fn _load(c: &Connection, tid: &str) -> Option<Value> {
+        if !DOUBLES.load(Ordering::SeqCst) {
+            return crate::clan::clan_story::_load(c, tid);
+        }
         let row: Option<String> = c.query_row("SELECT state FROM clan_story WHERE token_id=?", [tid], |r| r.get::<_, String>(0)).ok();
         let st: Value = serde_json::from_str(&row?).ok()?;
         if st.is_object() && st.get("v").map(int_of) == Some(1) && st.get("v").map(|v| v.is_number()).unwrap_or(false) {
@@ -82,6 +85,9 @@ pub mod story {
     // py: clan_story.py:463 finish_member  (+ _remove at :486)
     /// A member leaves the roster for good (a story arc's end). `p` and `helper` are looked up in `st["people"]` by their id (Python mutates the very objects).
     pub fn finish_member(st: &mut Value, p: &Value, day: i64, cause: &str, helper: Option<&Value>) {
+        if !DOUBLES.load(Ordering::SeqCst) {
+            return crate::clan::clan_story::finish_member(st, p, day, cause, helper);
+        }
         let pid = p.get("i").map(int_of).unwrap_or(0);
         // _remove(st, p, day, cause)
         if let Some(idx) = by_id_idx(st, pid) {
@@ -131,8 +137,9 @@ pub mod story {
     // py: clan_story.py:474 spare_sick   (TEST DOUBLE: the real one draws a name from the pools)
     pub fn spare_sick(rng: &mut PyRandom, st: &mut Value, day: i64) -> Value {
         if !DOUBLES.load(Ordering::SeqCst) {
-            return crate::clan::clan_story::spare_sick(rng, st, day); // production / real-module runs: the real port
+            return crate::clan::clan_story::spare_sick(rng, st, day);
         }
+        need_doubles("clan_story::spare_sick");
         let _ = rng.random();
         let pid = st.get("pid").map(int_of).unwrap_or(0) + 1;
         st["pid"] = json!(pid);

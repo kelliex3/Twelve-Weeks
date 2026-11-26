@@ -29,5 +29,6 @@ pub mod selftest_alife;
 pub mod selftest_base;
 pub mod selftest_chronicle;
 pub mod selftest_cl6;
+pub mod selftest_golden;
 pub mod selftest_saga;
 pub mod selftest_story;

@@ -207,6 +207,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         }
     };
     std::env::set_var("T2R_CLAN_ALIFE", "1");
+    std::env::set_var("T2R_CLAN_CHRONICLE", "0"); // the Python harness switches the chronicle off too (it is not part of this module's test)
     ext::set_test_real(true);
     crate::clan::ext_clan_alife::set_test_fake(true);
     let mut i = 0usize;
