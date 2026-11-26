@@ -193,6 +193,21 @@ fn state() -> Value {
     );
     s.insert("hmx".into(), json!(["m0", "m1", "m2"].iter().map(|m| HM.export_match(m)).collect::<Vec<_>>()));
     s.insert("notes".into(), json!(SOCIAL.dump_notes().iter().map(|(t, l)| json!([t, l.iter().map(|n| json!([n.0, n.1, n.2, n.3])).collect::<Vec<_>>()])).collect::<Vec<_>>()));
+    {
+        let g = MM.lock.lock();
+        let bk = &g.book;
+        s.insert("book".into(), json!(bk.lobbies.iter().map(|(k, lb)| {
+            let mut j: Vec<(&String, &f64)> = lb.joined.iter().collect();
+            j.sort_by(|a, b| a.0.cmp(b.0));
+            json!([k, lb.members, j, lb.away.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(), lb.created, lb.last_join, lb.mid, lb.src, lb.hold, lb.wait_until])
+        }).collect::<Vec<_>>()));
+        let mut of: Vec<(&String, &String)> = bk.of.iter().collect();
+        of.sort();
+        s.insert("bookof".into(), json!(of));
+        let mut lf: Vec<(&String, &(String, f64, f64))> = bk.left.iter().collect();
+        lf.sort_by(|a, b| a.0.cmp(b.0));
+        s.insert("bookleft".into(), json!(lf.iter().map(|(k, v)| json!([k, [v.0, v.1, v.2]])).collect::<Vec<_>>()));
+    }
     s.insert("party".into(), json!((0..12).map(|i| json!([tok(i), PARTIES.pid(&tok(i))])).collect::<Vec<_>>()));
     s.insert("db".into(), dbdump());
     {

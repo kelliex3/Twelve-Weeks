@@ -133,6 +133,11 @@ def setup():
     d.evt = lambda kind, *a: log("EVT", kind, *a)
     d.SERVER_VERSION = "sv-test"
     d._ping_gate = lambda a, b, now=None: d.pair_ping(a, b)
+    d.jip_ping_block = lambda *a, **k: None          # (K6 items: the Rust side has the same stand-ins, src/d/ext_k3.rs / ext_k4.rs)
+    d.ping_wait_judge = lambda *a, **k: (False, [])
+    d.ping_left_out_note = lambda *a, **k: None
+    d.silence = lambda t, now=None: 0.0
+    d.loss_note = lambda *a, **k: None
     # ---- the stand-ins (same behaviour as src/d/ext_k5.rs)
     d.readopt_claim = lambda t: log("STUB", "readopt_claim", t)
     d.live_save = lambda now=None: log("STUB", "live_save", "")
@@ -274,6 +279,10 @@ def state(d):
     s["hm"] = [[t, bool(d.HM.has(t)), d.HM.host_token(t) if d.HM.has(t) else None] for t in [tok(i) for i in range(12)]]
     s["hmx"] = [d.HM.export_match(m) for m in ("m0", "m1", "m2")]
     s["notes"] = [[t, [list(n) for n in lst]] for t, lst in sorted(d.SOCIAL.notes.items())]
+    bk = d.MM.book
+    s["book"] = [[k, list(lb.members), sorted(lb.joined.items()), list(lb.away.items()), lb.created, lb.last_join, lb.mid, lb.src, bool(lb.hold), lb.wait_until] for k, lb in bk.lobbies.items()]
+    s["bookof"] = sorted(bk.of.items())
+    s["bookleft"] = sorted([k, list(v)] for k, v in bk.left.items())
     s["party"] = [[t, d.PARTIES.pid(t)] for t in [tok(i) for i in range(12)]]
     s["db"] = dbdump()
     sts = {}
