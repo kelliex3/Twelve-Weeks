@@ -128,6 +128,8 @@ pub static TEST_TIMERS_ON: AtomicBool = AtomicBool::new(false);
 static TIMER_SEQ: AtomicU64 = AtomicU64::new(0);
 type TimerFn = Box<dyn FnOnce() + Send + 'static>;
 static TEST_TIMERS: LazyLock<Mutex<Vec<(f64, u64, TimerFn)>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+/// Test hook (K2 selftest): `loaded_clear_match` is a no-op double (the K2 harness patches it to `lambda mid, players: None`).
+pub static TEST_NO_LOADED_CLEAR: AtomicBool = AtomicBool::new(false);
 /// Test hook: while set, clan_report's `leave_running_match` is the double of the harness (logs and returns true).
 pub static TEST_LEAVE: AtomicBool = AtomicBool::new(false);
 
@@ -1238,7 +1240,9 @@ pub fn match_end_via_reports(mid: &str, now: Option<f64>) -> bool {
     }
     END_BY_REPORTS.lock().insert(mid.to_string());
     clan_match_ended(&players, mid);
-    loaded_clear_match(mid, &players);
+    if !TEST_NO_LOADED_CLEAR.load(Ordering::Relaxed) {
+        loaded_clear_match(mid, &players);
+    }
     MM.end(mid);
     INT.end(mid, Some(0xFF));
     GL.end(mid);
@@ -1314,6 +1318,10 @@ pub fn clan_match_started(players: &[String], mid: &str) {
 
 // py: daemon.py:2343 clan_match_ended
 pub fn clan_match_ended(players: &[String], mid: &str) {
+    if super::ext_k5::K5_FAKE_K2.load(Ordering::Relaxed) {
+        // K5 selftest: the stand-in of verify/py/k5_harness.py (it patches the module global, so every caller gets it)
+        return super::ext_k5::stub_note("clan_match_ended", format!("{} {}", crate::py::list_str(players), mid));
+    }
     {
         let mut ba = BOOST_ACTIVE.lock();
         for p in players {

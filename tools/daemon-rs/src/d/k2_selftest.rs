@@ -584,8 +584,10 @@ fn one(c: &Value) -> Value {
 }
 
 pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
-    crate::clan::ext_clan_story::set_test_fake(true);
+    // T2R_K2_DOUBLES=0: the real clan modules on both sides (the Python harness drops its doubles then too)
+    crate::clan::ext_clan_story::set_test_fake(std::env::var("T2R_K2_DOUBLES").map(|v| v != "0").unwrap_or(true));
     TEST_TIMERS_ON.store(true, Ordering::Relaxed);
+    TEST_NO_LOADED_CLEAR.store(true, Ordering::Relaxed);
     crate::clan::clan::capture_prints(true);
     let _ = std::fs::create_dir_all(dir());
     let mut n = 0usize;
