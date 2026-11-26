@@ -338,6 +338,13 @@ pub fn init_maps() {
     );
 }
 
+/// Python import-time work of the K3 block (tables loaded from disk, the map list, the rotation start, the SPMAPS log line): call once at start, before the servers
+pub fn init_k3() {
+    init_maps();
+    let _ = (&*ROTATION, &*PACKS, &*SPSUP, &*REQUIRE_VERSION, &*PERF);
+    let _ = (CLIENT_VERSIONS.lock().len(), LINUX_CLIENTS.lock().len(), CLIENT_LANGS.lock().len(), server_version());
+}
+
 // py: daemon.py:3704 BROKEN_MAPS
 pub static BROKEN_MAPS: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 /// daemon.py:3706 MATCH_MAP: frozenset(match tokens) -> map index (same for every player)

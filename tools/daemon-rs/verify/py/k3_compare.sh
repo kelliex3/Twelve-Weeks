@@ -21,7 +21,8 @@ for s in $(seq $a $b); do
   T2R_DB=$tmp/py.db python3 $here/verify/py/k3_harness.py run < $tmp/in.$s > $tmp/py.$s 2> $tmp/py.err.$s
   rm -f $tmp/*.json $tmp/no_host.txt
   T2R_DB=$tmp/rs.db $here/t2r-daemon selftest k3 < $tmp/in.$s > $tmp/rs.$s 2> $tmp/rs.err.$s
-  if cmp -s $tmp/py.$s $tmp/rs.$s; then echo "seed $s OK $(wc -l < $tmp/py.$s) lines"; [ -n "${K3_KEEP:-}" ] || rm -f $tmp/in.$s $tmp/py.$s $tmp/rs.$s $tmp/py.err.$s $tmp/rs.err.$s
+  if [ "$(wc -l < $tmp/py.$s)" != "$(wc -l < $tmp/in.$s)" ]; then echo "seed $s HARNESS FAILED ($(wc -l < $tmp/py.$s) of $(wc -l < $tmp/in.$s) lines)"; tail -3 $tmp/py.err.$s; bad=$((bad+1));
+  elif cmp -s $tmp/py.$s $tmp/rs.$s; then echo "seed $s OK $(wc -l < $tmp/py.$s) lines"; [ -n "${K3_KEEP:-}" ] || rm -f $tmp/in.$s $tmp/py.$s $tmp/rs.$s $tmp/py.err.$s $tmp/rs.err.$s
   else echo "seed $s DIFF"; cmp $tmp/py.$s $tmp/rs.$s | head -2; bad=$((bad+1)); fi
 done
 echo "k3: $bad seeds differ"

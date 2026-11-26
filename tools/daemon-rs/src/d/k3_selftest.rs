@@ -455,6 +455,10 @@ fn call(f: &str, a: &[Value]) -> Value {
             mesh_activate(&s(0));
             Value::Null
         }
+        "hm_start" => {
+            HM.start(&s(0), &ss(1));
+            Value::Null
+        }
         "perf_op" => hx_opt(perf_op(&unhx(&s(0)))),
         "perf_penalty" => json!([perf_penalty(&s(0)), ping_match_ms()]),
         "best_host_order" => json!(best_host_order(&ss(0))),

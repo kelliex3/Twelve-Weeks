@@ -292,6 +292,9 @@ def do_call(d, f, a):
         return None if r is None else sorted(r)
     if f == "mesh_activate":
         return d.mesh_activate(a[0])
+    if f == "hm_start":
+        d.HM.start(a[0], a[1])
+        return None
     if f == "perf_op":
         return hx(d.perf_op(unhx(a[0])))
     if f == "perf_penalty":
@@ -453,6 +456,18 @@ def run():
 
 
 SID0 = 76561198000000000
+
+
+def perf_pl(r, tk, cap):
+    fl = r.choice([0, 1, 2, 3]) if cap else r.choice([0, 1])
+    pl = tk.encode() + bytes([1]) + bytes([r.choice([0, 1, 5, 20]), r.choice([0, 1, 3, 12])]) + r.choice([0, 100, 500, 3000]).to_bytes(2, "little") + r.choice([0, 160, 400]).to_bytes(2, "little") + bytes([fl])
+    if cap:
+        pl += bytes([1]) + r.choice([100, 800]).to_bytes(2, "little") + r.choice([200, 900]).to_bytes(2, "little") + bytes([r.choice([0, 30, 60, 100]), 8])
+        if fl & 2:
+            pl += bytes([1, r.choice([5, 20]), r.choice([0, 10]), 0, r.choice([50, 200]), 0, 60])
+    if r.random() < 0.08:
+        pl = pl[:60]
+    return pl.hex()
 
 
 def gen(r, n):
@@ -732,14 +747,13 @@ def gen(r, n):
             elif k < 0.52:
                 c.update(f=r.choice(["mesh_peers", "mesh_activate"]), a=[r.choice(toks)])
             elif k < 0.60:
-                tk = r.choice(toks)
-                pl = tk.encode() + bytes([1]) + bytes([r.choice([0, 1, 5, 20]), r.choice([0, 1, 3, 12])]) + r.choice([0, 100, 500, 3000]).to_bytes(2, "little") + \
-                    r.choice([0, 160, 400]).to_bytes(2, "little") + bytes([r.choice([0, 1])])
-                if r.random() < 0.3:
-                    pl += bytes([1]) + r.choice([100, 800]).to_bytes(2, "little") + r.choice([200, 900]).to_bytes(2, "little") + bytes([r.choice([0, 30, 60]), 8])
-                if r.random() < 0.1:
-                    pl = pl[:60]
-                c.update(f="perf_op", a=[pl.hex()])
+                if cur_mm["matches"] and r.random() < 0.5:      # a match under host migration: the capacity and one-way trailers book against its host
+                    mid_ = r.choice(list(cur_mm["matches"]))
+                    mp = cur_mm["matches"][mid_]
+                    act = [x for x in mp if x not in cur_mm["departed"].get(mid_, [])] or mp
+                    c.update(f="seq", a=[[{"f": "hm_start", "a": [mid_, mp]}] + [{"f": "perf_op", "a": [perf_pl(r, r.choice(act), True)]} for _ in range(r.randint(1, 4))]])
+                else:
+                    c.update(f="perf_op", a=[perf_pl(r, r.choice(toks), r.random() < 0.3)])
             elif k < 0.64:
                 c.update(f="perf_penalty", a=[r.choice(toks)])
             elif k < 0.76:
