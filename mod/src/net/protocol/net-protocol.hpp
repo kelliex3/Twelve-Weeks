@@ -270,7 +270,7 @@ enum class NetDaemonOp : uint8_t {
     kClanStateRead  = 0xE0,   // [64B token] -> kClanStateReply
     kClanStateReply = 0xE1,   // "fac=1 st=1 day=3 ..." (parsed by clan-state.hpp)
     kClanReport     = 0xE2,   // [64B token][u32 seq][u32 parts][u8 flags][u8 n][n x (u8 label,u16 count)]
-    kClanChooseSide = 0xE4,   // [64B token][u8 side] -> kClanStateReply
+    kClanChooseSide = 0xE4,   // [64B token][u8 side+1][u8 caps=0x01] -> kClanStateReply
     // Achievements client half (tools/ext/achieve.c). Same ext bytes, added as
     // names only -- no existing opcode is moved during cutover.
     kAchReport      = 0xA9,   // [64B token][u32 seq][u8 n][n x (u8 label,u16 count)] -> table

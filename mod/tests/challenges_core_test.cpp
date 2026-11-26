@@ -1,5 +1,5 @@
 // Standalone harness for the CHALLENGES grid core:
-//   g++ -std=c++17 -Wall -Wextra -Werror -pedantic -I mod/src/net/ui
+//   g++ -std=c++20 -Wall -Wextra -Werror -pedantic -I mod/src/net/ui
 //       mod/tests/challenges_core_test.cpp -o /tmp/challenges_core_test
 //   /tmp/challenges_core_test
 //
@@ -9,6 +9,7 @@
 #include "challenges-core.hpp"
 
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -95,6 +96,35 @@ namespace {
         }
     }
 
+    void StoryCountTests()
+    {
+        Profile p;
+        Defaults(p);
+        bool monotonic = true;
+        for (int f = 0; f < CZ_NFAC; ++f) {
+            int hiddenDone = 0, hiddenTotal = 0, shownDone = 0, shownTotal = 0;
+            Count(p, f, false, false, hiddenDone, hiddenTotal);
+            Count(p, f, false, true, shownDone, shownTotal);
+            if (shownTotal < hiddenTotal || shownDone < hiddenDone) monotonic = false;
+        }
+        Check(monotonic, "showing dev story masks never removes a challenge from the count");
+    }
+
+    void WidgetAndFeedbackTests()
+    {
+        char path[128];
+        Check(TileChildPath(path, sizeof path, 2, 4, "P")
+              && std::strcmp(path, "anim-group.rows.t2_4.t2_4P") == 0,
+              "tile children live under the generated tile group");
+        Check(!TileChildPath(path, 8, 2, 4, "Bg"),
+              "tile child path building refuses to truncate");
+
+        DenyFeedback deny;
+        Check(deny.AllowSound(1000) && !deny.AllowSound(1299)
+              && deny.AllowSound(1300),
+              "denial sound is guarded to one play per 300 ms");
+    }
+
     void TipTests()
     {
         Profile p;
@@ -115,6 +145,8 @@ int main()
     GridTests();
     FocusTests();
     HoverEquipTests();
+    StoryCountTests();
+    WidgetAndFeedbackTests();
     TipTests();
     if (fails) {
         std::printf("%d failure(s)\n", fails);

@@ -11,6 +11,8 @@
 #include "net-replication.hpp"
 #include "net-common.hpp"
 #include "engine/backpack-prop.hpp"
+#include "engine/armor-rig.hpp"
+#include "net/ui/customize-compose.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -544,9 +546,16 @@ void NetPlayer::Spawn(Vector3 position, Quaternion rotation)
     }
     EnsureInit();
 
+    // ext cz_spawn_field(): a CUSTOMIZE body replaces the pool look for this
+    // spawn only; the wire keeps the base look. SpawnLook() publishes that
+    // body's armour / bag registry entry alongside the name.
+    const char* look = LookOrDefault();
+    char composed[0x28];
+    if (net::ui::customize::compose::SpawnLook(netSlot, look, composed))
+        look = composed;
     StringId64 npc = DC::Call<"spawn-entity-at-with-look">(SID("starlight-mp-client-1"), // spawner with multispawn
         LOCATOR::GET_SPAWNER_LOCATOR(SID("to1-spawn-point-1")),
-        SID(LookOrDefault()));
+        SID(look));
     if (!npc) {
         TO1_LOG("[NetPlayer] slot %d: NPC spawn failed\n", netSlot);
         return;
@@ -1119,6 +1128,9 @@ namespace NetPlayers {
     void RespawnLocal(Vector3 position, Quaternion rotation)
     {
         const char* look = Local() ? Local()->LookOrDefault() : DefaultLook(0);
+        char composed[0x28];
+        if (net::ui::customize::compose::SpawnLook(engine::armor_rig::kUs, look, composed))
+            look = composed;
         SetupModelChangerSpawner(position, rotation, look);
 
         uintptr_t deadPlayerPtr = LocalPtr();

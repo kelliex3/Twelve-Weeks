@@ -5,6 +5,8 @@
 
 #include "customize.hpp"
 #include "challenges-core.hpp"
+#include "customize-compose.hpp"
+#include "customize-stage.hpp"
 
 #include "boot.hpp"
 #include "engine/exe_side.hpp"
@@ -163,6 +165,8 @@ namespace net::ui::customize {
             float zoomU = 1.0f;
             uint8_t counter = 0;
             bool netDirty = false;
+            uint64_t lightRepAt = 0;
+            bool cineWas = false;
             char msg[128]{};
         } g;
 
@@ -258,6 +262,7 @@ namespace net::ui::customize {
         {
             (void)now;
             if (!g.netDirty) return;
+            if (compose::WearOff()) return;   // read-only opt-out suppresses sends, not the save
             uint8_t body[kMsgLen];
             const int n = Msg(g.p, g.counter, body);
             if (n == kMsgLen)
@@ -902,7 +907,26 @@ namespace net::ui::customize {
     int Sex(int fac) { return net::ui::customize::Sex(fac); }
     int CurrentSide() { return CurrentFaction(); }
     bool TipUp() { return g.tipUp; }
+    uint64_t ShowAt() { return g.showAt; }
     bool NetChanged() { return g.netDirty; }
+
+    bool PageUp()
+    {
+        if (Disabled()) return false;
+        const uint64_t top = engine::widget::TopPage();
+        return top && (top == Page() || top == ChallengesPage())
+            && !g.closing && !g.quiet;
+    }
+
+    int FocusedKey(int fac, int sex, int cat)
+    {
+        if (!g.on || cat < 0 || cat >= CZ_NCAT || cat == CZ_SEX) return -1;
+        return core::R2K(g.p, fac, sex, cat, g.foc[cat], true, StoryMasksShown());
+    }
+
+    bool Zoomed() { return g.zoom && g.cat != CZ_SEX; }
+    float ZoomUse() { return g.zoomU; }
+    bool FrontHovered() { return g.hvF; }
 
     uint8_t ConsumeNetChange()
     {
@@ -919,6 +943,8 @@ namespace net::ui::customize {
         g.key = 0;
         SaveImpl();
     }
+
+    uint64_t ProgressGeneration() { return g.gen; }
 
     void TipDone()
     {
@@ -1008,6 +1034,13 @@ namespace net::ui::customize {
         Scan();
         bool click = engine::menu_input::ClickEdge();
 
+        // The stage freecam owns all input while it flies. Its Esc (sampled in
+        // stage::Tick) must not also close the page when the key is released.
+        if (stage::FreecamActive()) {
+            g.hEsc = true;
+            Fade(now);
+            return;
+        }
         if (g.tipUp) {
             if (now - g.enterMs > 400
                 && (sel || back || esc || (click && g.hvTip)))
@@ -1019,6 +1052,31 @@ namespace net::ui::customize {
             MENU2::PUSH_PAGE(MenuStack::hudMenuStack, "to1/customize-challenges");
             ui::Sfx("sfx-select");
             return;
+        }
+        // Live stage lighting, owned by the stage but driven from the page's
+        // already-sampled keyboard state (ext customize.c: [ / ] repeat at 110 ms,
+        // L cycles YOUR LAYOUT -> A..E for the stage on screen).
+        if (engine::window::Focused()) {
+            const bool dn = engine::window::KeyDown(VK_OEM_4);
+            const bool br = engine::window::KeyDown(VK_OEM_6);
+            if ((dn || br) && now >= g.lightRepAt) {
+                g.lightRepAt = now + 110;
+                stage::LightStep(br ? 1 : -1);
+                std::snprintf(g.msg, sizeof g.msg, "STAGE LIGHT %d%%",
+                              static_cast<int>(stage::LightPercent() * 100.0f + 0.5f));
+                g.msgUntil = now + 2500;
+                g.key = 0;
+            }
+            const bool lNow = engine::window::KeyDown('L');
+            if (lNow && !g.cineWas) {
+                const char* nm = stage::CineStep();
+                std::snprintf(g.msg, sizeof g.msg, "LIGHTING: %s  %d%%", nm ? nm : "",
+                              static_cast<int>(stage::LightPercent() * 100.0f + 0.5f));
+                g.msgUntil = now + 3500;
+                g.key = 0;
+                TO1_LOG("customize: lighting setup -> %s (L)\n", nm ? nm : "");
+            }
+            g.cineWas = lNow;
         }
         if (zoom || (click && g.hvZm)) {
             g.zoom = !g.zoom;

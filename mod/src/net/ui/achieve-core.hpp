@@ -53,6 +53,34 @@ namespace net::ui::achieve::core {
     constexpr float    kCardTextK = 1.06f;
     constexpr int      kCardPages = 4;
 
+    // tools/features/achieve_widgets.py + nr_style.py: the clanach page's
+    // authored geometry. The owner writes widgets through engine::widget; these
+    // are the pure decisions / coordinates shared with the harness.
+    constexpr float kX0         = 148.0f;
+    constexpr float kTileW      = 300.0f;
+    constexpr float kTilePitch  = 324.0f;    // kTileW + 24 gap
+    constexpr float kX1         = 2068.0f;
+    constexpr float kRowY0      = 440.0f;
+    constexpr float kRowPitch   = 440.0f;
+    constexpr float kTileDy     = 46.0f;     // header line -> tile top
+    constexpr float kBarDy      = 316.0f;    // tile top -> its bar
+    constexpr float kSidebarX   = 2128.0f;
+    constexpr float kSidebarY0  = 420.0f;
+    constexpr float kSidebarY1  = 1690.0f;
+    constexpr float kDetailX0   = 2300.0f;
+    constexpr float kDetailX1   = 3700.0f;
+    constexpr float kTitleY     = 1290.0f;
+    constexpr float kRuleW0     = 1000.0f;   // nr_style.RULE_W0
+    constexpr float kChipW0     = 100.0f;    // nr_style.CHIP_W0
+    constexpr float kSectionPt  = 36.0f;     // nr_style.pt(24)
+    constexpr float kChipPt     = 30.0f;
+    constexpr float kFitPt      = 54.0f;     // nr_style.HEAD_PT
+    constexpr float kPromptY    = 2000.0f;
+    constexpr float kPromptH    = 88.0f;
+    constexpr float kPromptPt   = 36.0f;
+    constexpr float kPromptKeyPt = 24.0f;
+    constexpr float kNR1        = 3700.0f;
+
     constexpr int kLSe0        = 64;
     constexpr int kLFists      = 73;
     constexpr int kLOwnMolotov = 74;
@@ -416,14 +444,14 @@ namespace net::ui::achieve::core {
         return true;
     }
 
+    // achui_click(): hv_c is the absolute item index, not the visible column.
     inline void FocusHover(UiState& ui, int r, int c)
     {
         const int row = ui.row0 + r;
-        if (r < 0 || r >= kRows || row >= ui.groups || c < 0) return;
-        const int index = ui.off[row] + c;
-        if (index >= ui.g[row].n) return;
+        if (r < 0 || r >= kRows || row >= ui.groups || c < 0
+            || c >= ui.g[row].n) return;
         ui.fr = row;
-        ui.fc = index;
+        ui.fc = c;
         ui.want = c;
         ClampFocus(ui);
     }
@@ -439,6 +467,163 @@ namespace net::ui::achieve::core {
     {
         return ui.hvR * 4096 + ui.hvC * 64 + (ui.hvTab + 4) * 8 + ui.hvPb + 1;
     }
+
+    // ---- page fill decisions (achieve_ui.c / achieve_widgets.py) ----------------
+
+    // status chip: 0 grey LOCKED, 1 accent UNLOCKED <date>, 2 dark HIDDEN.
+    enum Status : int { kLocked = 0, kUnlocked = 1, kHidden = 2 };
+    inline Status StatusOf(const Row& r)
+    {
+        return r.t ? kUnlocked : (r.hidden ? kHidden : kLocked);
+    }
+
+    // achieve_widgets.tile_alpha: focused full, unlocked dimmed a little,
+    // locked more, hidden dark. The hover gets the focused alpha too.
+    inline float TileAlpha(bool focus, bool locked, bool hidden)
+    {
+        const int a = hidden ? (focus ? 140 : 95)
+                             : focus ? 255 : (locked ? 165 : 205);
+        return static_cast<float>(a) / 255.0f;
+    }
+
+    // A thin tile bar exists for every counter achievement that is not a
+    // hidden+locked one; an unlocked counter reads full even below its goal.
+    inline bool TileBar(const Row& r)
+    {
+        return r.goal > 1 && !(r.hidden && !r.t);
+    }
+    inline float TileBarFraction(const Row& r)
+    {
+        if (r.t) return 1.0f;
+        if (r.goal <= 0) return 0.0f;
+        return std::max(0.0f, std::min(1.0f, static_cast<float>(r.prog)
+                                                / static_cast<float>(r.goal)));
+    }
+    inline bool NewDot(const Row& r, uint32_t seen)
+    {
+        return r.t && r.t > seen;
+    }
+
+    // achieve_ui.c achui_icon / aui_ach: the icons and the locale keys are
+    // derived from the id; the daemon's English text stays on the wire.
+    inline void IconPath(const Row& r, char* out, size_t n)
+    {
+        if (!out || !n) return;
+        if (!r.t && r.hidden)
+            std::snprintf(out, n, "streaming/t2r/ach/hidden.png");
+        else
+            std::snprintf(out, n, "streaming/t2r/ach/%s%s.png", r.id, r.t ? "" : "-l");
+    }
+    inline void LocKey(const Row& r, bool desc, char* out, size_t n)
+    {
+        if (out && n)
+            std::snprintf(out, n, desc ? "ach.%s.desc" : "ach.%s.title", r.id);
+    }
+
+    // The detail bar and count use the unlocked goal even for 0 | 1 achievements.
+    inline void DetailProgress(const Row& r, int& prog, int& goal)
+    {
+        goal = r.goal > 0 ? r.goal : 1;
+        prog = r.t ? goal : std::max(0, std::min(r.prog, goal));
+    }
+    inline int UnlockedCount(const Table& t)
+    {
+        int n = 0;
+        for (int i = 0; i < t.n; ++i)
+            if (t.rows[i].t) ++n;
+        return n;
+    }
+    // tools/features/customize_items.py U_ACH (its --header output is
+    // customize_ach.h): the five CUSTOMIZE items an achievement opens. The
+    // generated header is a private build artifact, so the five rows are
+    // mirrored here as plain data; no new wire field is involved.
+    struct UnlockItem {
+        const char* id;
+        const char* label;
+    };
+    inline constexpr UnlockItem kAchUnlocks[] = {
+        { "se_hammer", "ABBY'S GAS MASK" },
+        { "sera_12",   "ELDER'S HOODED COAT" },
+        { "bow_50",    "ISLANDER LONG COAT" },
+        { "wlf_12",    "M-65 JACKET" },
+        { "lockbox_10", "TORTURED" },
+    };
+    inline constexpr int kAchUnlockN = static_cast<int>(sizeof kAchUnlocks / sizeof kAchUnlocks[0]);
+
+    // The detail's UNLOCKS: line, ", "-joined in U_ACH's sorted label order.
+    inline void UnlocksFor(const char* id, char* out, size_t n)
+    {
+        if (!out || !n) return;
+        out[0] = 0;
+        if (!id || !*id) return;
+        size_t used = 0;
+        for (const UnlockItem& u : kAchUnlocks) {
+            if (std::strcmp(u.id, id) != 0) continue;
+            const int w = std::snprintf(out + used, n - used, "%s%s",
+                                        used ? ", " : "", u.label);
+            if (w < 0 || static_cast<size_t>(w) >= n - used) break;
+            used += static_cast<size_t>(w);
+        }
+    }
+
+    inline const char* StatusKey(const Row& r)
+    {
+        return r.t ? "UNLOCKED" : (r.hidden ? "HIDDEN" : "LOCKED");
+    }
+    inline const char* StatusChip(int status)
+    {
+        static const char* const k[3] = {
+            "anim-group.det.dChip", "anim-group.det.dChipA", "anim-group.det.dChipD"
+        };
+        return k[std::max(0, std::min(2, status))];
+    }
+    inline const char* MonthKey(int month)
+    {
+        static const char* const k[12] = {
+            "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+        };
+        return k[std::max(0, std::min(11, month))];
+    }
+    inline const char* GroupLabel(int groupIndex)
+    {
+        return kGroupLabel[std::max(0, std::min(kGroupN - 1, groupIndex))];
+    }
+
+    inline float TileX(int col) { return kX0 + kTilePitch * static_cast<float>(col); }
+    inline float TileY(int row)
+    {
+        return kRowY0 + kRowPitch * static_cast<float>(row) + kTileDy;
+    }
+    // nr_frame_at("anim-group.rows.foc", x-6, ty-6, TW+12, TH+12).
+    inline void FocusFrame(int col, int row, float& x, float& y, float& w, float& h)
+    {
+        x = TileX(col) - 6.0f;
+        y = TileY(row) - 6.0f;
+        w = h = kTileW + 12.0f;
+    }
+
+    // achui_scan: a 6x3 tile grid from the header line, with a 300x300 tile in
+    // each 324x440 cell. Returns the screen row; `col` is the visible column.
+    inline bool HoverCell(float cx, float cy, const UiState& ui, int& row, int& col)
+    {
+        if (cx < kX0 || cy < kRowY0 + kTileDy) return false;
+        const int c = static_cast<int>((cx - kX0) / kTilePitch);
+        const int r = static_cast<int>((cy - kRowY0 - kTileDy) / kRowPitch);
+        const float ox = cx - kX0 - kTilePitch * static_cast<float>(c);
+        const float oy = cy - kRowY0 - kTileDy - kRowPitch * static_cast<float>(r);
+        if (c >= kCols || r >= kRows || ox > kTileW || oy > kTileW) return false;
+        const int ri = ui.row0 + r;
+        if (ri >= ui.groups || ui.off[ri] + c >= ui.g[ri].n) return false;
+        row = ri;
+        col = c;
+        return true;
+    }
+    inline int WheelRows(int notches)
+    {
+        return notches > 0 ? -1 : (notches < 0 ? 1 : 0);
+    }
+    inline int PromptCount(bool padMode) { return padMode ? 2 : 3; }
 
     // ---- unlock card -----------------------------------------------------------
 

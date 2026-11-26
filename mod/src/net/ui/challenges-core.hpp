@@ -44,7 +44,34 @@ namespace net::ui::customize::challenges::core {
     constexpr float kTipContY  = 1816.0f;
     constexpr uint64_t kEnterFadeMs = 220;
     constexpr uint64_t kEquipGateMs = 300;
+    constexpr uint64_t kDenySoundMs = 300;   // ext ui_deny(): one menu-error sound per 300 ms
     constexpr uint64_t kBackFrames  = 6;
+
+    // The generator puts P / I / L / Bg / N under the tile group, while the bar
+    // (BT / BF) stays a sibling in `rows`. Hierarchical widget lookup makes that
+    // distinction observable, so keep it in the pure core for tests.
+    inline bool TileChildPath(char* dst, std::size_t cap, int r, int c,
+                              const char* suffix) noexcept
+    {
+        if (!dst || !cap || !suffix) return false;
+        const int n = std::snprintf(dst, cap, "anim-group.rows.t%d_%d.t%d_%d%s",
+                                    r, c, r, c, suffix);
+        return n > 0 && static_cast<std::size_t>(n) < cap;
+    }
+
+    // The notice is shown on every refusal; only the sound is de-duplicated.
+    struct DenyFeedback {
+        uint64_t lastSoundMs = 0;
+
+        [[nodiscard]] bool AllowSound(uint64_t now) noexcept
+        {
+            if (lastSoundMs != 0 && now >= lastSoundMs
+                && now - lastSoundMs < kDenySoundMs)
+                return false;
+            lastSoundMs = now;
+            return true;
+        }
+    };
 
     using Profile = core::Profile;
 

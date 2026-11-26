@@ -25,12 +25,23 @@ namespace net::ui::customize {
     void SaveProfile();
     void Changed();                      // profile was edited through GetProfile(): save + bump the wire counter
     void ProgressChanged();              // progress/grants edited through GetProfile(): save + refill, no look wire change
+    uint64_t ProgressGeneration();       // bumped by ProgressChanged(); used in dependent page fill keys
     bool NetChanged();
     uint8_t ConsumeNetChange();          // clears the dirty bit, returns the counter
 
     int  EditingFaction();
     int  EditingCategory();
     int  Sex(int fac);                   // shown/edited sex of a faction
+
+    // Stage seams: the native stage owner previews the focused row, frames the
+    // zoomed category and lets the mouse turn the front model. These read the
+    // page's settled state; none of them writes widgets or input latches.
+    bool  PageUp();                      // CUSTOMIZE or CUSTOMIZE | CHALLENGES on top
+    int   FocusedKey(int fac, int sex, int cat);  // focused visible row as an item key
+    bool  Zoomed();
+    float ZoomUse();
+    bool  FrontHovered();                // mouse is over the front model's hit widget
+    uint64_t ShowAt();                   // page-open fade-in time the stage must wait for
 
     // The faction the player currently plays as (-1 while unknown). Mirrors
     // the ext's clan_side_now() gate for the "not your current faction" note.

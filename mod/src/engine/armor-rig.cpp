@@ -6,6 +6,7 @@
 #include "armor-rig.hpp"
 
 #include "backpack-prop.hpp"
+#include "net/ui/customize-compose.hpp"
 #include "exe_side.hpp"
 #include "frame.hpp"
 #include "object.hpp"
@@ -367,6 +368,24 @@ namespace engine::armor_rig {
     {
         if (k < 0 || k >= kBodyN)
             return nullptr;
+        // A composed CUSTOMIZE body carries its own pushed / original pairs;
+        // ext's cz_body_pair wins over the pool look's static table.
+        if (idx >= 0) {
+            const char* orig = net::ui::customize::compose::BodyPairOrig(idx, k);
+            if (orig) {
+                static BodyPair composed{};
+                composed.orig = orig;
+                composed.copy = net::ui::customize::compose::BodyPairCopy(idx, k);
+                composed.mask = net::ui::customize::compose::BodyPairMask(idx, k);
+                return &composed;
+            }
+            // ext cz_body_pair(): a composed body with no pushed pair at k
+            // returns an empty pair, not the pool look's static table.
+            if (net::ui::customize::compose::HasComposedBody(idx)) {
+                static const BodyPair none{};
+                return &none;
+            }
+        }
         if (idx >= 0 && idx < kBodies && g_rigWk[idx] >= 0)
             return &kWinterBody[g_rigWk[idx]][k];
         if (look_i < 0 || look_i >= kRigN)
@@ -379,11 +398,34 @@ namespace engine::armor_rig {
         return engine::exe_side::Exists("t2r-faction-looks.txt") ? true : false;
     }
 
+    // ext cz_rec(): the typed look2 record behind a name. The resolver is a
+    // three-argument DC lookup (sid, "look2", default) with a type tag before
+    // the record; the ext checked the same 15-byte prologue.
+    uint8_t* LookRecord(const char* name)
+    {
+        if (!name || !name[0]) return nullptr;
+        typedef uint64_t (*fn_lookup3)(uint64_t, uint64_t, uint64_t);
+        static const uint8_t expect[15] = {
+            0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57,
+            0x48, 0x83, 0xEC, 0x20
+        };
+        uint8_t* f = reinterpret_cast<uint8_t*>(ExeBase()) + 0x13578a0;
+        if (!engine::ptr::Readable(reinterpret_cast<uintptr_t>(f), sizeof expect)
+            || std::memcmp(f, expect, sizeof expect) != 0)
+            return nullptr;
+        const uint64_t sid = SID(name), tLook2 = SID("look2");
+        uint64_t* p = reinterpret_cast<uint64_t*>(
+            reinterpret_cast<fn_lookup3>(f)(sid, tLook2, 0));
+        if (!p || !engine::ptr::Readable(reinterpret_cast<uintptr_t>(p - 1), 24)
+            || p[-1] != tLook2 || p[0] != sid)
+            return nullptr;
+        return reinterpret_cast<uint8_t*>(p);
+    }
+
     // 1 = a look2 record with that name is loaded, 0 = not, -1 = can't tell (lookup prologue moved).
-    // The look resolver finds a look with the TYPED DC lookup (sid, "look2", default) and checks the
-    // type tag before the record.
     int LookExists(const char* name)
     {
+        if (!name) return -1;
         typedef uint64_t (*fn_lookup3)(uint64_t, uint64_t, uint64_t);
         static const uint8_t expect[15] = {
             0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57,
@@ -456,6 +498,9 @@ namespace engine::armor_rig {
     {
         if (g_armorRig != 1 || !look)
             return -1;
+        if (const int composed = net::ui::customize::compose::RowOfLook(look, 0);
+            composed >= 0)
+            return composed;
         for (int i = 0; i < kRigN; i++)
             if (g_twin[i] == look)
                 return i;
@@ -590,7 +635,8 @@ namespace engine::armor_rig {
         for (int k = 0; k < 2; k++)
             GvisSet(idx, chr, mesh[k], (want >> k) & 1,
                 k ? "armour rig (vest)" : "armour rig (helmet)");
-        const char* clash = look_i >= 0 ? kClash[look_i] : nullptr;
+        const char* clash = net::ui::customize::compose::BodyClash(
+            idx, look_i >= 0 ? kClash[look_i] : nullptr);
         const int helm = want & 1, wasHelm = r->shown > 0 && (r->shown & 1);
         if (clash) {            // the hood / hat the helmet clashes with: hidden while the HELMET shows
             if (helm) {
@@ -603,6 +649,38 @@ namespace engine::armor_rig {
                 GvisSet(idx, chr, clash, 0, "armour rig (helmet on: hood / hat off)");
             } else if (wasHelm)
                 GvisSet(idx, chr, clash, r->clashSaved, "armour rig (helmet off: hood / hat restored)");
+        }
+        // A composed outfit's separate hair parts are hidden while the helmet
+        // shows, then restored on every pass without it (ext cz_body_hair).
+        // Only parts the outfit actually draws are listed, so no saved state.
+        uint8_t* dc = engine::object::DrawControl(chr);
+        for (int hk = 0; ; ++hk) {
+            const char* hp = net::ui::customize::compose::BodyHair(idx, hk);
+            if (!hp) break;
+            if (helm) {
+                GvisSet(idx, chr, hp, 0, "armour rig (helmet on: hair part off)");
+                continue;
+            }
+            const int mi = dc ? engine::object::MeshIndex(dc, SID(hp)) : -1;
+            if (mi >= 0 && engine::object::MeshHidden(dc, mi))
+                GvisSet(idx, chr, hp, 1, "armour rig (no helmet: hair part on)");
+        }
+        // The crown hat's fitted head swaps with the stock head under the
+        // helmet; never leave both off (ext cz_body_head_swap).
+        const char* fit = nullptr;
+        const char* stock = nullptr;
+        if (net::ui::customize::compose::BodyHeadSwap(idx, &fit, &stock)) {
+            if (helm) {
+                GvisSet(idx, chr, stock, 1, "armour rig (helmet on: stock head on)");
+                GvisSet(idx, chr, fit, 0, "armour rig (helmet on: hat-fitted head off)");
+            } else if (dc) {
+                const int mf = engine::object::MeshIndex(dc, SID(fit));
+                const int ms = engine::object::MeshIndex(dc, SID(stock));
+                if (mf >= 0 && engine::object::MeshHidden(dc, mf))
+                    GvisSet(idx, chr, fit, 1, "armour rig (no helmet: hat-fitted head on)");
+                if (ms >= 0 && !engine::object::MeshHidden(dc, ms))
+                    GvisSet(idx, chr, stock, 0, "armour rig (no helmet: stock head off)");
+            }
         }
         if (helm) {             // the helmet must report visible now, else (3 tries) -> rigid attach
             uint8_t* dc = engine::object::DrawControl(chr);

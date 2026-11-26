@@ -25,11 +25,14 @@ namespace net::ui::choose::core {
         kEndScreen = 10,
     };
 
-    constexpr uint64_t kInMs          = 320;
-    constexpr uint64_t kStaggerMs     = 120;
-    constexpr uint64_t kOutMs         = 220;
-    constexpr uint64_t kPickOutMs     = 900;
-    constexpr float    kBgA           = 0.8f;
+    // side_tick (t2r-ext.c): SIDE_IN_MS / SIDE_STAGGER_MS / SIDE_OUT_MS /
+    // SIDE_PICK_OUT_MS / SIDE_BG_A. The page crossfade and its entrance / exit
+    // ramps use side_ease(), not the tween's ce_ease().
+    constexpr uint64_t kInMs          = 560;
+    constexpr uint64_t kStaggerMs     = 140;
+    constexpr uint64_t kOutMs         = 300;
+    constexpr uint64_t kPickOutMs     = 1800;
+    constexpr float    kBgA           = 0.90f;
 
     constexpr float    kZoom          = 2.0f;
     constexpr float    kZoomMs        = 900.0f;
@@ -56,7 +59,21 @@ namespace net::ui::choose::core {
     constexpr float    kHlDim         = 0.55f;
     constexpr float    kGrainMs       = 125.0f;
     constexpr float    kBrandOutMs    = 900.0f;
-    constexpr uint64_t kSelectGateMs  = 300;   // select after a click on a focused camp
+    constexpr uint64_t kSelectGateMs  = 350;   // CH_NAME_MS: a click selects only after the focus settled
+
+    // The key-art camera model (choose.c + clanend.c): the five layer depths,
+    // CE_FPX, and the tarp whose lift sets the intro's start height.
+    constexpr float kFpx        = 3200.0f;
+    constexpr float kDepth[5]   = { 3.82f, 11.91f, 20.57f, 32.09f, 150.0f };
+    constexpr int   kFigLayer   = 1;
+    constexpr float kDeckDepth  = 2.50f;
+    constexpr float kDeckDy     = -2354.4f;
+    constexpr float kDeckVhem   = -57.4f;
+    constexpr float kDeckLift   = 5063.0f;
+    constexpr float kLayerHem   = kDeckVhem - kDeckLift;    // -5120.4 units
+    constexpr float kLayerExt   = 1200.0f;
+    constexpr float kCameraY0   = (2160.0f - kLayerHem + 80.0f) * kDeckDepth / kFpx;
+    constexpr float kParallaxP  = 0.2f;
 
     // select payoff (chp_*)
     constexpr float    kChalkEndMs    = 851.0f;
@@ -92,6 +109,19 @@ namespace net::ui::choose::core {
     constexpr int   kSkipDownMs = 300;
     constexpr int   kSkipUpMs   = 550;
 
+    // choose_intro_text.h: slot fade / beat fades and the logo line's layout.
+    constexpr int   kIntroMax    = 6;
+    constexpr int   kBeatFadeMs  = 600;
+    constexpr int   kLogoFadeMs  = 2000;
+    constexpr float kIntroPt     = 56.0f;
+    constexpr float kSlotH       = 260.0f;
+    constexpr float kLogoGap     = 22.0f;
+    constexpr float kTailGap     = 4.0f;
+    constexpr float kLogoSpan    = 362.3f;
+    constexpr float kLogoDx      = -0.47f;
+    constexpr float kLogoDy      = -3.0f;
+    constexpr uint64_t kSelectSoundLeadMs = 50;   // the NR wave's hit lands on the slam
+
     struct Line {
         const char* text;
         int         cy;
@@ -108,10 +138,23 @@ namespace net::ui::choose::core {
     inline constexpr const char* kBeats[kBeatCount] = { "Gather.", "Grow.", "Survive" };
     inline constexpr int kBeatAt[kBeatCount] = { 19640, 21040, 22440 };
 
+    // ce_ease (clanend.c): the tween / alpha curve.
     inline float Ease(float t)
     {
         t = std::max(0.0f, std::min(1.0f, t));
         return t * t * (3.0f - 2.0f * t);
+    }
+
+    // side_ease (side_tick): the page crossfade and its entrance / exit ramps.
+    inline float SideEase(float t)
+    {
+        t = std::max(0.0f, std::min(1.0f, t));
+        return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+    }
+
+    inline float ClampA(float a)
+    {
+        return std::max(0.0f, std::min(1.0f, a));
     }
 
     // ch_tw_t: an authored value ramp with a re-target that starts from the
@@ -124,7 +167,10 @@ namespace net::ui::choose::core {
         float Val(uint64_t now) const
         {
             if (ms <= 0.0f) return to;
-            const float u = now >= t0 ? static_cast<float>(now - t0) / ms : 1.0f;
+            // A re-target before its start must hold the old value, never jump
+            // to `to` (the ext's ch_tw_val clamps negative time to 0).
+            if (now < t0) return from;
+            const float u = static_cast<float>(now - t0) / ms;
             return from + (to - from) * Ease(std::min(1.0f, u));
         }
         void To(float target, uint64_t now, float duration)
@@ -291,7 +337,9 @@ namespace net::ui::choose::core {
 
     inline float PayoffTextAlpha(const Payoff& p, uint64_t now)
     {
-        return p.on ? 1.0f - Ease(static_cast<float>(now - p.t0) / kPTextMs) : 1.0f;
+        if (!p.on) return 1.0f;
+        const int64_t el = static_cast<int64_t>(now) - static_cast<int64_t>(p.t0);
+        return ClampA(1.0f - Ease(static_cast<float>(el) / kPTextMs));
     }
 
     struct LogoPose { float scale = 1.0f; float rise = 0.0f; };
@@ -300,7 +348,8 @@ namespace net::ui::choose::core {
     {
         LogoPose out;
         if (!p.on) return out;
-        const float el = static_cast<float>(now - p.t0);
+        const float el = static_cast<float>(static_cast<int64_t>(now)
+                                            - static_cast<int64_t>(p.t0));
         if (el < kPLiftMs) {
             const float u = el / kPLiftMs, e = 1.0f - (1.0f - u) * (1.0f - u);
             out.scale = 1.0f + kPLiftK * e;
@@ -320,8 +369,9 @@ namespace net::ui::choose::core {
     inline float ChalkAlpha(const Payoff& p, int k, uint64_t now)
     {
         if (!p.on || k < 0 || k >= kChalkN) return 0.0f;
-        const float el = static_cast<float>(now - p.t0);
-        return (el - kChalkT0[k]) / (kChalkT1[k] - kChalkT0[k]);
+        const float el = static_cast<float>(static_cast<int64_t>(now)
+                                            - static_cast<int64_t>(p.t0));
+        return ClampA((el - kChalkT0[k]) / (kChalkT1[k] - kChalkT0[k]));
     }
 
     // The sound hit is 50 ms in so it lands on the slam; the owner plays it
@@ -329,8 +379,9 @@ namespace net::ui::choose::core {
     inline bool PayoffSoundDue(Payoff& p, uint64_t now)
     {
         if (!p.on || p.snd) return false;
-        const float el = static_cast<float>(now - p.t0);
-        if (el < kPLiftMs + kPSlamMs - 50.0f) return false;
+        const float el = static_cast<float>(static_cast<int64_t>(now)
+                                            - static_cast<int64_t>(p.t0));
+        if (el < kPLiftMs + kPSlamMs - static_cast<float>(kSelectSoundLeadMs)) return false;
         p.snd = true;
         return true;
     }
@@ -346,12 +397,145 @@ namespace net::ui::choose::core {
                        && now - t0 >= static_cast<uint64_t>(IntroUiMs() + kInputMs));
     }
 
-    inline float IntroCameraY(uint64_t now, uint64_t t0)
+    // Height of the intro camera over the overview (metres). The tarp fills
+    // the frame until CHI_T_DROP; then smootherstep(u^0.8) settles the 5.75 m
+    // drop from rest. The owner feeds this into the layer / deck parallax.
+    inline float IntroCameraYAt(int64_t el)
     {
         const int drop = IntroDropMs();
-        const int64_t el = static_cast<int64_t>(now - t0);
-        if (el <= drop) return 0.0f;
-        return Ease(static_cast<float>(el - drop) / static_cast<float>(kDropMs));
+        if (el <= drop) return kCameraY0;
+        if (el >= drop + kDropMs) return 0.0f;
+        const float u = static_cast<float>(el - drop) / static_cast<float>(kDropMs);
+        const float v = std::pow(std::max(0.0f, u), 0.8f);
+        return kCameraY0 * (1.0f - SideEase(v));
+    }
+
+    inline float IntroCameraY(uint64_t now, uint64_t t0)
+    {
+        return IntroCameraYAt(now >= t0 ? static_cast<int64_t>(now - t0)
+                                        : -static_cast<int64_t>(t0 - now));
+    }
+
+    inline float IntroLineAlpha(int64_t el, int k)
+    {
+        if (k < 0 || k >= kIN) return 0.0f;
+        const float out = el < kTextOut ? 1.0f
+            : ClampA(1.0f - Ease(static_cast<float>(el - kTextOut)
+                                 / static_cast<float>(kOutMs2)));
+        if (kLines[k].logo) return el >= kLines[k].tin ? out : 0.0f;
+        return Ease(static_cast<float>(el - kLines[k].tin)
+                    / static_cast<float>(kFadeMs)) * out;
+    }
+
+    inline float IntroBeatAlpha(int64_t el, int j)
+    {
+        if (j < 0 || j >= kBeatCount) return 0.0f;
+        const float ms = static_cast<float>(kBeatAt[j] >= kLogoAt
+                                            ? kLogoFadeMs : kBeatFadeMs);
+        return Ease(static_cast<float>(el - kBeatAt[j]) / ms);
+    }
+
+    inline float IntroLogoAlpha(int64_t el)
+    {
+        return Ease(static_cast<float>(el - kLogoAt)
+                    / static_cast<float>(kLogoFadeMs));
+    }
+
+    inline float IntroSkipAlpha(int64_t el, bool skippable)
+    {
+        if (!skippable || el >= IntroDropMs()) return 0.0f;
+        return Ease(static_cast<float>(el - 800.0f) / 400.0f)
+             * (1.0f - Ease(static_cast<float>(el - (IntroDropMs() - 300.0f))
+                            / 300.0f));
+    }
+
+    inline float IntroUiAlpha(int64_t el)
+    {
+        if (el < IntroUiMs()) return 0.0f;
+        return Ease(static_cast<float>(el - IntroUiMs())
+                    / static_cast<float>(kUiInMs));
+    }
+
+    inline float SkipDownAlpha(int64_t el) { return Ease(static_cast<float>(el) / kSkipDownMs); }
+    inline float SkipUpAlpha(int64_t el)   { return 1.0f - Ease(static_cast<float>(el) / kSkipUpMs); }
+
+    struct LayerPose { float scale = 1.0f, x = 1920.0f, y = 1080.0f; };
+
+    // choose.c ch_tick's key-art camera: every layer has its own depth, so a
+    // dolly / truck moves each at its own rate. The figure layer holds the
+    // framing; the others are expressed relative to it, then clamped so a
+    // 5120 x 2160 layer always covers the 3840 x 2160 screen.
+    inline LayerPose LayerAt(int i, float zoomT, float panT, float seconds,
+                             float cameraY)
+    {
+        LayerPose out;
+        if (i < 0 || i >= 5) return out;
+        const float t = seconds;
+        const float X = kTruck * panT * zoomT
+                      + 0.10f * std::sin(t * 0.23f) + 0.04f * std::sin(t * 0.61f);
+        const float A = kDolly * zoomT + 0.10f * std::sin(t * 0.17f);
+        const float Y = 0.035f * std::sin(t * 0.19f);
+        const float Z = 1.0f + zoomT * (kZoom - 1.0f);
+        const float Gx = 1920.0f + 1920.0f * panT;
+        float sg[5], tx[5], ty[5];
+        for (int k = 0; k < 5; ++k) {
+            const float dd = std::max(0.6f, kDepth[k] - A);
+            sg[k] = kDepth[k] / dd;
+            tx[k] = -kFpx * X / dd;
+            ty[k] = kFpx * Y / dd;
+        }
+        const float S = Z * sg[i] / sg[kFigLayer];
+        float px = 1920.0f + (tx[i] - tx[kFigLayer]) / sg[kFigLayer];
+        float py = 1080.0f + (ty[i] - ty[kFigLayer]) / sg[kFigLayer];
+        px = Gx + Z * (px - Gx);
+        py = kGy + Z * (py - kGy);
+        float lo = 3840.0f - 2560.0f * S, hi = 2560.0f * S;
+        if (lo > hi) lo = hi = 0.5f * (lo + hi);
+        px = std::max(lo, std::min(hi, px));
+        float vlo = 2160.0f - 1080.0f * S, vhi = 1080.0f * S;
+        if (vlo > vhi) vlo = vhi = 0.5f * (vlo + vhi);
+        py = std::max(vlo, std::min(vhi, py));
+        if (cameraY > 0.0f) {
+            const float off = kFpx * cameraY / kDepth[1]
+                * std::pow(kDepth[1] / kDepth[i], kParallaxP);
+            const float hf = kLayerHem + kFpx * cameraY / kDeckDepth;
+            const float lim = std::max(0.0f, hf) + kLayerExt * S;
+            py += std::min(off, lim);
+        }
+        out.scale = S;
+        out.x = px;
+        out.y = py;
+        return out;
+    }
+
+    inline LayerPose DeckAt(float zoomT, float panT, float seconds, float cameraY)
+    {
+        LayerPose out;
+        const float t = seconds;
+        const float X = kTruck * panT * zoomT
+                      + 0.10f * std::sin(t * 0.23f) + 0.04f * std::sin(t * 0.61f);
+        const float A = kDolly * zoomT + 0.10f * std::sin(t * 0.17f);
+        const float Y = 0.035f * std::sin(t * 0.19f);
+        const float Z = 1.0f + zoomT * (kZoom - 1.0f);
+        const float Gx = 1920.0f + 1920.0f * panT;
+        float sg[5], tx[5], ty[5];
+        for (int k = 0; k < 5; ++k) {
+            const float dd = std::max(0.6f, kDepth[k] - A);
+            sg[k] = kDepth[k] / dd;
+            tx[k] = -kFpx * X / dd;
+            ty[k] = kFpx * Y / dd;
+        }
+        const float dd = std::max(0.3f, kDeckDepth - A);
+        const float sgd = kDeckDepth / dd;
+        const float S = Z * sgd / sg[kFigLayer];
+        float px = 1920.0f + (-kFpx * X / dd - tx[kFigLayer]) / sg[kFigLayer];
+        float py = 1080.0f + (kFpx * Y / dd - ty[kFigLayer]) / sg[kFigLayer];
+        px = Gx + Z * (px - Gx);
+        py = kGy + Z * (py - kGy);
+        out.scale = S;
+        out.x = px;
+        out.y = py + (kDeckDy - kDeckLift) * S + kFpx * cameraY / kDeckDepth;
+        return out;
     }
 
     // ---- the side_tick page stage machine ------------------------------------
@@ -365,6 +549,7 @@ namespace net::ui::choose::core {
         bool     pickStarted = false;
         bool     pickDemo = false;
         bool     ceTest = false;
+        bool     living = false;              // side_tick's c->st == 1 (back closes the page)
         uint64_t pickAt = 0;
         uint64_t backFrameAt = 0;
         uint64_t lastInputAt = 0;
@@ -404,9 +589,9 @@ namespace net::ui::choose::core {
 
     inline float CrossfadeAlpha(const Page& p, uint64_t now)
     {
-        const float t = std::min(1.0f, static_cast<float>(now - p.fadeAt)
-                                       / static_cast<float>(p.fadeMs));
-        return p.fadeMs > 220 ? Ease(t) : t;
+        const float t = ClampA(static_cast<float>(now - p.fadeAt)
+                               / static_cast<float>(p.fadeMs));
+        return p.fadeMs > 220 ? SideEase(t) : t;
     }
 
     inline void Confirm(Page& p, int side, bool art, bool demo, uint64_t now)
@@ -441,11 +626,37 @@ namespace net::ui::choose::core {
         return p.pickSide >= 0 ? kPickOutMs : kOutMs;
     }
 
+    // Page ramps: the backdrop eases to SIDE_BG_A over SIDE_IN_MS, the content
+    // SIDE_STAGGER_MS later; the exit uses the same smootherstep.
+    inline float BackgroundIn(const Page& p, uint64_t now)
+    {
+        if (p.stage == kFadeOut && p.pickSide >= 0) return 1.0f;
+        const float t = now >= p.enterAt ? static_cast<float>(now - p.enterAt)
+                                         / static_cast<float>(kInMs) : 0.0f;
+        return kBgA * SideEase(t);
+    }
+
+    inline float ContentIn(const Page& p, uint64_t now)
+    {
+        const int64_t el = now >= p.enterAt ? static_cast<int64_t>(now - p.enterAt) : 0;
+        return SideEase(static_cast<float>(el - static_cast<int64_t>(kStaggerMs))
+                        / static_cast<float>(kInMs));
+    }
+
     inline float ExitAmount(const Page& p, uint64_t now)
     {
         if (p.stage != kFadeOut) return 1.0f;
-        return 1.0f - Ease(static_cast<float>(now - p.exitAt)
-                           / static_cast<float>(OutMs(p)));
+        const float t = now >= p.exitAt ? static_cast<float>(now - p.exitAt)
+                                        / static_cast<float>(OutMs(p)) : 0.0f;
+        return 1.0f - SideEase(t);
+    }
+
+    inline float BackgroundOut(const Page& p, uint64_t now)
+    {
+        if (p.stage != kFadeOut) return kBgA;
+        const float eo = ExitAmount(p, now);
+        return p.pickSide >= 0 ? kBgA + (1.0f - kBgA) * (1.0f - eo)
+                               : kBgA * eo;
     }
 
     inline void Popped(Page& p)
@@ -460,7 +671,9 @@ namespace net::ui::choose::core {
     inline bool BackOrClose(Page& p, bool artBackUsed, uint64_t frame, uint64_t now)
     {
         if (artBackUsed) return true;
-        if (!p.backFrameAt && (p.ceTest || p.focus == 0)) p.backFrameAt = frame;
+        // A clan with no side has nothing to go back to; only the demo / a
+        // living clan closes the page (side_tick's back_at latch).
+        if (!p.backFrameAt && (p.ceTest || p.living)) p.backFrameAt = frame;
         if (p.backFrameAt && frame - p.backFrameAt > 6) {
             p.backFrameAt = 0;
             Popped(p);

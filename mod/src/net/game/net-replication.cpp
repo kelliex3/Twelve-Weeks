@@ -45,6 +45,8 @@
 #include "net/ui/choose.hpp"
 #include "net/ui/customize.hpp"
 #include "net/ui/customize-challenges.hpp"
+#include "net/ui/customize-compose.hpp"
+#include "net/ui/customize-stage.hpp"
 #include "net/ui/death-ui.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
@@ -2134,6 +2136,15 @@ namespace net::replication {
             break;
         }
 
+        // ext MSG_CUSTOM_LOOK 0x59: the sender's outfit, cached by slot until
+        // its next spawn. The 18-byte body and opcode are unchanged; the
+        // compose owner rejects bad payloads and stale slot names.
+        case NEVT_CUSTOM_LOOK: {
+            net::ui::customize::compose::NotePeer(static_cast<int>(senderSlot),
+                                                  data, size, sender.name);
+            break;
+        }
+
         default:
             break;
         }
@@ -2188,6 +2199,8 @@ namespace net::replication {
         net::ui::choose::Reset();
         net::ui::customize::Reset();
         net::ui::customize::challenges::Reset();
+        net::ui::customize::compose::Reset();
+        net::ui::customize::stage::Reset();
         net::ui::death_ui::Reset();
         net::requeue::Reset();
         net::direct::Reset();

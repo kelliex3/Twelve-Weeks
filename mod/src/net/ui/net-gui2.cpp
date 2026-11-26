@@ -33,6 +33,8 @@
 #include "net/online/steam-status.hpp"
 #include "net/online/clan-state.hpp"
 #include "net/match/match-liveness.hpp"
+#include "net/ui/customize.hpp"
+#include "net/ui/lbnr-core.hpp"
 
 #define TO1_HUD(name) SID("canvas.hudRoot.hudMenuStack.to1/" name)
 
@@ -323,6 +325,70 @@ namespace {
     }
 
     const char* Username() { return net::account::Name()[0] ? net::account::Name() : "Player"; }
+
+    // ext lbnr.c: frame placement, BACK click and our own row. The table itself
+    // is filled below from the native matchmaking entries, and generation-based
+    // widget invalidation is replaced by the native page-enter edge.
+    struct LbUi {
+        bool     placed = false;
+        uint64_t resolveAt = 0, ownAt = 0;
+    } g_lb;
+
+    void LbnrTick(bool entered, uint64_t now)
+    {
+        namespace lb = net::ui::lbnr::core;
+        namespace ui = net::ui::customize::ui;
+        if (entered) g_lb = LbUi{};
+        g_lb.resolveAt = now;   // native row text is rewritten every frame while the page is up
+
+        if (!g_lb.placed) {
+            g_lb.placed = true;
+            ui::RawText("anim-group.hdPar", "TWELVE WEEKS");
+            ui::RawText("anim-group.hdPage", "LEADERBOARDS");
+            for (int k = 0; k < 3; ++k) {
+                char p[80];
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d", k);
+                ui::Vis(p, k == 0);
+                if (k != 0) continue;
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d.pb%dKg", k, k);
+                ui::Vis(p, true);
+                ui::Image(p, "menu:back");
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d.pb%dKg2", k, k);
+                ui::Vis(p, false);
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d.pb%dKb", k, k);
+                ui::Vis(p, false);
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d.pb%dKt", k, k);
+                ui::Vis(p, false);
+                std::snprintf(p, sizeof p, "anim-group.pbar.pb%d.pb%dTx", k, k);
+                ui::RawText(p, "BACK");
+            }
+        }
+        if (mouseEdge() && hovered(node("anim-group.pbar.pb0.pb0Hit"))) {
+            sound(SID("sfx-menu-back"));
+            DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, 0);
+            return;
+        }
+        if (!lb::ShouldRefreshOwn(now, g_lb.ownAt)) return;
+        g_lb.ownAt = now;
+        const char* local = net::session::LocalName();
+        if (!local || !local[0]) local = Username();
+        for (int row = 0; row < lb::kRows; ++row) {
+            char name[MM_NAME_LEN + 1] = "";
+            if (const MMLeaderEntry* e = net::matchmaking::LeaderboardEntry(row)) {
+                std::memcpy(name, e->name, MM_NAME_LEN);
+                name[MM_NAME_LEN] = 0;
+            }
+            const bool me = lb::IsMe(name, local);
+            char p[96];
+            if (lb::HighlightPath(p, sizeof p, row)) ui::Vis(p, me);
+            if (!me || !lb::ChipPath(p, sizeof p, row)) continue;
+            ui::Text(p, "YOU");
+            char tx[112];
+            std::snprintf(tx, sizeof tx, "%sTx", p);
+            ui::Text(tx, "YOU");
+        }
+    }
+
     const char* g_teamSymbol = "hud/interactions/marker-scars.png";
     const int   kLobbyRows  = 8;
     const int   kLobbySlots = kLobbyRows; // was winmm_patches.py: lobby8-* (6 patches)
@@ -1870,6 +1936,7 @@ namespace net::gui2 {
                 snprintf(leaf, sizeof(leaf), "anim-group.table.row%d_ratio", row);    setTxt(node(leaf), ratioBuff);
                 snprintf(leaf, sizeof(leaf), "anim-group.table.row%d_elo", row);      setTxt(node(leaf), eloBuff);
             }
+            LbnrTick(entered, GetTickCount64());
         }
 
         if (MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/find-match-menu")))

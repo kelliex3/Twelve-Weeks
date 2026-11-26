@@ -253,6 +253,24 @@ namespace engine::menu_input {
         return true;
     }
 
+    bool LeftStick(float& x, float& y)
+    {
+        if (!g.padOk)
+            return false;
+        x = static_cast<float>(g.pad.lx) / 32768.0f;
+        y = static_cast<float>(g.pad.ly) / 32768.0f;
+        return true;
+    }
+
+    bool Triggers(float& lt, float& rt)
+    {
+        if (!g.padOk)
+            return false;
+        lt = static_cast<float>(g.pad.lt) / 255.0f;
+        rt = static_cast<float>(g.pad.rt) / 255.0f;
+        return true;
+    }
+
     bool PadMode() { return g.padMode; }
 
     void Reset()

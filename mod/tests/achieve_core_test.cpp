@@ -114,6 +114,92 @@ namespace {
               "advancing pops the queue head");
     }
 
+    void FillTests()
+    {
+        Row r;
+        std::strcpy(r.id, "se_hammer");
+        std::strcpy(r.title, "Hammer Time");
+        r.goal = 50;
+        r.prog = 40;
+        char p[96];
+        IconPath(r, p, sizeof p);
+        Check(std::strcmp(p, "streaming/t2r/ach/se_hammer-l.png") == 0,
+              "a locked counter icon uses the generated -l copy");
+        r.t = 100;
+        IconPath(r, p, sizeof p);
+        Check(std::strcmp(p, "streaming/t2r/ach/se_hammer.png") == 0,
+              "an unlocked icon uses the art");
+        r.t = 0;
+        r.hidden = 1;
+        IconPath(r, p, sizeof p);
+        Check(std::strcmp(p, "streaming/t2r/ach/hidden.png") == 0,
+              "a hidden locked icon is the dark question mark");
+        LocKey(r, false, p, sizeof p);
+        Check(std::strcmp(p, "ach.se_hammer.title") == 0,
+              "title / description translations come from ach.<id>.* keys");
+        Check(StatusOf(r) == kHidden && TileAlpha(true, true, true) < TileAlpha(false, false, false)
+              && Near(TileAlpha(true, false, false), 1.0f),
+              "status and tile alpha follow the authored three-state palette");
+        Check(!TileBar(r) && NewDot(r, 0) == false,
+              "a hidden locked row hides its bar and never shows a NEW dot");
+        r.hidden = 0;
+        Check(TileBar(r) && Near(TileBarFraction(r), 0.8f) && !NewDot(r, 100),
+              "a counter bar tracks progress and the dot is cleared by the seen stamp");
+        r.t = 100;
+        Check(Near(TileBarFraction(r), 1.0f) && NewDot(r, 99),
+              "an unlock fills the bar and stays NEW until the page saves its baseline");
+        int prog = 0, goal = 0;
+        DetailProgress(r, prog, goal);
+        Check(prog == goal && goal == 50, "the detail bar reads a full unlocked goal");
+        r.t = 0;
+        r.prog = 900;
+        r.goal = 1;
+        DetailProgress(r, prog, goal);
+        Check(prog == 1 && goal == 1, "a 0 | 1 achievement cannot overflow its detail bar");
+
+        float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+        FocusFrame(2, 1, x, y, w, h);
+        Check(Near(x, kX0 + 2 * kTilePitch - 6.0f) && Near(y, kRowY0 + kRowPitch + kTileDy - 6.0f)
+              && Near(w, kTileW + 12.0f) && Near(h, kTileW + 12.0f),
+              "the single focus frame is placed from the authored tile geometry");
+        Check(TileX(1) - TileX(0) == kTilePitch && TileY(1) - TileY(0) == kRowPitch,
+              "a row keeps its column while the grid pitches 324 x 440");
+
+        UiState g;
+        Table t;
+        bool live = false;
+        ParseTable("ACH 3 3\n"
+                   "se_hammer|melee|100|40|50|0|H|d1\n"
+                   "se_bat|melee|200|40|50|0|B|d2\n"
+                   "pin_low|skill|300|1|1|1|P|d3\n", t, live);
+        BuildGroups(g, t);
+        int row = -1, col = -1;
+        Check(HoverCell(kX0 + 20.0f, kRowY0 + kTileDy + 20.0f, g, row, col)
+              && row == 0 && col == 0,
+              "the cursor maps to a row and visible tile column");
+        Check(!HoverCell(kX0 - 1.0f, kRowY0 + kTileDy, g, row, col),
+              "a cursor outside the grid hovers nothing");
+        Check(WheelRows(1) == -1 && WheelRows(-1) == 1 && WheelRows(0) == 0,
+              "a wheel notch moves a row up or down");
+        Check(PromptCount(false) == 3 && PromptCount(true) == 2,
+              "pad mode drops the W / S row prompt");
+        Check(UnlockedCount(t) == 3, "the detail's unlocked count reads all unlocked rows");
+
+        char u[160];
+        r.hidden = 1;
+        UnlocksFor("se_hammer", u, sizeof u);
+        Check(std::strcmp(u, "ABBY'S GAS MASK") == 0,
+              "an achievement's UNLOCKS line mirrors the generated U_ACH row");
+        UnlocksFor("unknown", u, sizeof u);
+        Check(u[0] == 0, "an achievement without item grants hides the UNLOCKS line");
+        Check(std::strcmp(StatusKey(r), "HIDDEN") == 0
+              && std::strcmp(StatusChip(kHidden), "anim-group.det.dChipD") == 0
+              && std::strcmp(MonthKey(0), "JAN") == 0,
+              "status chips and month keys come from the authored UI tables");
+        Check(std::strcmp(GroupLabel(5), "HIDDEN") == 0,
+              "the detail group label uses the row-order group table");
+    }
+
 } // namespace
 
 int main()
@@ -121,6 +207,7 @@ int main()
     TableTests();
     ReportTests();
     UiTests();
+    FillTests();
     if (fails) {
         std::printf("%d failure(s)\n", fails);
         return 1;

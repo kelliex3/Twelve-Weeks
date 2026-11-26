@@ -5,8 +5,11 @@
 #include "customize-challenges.hpp"
 
 #include "customize.hpp"
+#include "customize-compose.hpp"
+#include "customize-stage.hpp"
 
 #include "boot.hpp"
+#include "denynote.hpp"
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
 #include "engine/locale.hpp"
@@ -61,6 +64,7 @@ namespace net::ui::customize::challenges {
             bool entered = false;
             uint64_t backFrame = 0;
             uint64_t key = 0;
+            DenyFeedback deny;
             float pbX0[3]{}, pbX1[3]{};
             int pbN = 0;
             int lastHoverR = -2, lastHoverC = -2;
@@ -375,7 +379,8 @@ namespace net::ui::customize::challenges {
                 | static_cast<uint64_t>(s.hvTab + 1) << 18
                 | static_cast<uint64_t>((s.hvPb + 1) & 7) << 20
                 | static_cast<uint64_t>(engine::menu_input::PadMode()) << 23
-                | static_cast<uint64_t>(s.hvQ | (s.hvE << 1)) << 24;
+                | static_cast<uint64_t>(s.hvQ | (s.hvE << 1)) << 24
+                | static_cast<uint64_t>(customize::ProgressGeneration() & 0x7fu) << 56;
             for (int r = 0; r < kWearCats; ++r)
                 key ^= static_cast<uint64_t>(s.off[r] & 0x3f) << (28 + 4 * r % 24);
             for (int c = 0; c < kWearCats; ++c)
@@ -388,7 +393,7 @@ namespace net::ui::customize::challenges {
             Tabs(fac, s.hvTab);
             {
                 int done = 0, total = 0;
-                Count(p, fac, false, false, done, total);
+                Count(p, fac, false, customize::StoryMasksShown(), done, total);
                 char buf[96];
                 std::snprintf(buf, sizeof buf, "%s %d | %d",
                               engine::locale::Tr("COMPLETED"), done, total);
@@ -436,7 +441,7 @@ namespace net::ui::customize::challenges {
                     const bool ton = k < n;
                     std::snprintf(path, sizeof path, "anim-group.rows.t%d_%d", r, c);
                     ui::Vis(path, ton);
-                    char base[96];
+                    char base[96], child[128];
                     std::snprintf(base, sizeof base, "anim-group.rows.t%d_%d", r, c);
                     std::snprintf(path, sizeof path, "%sBT", base);
                     ui::Vis(path, ton);
@@ -457,34 +462,44 @@ namespace net::ui::customize::challenges {
                     std::snprintf(path, sizeof path, "%sBF", base);
                     ui::Bar(path, x, x + kTileW, y + kBarDY + 2.0f, frac);
                     ui::Alpha(path, foc ? 1.0f : 150.0f / 255.0f);
-                    std::snprintf(path, sizeof path, "%sP", base);
-                    ui::Vis(path, it->pic != nullptr);
-                    if (it->pic) {
-                        char pic[192];
-                        const char* leaf = lk && std::strlen(it->pic) > 4 ? it->pic + 4 : it->pic;
-                        std::snprintf(pic, sizeof pic, lk ? "streaming/t2r/icons/czg-%s.png"
-                                                          : "streaming/t2r/icons/%s.png", leaf);
-                        ui::Image(path, pic);
-                        ui::Alpha(path, foc ? 1.0f : lk ? 200.0f / 255.0f : 150.0f / 255.0f);
+                    if (TileChildPath(child, sizeof child, r, c, "P")) {
+                        std::snprintf(path, sizeof path, "%s", child);
+                        ui::Vis(path, it->pic != nullptr);
+                        if (it->pic) {
+                            char pic[192];
+                            const char* leaf = lk && std::strlen(it->pic) > 4 ? it->pic + 4 : it->pic;
+                            std::snprintf(pic, sizeof pic, lk ? "streaming/t2r/icons/czg-%s.png"
+                                                              : "streaming/t2r/icons/%s.png", leaf);
+                            ui::Image(path, pic);
+                            ui::Alpha(path, foc ? 1.0f : lk ? 200.0f / 255.0f : 150.0f / 255.0f);
+                        }
                     }
-                    std::snprintf(path, sizeof path, "%sI", base);
-                    ui::Vis(path, it->pic == nullptr);
-                    if (!it->pic) {
-                        const char* ic = cat == CZ_MELEE
-                            ? (std::strstr(it->label, "KNIFE") ? "cz-knife" : "cz-fists")
-                            : kCatIcon[cat];
-                        char pic[160];
-                        std::snprintf(pic, sizeof pic, "streaming/t2r/icons/%s.png", ic);
-                        ui::Image(path, pic);
-                        ui::Alpha(path, foc ? 1.0f : lk ? 90.0f / 255.0f : 150.0f / 255.0f);
+                    if (TileChildPath(child, sizeof child, r, c, "I")) {
+                        std::snprintf(path, sizeof path, "%s", child);
+                        ui::Vis(path, it->pic == nullptr);
+                        if (!it->pic) {
+                            const char* ic = cat == CZ_MELEE
+                                ? (std::strstr(it->label, "KNIFE") ? "cz-knife" : "cz-fists")
+                                : kCatIcon[cat];
+                            char pic[160];
+                            std::snprintf(pic, sizeof pic, "streaming/t2r/icons/%s.png", ic);
+                            ui::Image(path, pic);
+                            ui::Alpha(path, foc ? 1.0f : lk ? 90.0f / 255.0f : 150.0f / 255.0f);
+                        }
                     }
-                    std::snprintf(path, sizeof path, "%sL", base);
-                    ui::Vis(path, lk);
-                    ui::Alpha(path, foc ? 1.0f : 170.0f / 255.0f);
-                    std::snprintf(path, sizeof path, "%sBg", base);
-                    ui::Alpha(path, (foc ? 215.0f : 175.0f) / 255.0f);
-                    std::snprintf(path, sizeof path, "%sN", base);
-                    ui::Vis(path, false);     // NEW dots are not tracked by the native port
+                    if (TileChildPath(child, sizeof child, r, c, "L")) {
+                        std::snprintf(path, sizeof path, "%s", child);
+                        ui::Vis(path, lk);
+                        ui::Alpha(path, foc ? 1.0f : 170.0f / 255.0f);
+                    }
+                    if (TileChildPath(child, sizeof child, r, c, "Bg")) {
+                        std::snprintf(path, sizeof path, "%s", child);
+                        ui::Alpha(path, (foc ? 215.0f : 175.0f) / 255.0f);
+                    }
+                    if (TileChildPath(child, sizeof child, r, c, "N")) {
+                        std::snprintf(path, sizeof path, "%s", child);
+                        ui::Vis(path, false);     // NEW dots are not tracked by the native port
+                    }
                 }
                 char rs[96];
                 std::snprintf(rs, sizeof rs, "anim-group.rows.rs%d", r);
@@ -529,7 +544,8 @@ namespace net::ui::customize::challenges {
                     ui::Image("anim-group.det.dIc", pic);
                 }
                 ui::Vis("anim-group.det.dLock", false);
-                ui::Fit("anim-group.det.dTitle", CZ_CHAL[it->uk].title,
+                ui::Fit("anim-group.det.dTitle",
+                        engine::locale::Tr(CZ_CHAL[it->uk].title),
                         kDX1 - kDX0, kHeadPt);
                 char line[192];
                 ChallengeLine(it, line, static_cast<int>(sizeof line));
@@ -585,6 +601,16 @@ namespace net::ui::customize::challenges {
             s.hvPb = PromptHover(cx, cy);
         }
 
+        // ext ui_deny(): one guarded menu-error sound, plus an immediate notice
+        // when the refusal has text. denynote::Show() falls back to notify::Push
+        // on pages without the styled denial widgets (including this one).
+        void Deny(const EquipResult& r, uint64_t now)
+        {
+            if (g.deny.AllowSound(now)) ui::Sfx("sfx-menu-error");
+            if (r.denyText && r.denyText[0])
+                (void)net::denynote::Show(engine::locale::Tr(r.denyText), 3.0f);
+        }
+
         void Equip(const char* why, uint64_t now)
         {
             State& s = g.state;
@@ -594,17 +620,19 @@ namespace net::ui::customize::challenges {
             const int cat = s.grid.rcat[s.fr], k = s.grid.rk[s.fr][s.fc];
             const EquipResult r = CanEquip(s, p, fac, cat, k);
             if (r.denied) {
-                ui::Sfx("sfx-deny");
+                Deny(r, now);
                 return;
             }
             if (!r.changed) return;
             p.it[fac][sex][cat] = static_cast<uint8_t>(k);
             customize::Changed();
             const uint8_t counter = customize::ConsumeNetChange();
-            uint8_t body[kMsgLen];
-            if (Msg(p, counter, body) == kMsgLen)
-                net::session::SendEventRaw(static_cast<uint8_t>(NEVT_CUSTOM_LOOK),
-                                           body, static_cast<uint8_t>(kMsgLen));
+            if (!compose::WearOff()) {
+                uint8_t body[kMsgLen];
+                if (Msg(p, counter, body) == kMsgLen)
+                    net::session::SendEventRaw(static_cast<uint8_t>(NEVT_CUSTOM_LOOK),
+                                               body, static_cast<uint8_t>(kMsgLen));
+            }
             ui::Sfx("sfx-select");
             g.key = 0;
             TO1_LOG("customize: %s %s %s = %s (challenges page, %s)\n",
@@ -661,7 +689,7 @@ namespace net::ui::customize::challenges {
         }
         if (s.closing) return;
 
-        const bool sel = engine::menu_input::CommandEdge(SID("menu-select"), g.hSel);
+        const bool selRaw = engine::menu_input::CommandEdge(SID("menu-select"), g.hSel);
         const bool up = engine::menu_input::CommandRepeat(SID("menu-up"), g.hUp, g.tUp, now);
         const bool down = engine::menu_input::CommandRepeat(SID("menu-down"), g.hDown, g.tDown, now);
         const bool left = engine::menu_input::CommandRepeat(SID("menu-left"), g.hLeft, g.tLeft, now);
@@ -680,6 +708,15 @@ namespace net::ui::customize::challenges {
         const bool haveCursor = engine::window::CursorCanvas(&cx, &cy);
         Scan(cx, cy, haveCursor);
         const bool click = engine::menu_input::ClickEdge();
+        // Stage freecam owns all input; its Esc must not also pop this page.
+        if (stage::FreecamActive()) {
+            g.hEsc = true;
+            return;
+        }
+        // The ext's shared click gate drops a mouse-derived menu-select on empty
+        // space; explicit click edges on tiles and prompts remain the mouse path.
+        const bool mouseSelect = engine::menu_input::SelectIsMouse();
+        const bool sel = selRaw && !(mouseSelect && !core::ClickHit(s));
 
         if (back || esc || (click && s.hvPb == kPromptBack))
             Close(esc ? "Esc" : back ? "menu-back" : "BACK clicked", top);

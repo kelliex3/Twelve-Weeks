@@ -6,23 +6,29 @@
 
 #include "achieve.hpp"
 
+#include "customize.hpp"
+
 #include <winsock2.h>
 #include <windows.h>
 
 #include "boot.hpp"
 #include "engine/exe_side.hpp"
 #include "engine/flag.hpp"
+#include "engine/frame.hpp"
 #include "engine/locale.hpp"
 #include "engine/menu-input.hpp"
 #include "log.hpp"             // TO1_LOG must precede engine/script.hpp
 #include "engine/script.hpp"   // AUDIO::PLAY_SOUND / MENU2
 #include "engine/widget.hpp"
+#include "engine/window.hpp"
 #include "net/base/net-account.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/online/daemon-rpc.hpp"
+#include "net/online/clan-state.hpp"
 #include "net/protocol/net-protocol.hpp"
 
 #include <algorithm>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 
@@ -37,6 +43,30 @@ namespace net::ui::achieve {
         constexpr int    kConnMs   = 2500;
         constexpr int    kIoMs     = 3500;
         constexpr int    kReplyMs  = 4000;
+
+        // nrui.c / nr_style.py: only the pieces the ACHIEVEMENTS page writes.
+        constexpr float kSectionPt  = 36.0f;
+        constexpr float kCountPt    = 33.0f;
+        constexpr float kHeadPt     = 54.0f;
+        constexpr float kTabPt      = 36.0f;
+        constexpr float kTabY       = 270.0f;
+        constexpr float kChipPt     = 30.0f;
+        constexpr float kBgPt       = 42.0f;
+        constexpr float kPromptPt   = 36.0f;
+        constexpr float kPromptKeyPt = 24.0f;
+        constexpr float kPanelW0    = 100.0f;
+        constexpr float kPromptW0   = 400.0f;
+
+        constexpr int kMeTab = 5;  // nr_clan_tab_of_page("clanach")
+        static const char* const kClanTabs[6] = {
+            "OVERVIEW", "SURVIVORS", "RAIDS", "JOURNAL", "MISSIONS", "ACHIEVEMENTS"
+        };
+
+        struct PromptItem {
+            const char* key;
+            const char* label;
+            bool on;
+        };
 
         struct Runtime {
             Table     table;
@@ -60,16 +90,24 @@ namespace net::ui::achieve {
             UiState   ui;
             CardState card;
             uint32_t  seenT = kSeenUnread;
-            bool      seenUi = false;
-            bool      seenLoaded = false;   // the sidecar is a one-time baseline, not a live store
+            bool      seenLoaded = false;
 
-            uint64_t  page = 0;
-            uint64_t  lastTop = 0;
+            // t2r-ach-ui-seen.txt is the UI NEW-dot baseline: read on each
+            // page open, written on leave. It is data, not an opt-in toggle.
+            uint32_t  uiSeenT = 0;
+            bool      uiEntered = false;
+            uint64_t  f0 = 0;
+            uint64_t  uiKey = 0;
+            int       hoverSig = -1;
+            bool      lastPad = false;
+            float     pbX0[3]{}, pbX1[3]{};
+            int       pbN = 0;
+
             uint64_t  cardLast = 0;
             bool      built = false;
-            int       hvR = -1, hvC = -1, hvTab = -1, hvPb = -1;
             bool      hUp = true, hDown = true, hLeft = true, hRight = true;
             bool      hPrev = true, hNext = true, hSel = true, hBack = true;
+            bool      hEsc = true, hF = true, hQ = true, hE = true;
             uint64_t  tUp = 0, tDown = 0, tLeft = 0, tRight = 0;
         } g;
 
@@ -77,11 +115,20 @@ namespace net::ui::achieve {
         {
             return boot::ExtLoaded() || engine::flag::Present("t2r-no-achievements.txt");
         }
+        uint64_t Page() { return engine::widget::PageId("clanach"); }
 
-        // Read-only compatibility baseline: loaded once. Re-reading a stale
-        // sidecar after g.seenT advances would re-queue the same unlock cards.
-        // No file leaves kSeenUnread; the first table then baselines itself.
-        void ReadSeen()
+        void ResetHeld()
+        {
+            g.hUp = g.hDown = g.hLeft = g.hRight = true;
+            g.hPrev = g.hNext = g.hSel = g.hBack = true;
+            g.hEsc = g.hF = g.hQ = g.hE = true;
+            g.tUp = g.tDown = g.tLeft = g.tRight = ~uint64_t{ 0 };
+            g.f0 = engine::frame::Count();
+        }
+
+        // The card baseline is read once: re-reading a stale sidecar after
+        // g.seenT advances would re-queue the same unlock cards.
+        void ReadCardSeen()
         {
             if (g.seenLoaded) return;
             g.seenLoaded = true;
@@ -90,11 +137,52 @@ namespace net::ui::achieve {
                 if (std::fscanf(f, "%u", &v) == 1) g.seenT = v;
                 std::fclose(f);
             }
+        }
+
+        void ReadUiSeen()
+        {
+            g.uiSeenT = 0;
             if (FILE* f = engine::exe_side::Open("t2r-ach-ui-seen.txt", "r")) {
                 unsigned v = 0;
-                g.seenUi = std::fscanf(f, "%u", &v) == 1 && v != 0;
+                if (std::fscanf(f, "%u", &v) == 1) g.uiSeenT = v;
                 std::fclose(f);
             }
+        }
+
+        void SaveUiSeen()
+        {
+            uint32_t newest = g.uiSeenT;
+            for (int i = 0; i < g.table.n; ++i)
+                newest = std::max(newest, g.table.rows[i].t);
+            if (newest == g.uiSeenT) return;
+            if (FILE* f = engine::exe_side::Open("t2r-ach-ui-seen.txt", "w")) {
+                std::fprintf(f, "%u\n", newest);
+                std::fclose(f);
+            }
+            g.uiSeenT = newest;
+        }
+
+        void EnterPage()
+        {
+            g.uiEntered = true;
+            ReadUiSeen();
+            ResetHeld();
+            g.uiKey = 0;
+            g.hoverSig = -1;
+            g.built = false;
+            g.ui.hvR = g.ui.hvC = g.ui.hvTab = g.ui.hvPb = -1;
+            TO1_LOG("ach: clanach page up (ui seen %u)\n", g.uiSeenT);
+        }
+
+        void LeavePage(const char* how, bool pop)
+        {
+            (void)how;
+            if (!g.uiEntered) return;
+            g.uiEntered = false;
+            SaveUiSeen();
+            if (pop && engine::widget::TopPage() == Page())
+                DC::Call<"menu2-pop-page">(MenuStack::hudMenuStack, 0);
+            TO1_LOG("ach: clanach left (%s)\n", how);
         }
 
         // Every successful table reply (0xAA / 0xA9 / 0xAB) runs the ext's
@@ -121,7 +209,6 @@ namespace net::ui::achieve {
         }
 
         // One bounded [u16 len][op][payload] RPC, byte-for-byte the ext frame.
-        // `want` is the opcode whose payload is returned as text (or a table).
         bool Ask(uint8_t op, const uint8_t* pl, int plen, uint8_t want,
                  char* reply, int cap)
         {
@@ -202,8 +289,6 @@ namespace net::ui::achieve {
                 TO1_LOG("ach: 0xA9 gave up after %d tries\n", g.repTries);
                 return;
             }
-            // Failed connect retries quickly; an unanswered send waits the
-            // ext's full 8 s before the next attempt.
             g.repAt = now + (g.repTries == 1 ? kReportFailMs : kReportRetryMs);
         }
 
@@ -223,96 +308,577 @@ namespace net::ui::achieve {
                                 static_cast<uint8_t>(NetDaemonOp::kAchLive),
                                 reply, sizeof reply);
             g.liveTries[i] = ok ? kLiveMaxTries : static_cast<uint8_t>(g.liveTries[i] + 1);
-            g.liveAt[i] = now;   // core gates the next try by kLiveRetryMs
+            g.liveAt[i] = now;
             if (!ok) return;
             for (int k = 0; k < kLabN; ++k)
                 g.liveBase[k] = g.cnt[k] > 65535 ? 65535 : static_cast<uint16_t>(std::max(0, g.cnt[k]));
             ApplyTable(reply);
         }
 
-        void Text(const char* rel, const char* text)
+        // ---- the nrui.c frame the ext builds over the clanach page ------------
+
+        void Header(const net::clan::State& c)
         {
-            const uint64_t w = engine::widget::Page(rel);
-            if (w) engine::widget::SetText(w, engine::locale::Tr(text ? text : ""));
+            const char* parent = engine::locale::Tr(c.ok && c.fac == 2 ? "SERAPHITE CLAN" : "WLF CLAN");
+            const char* page = engine::locale::Tr("ACHIEVEMENTS");
+            customize::ui::RawText("anim-group.hdPar", parent);
+            const float x = kX0 + customize::ui::TextWidth(parent, kHeadPt) + 52.0f;
+            customize::ui::Pivot("anim-group.hdDiv", x, 168.0f - 34.0f);
+            customize::ui::Pivot("anim-group.hdPage", x + 52.0f, 168.0f);
+            customize::ui::RawText("anim-group.hdPage", page);
+            const float x2 = x + 52.0f + customize::ui::TextWidth(page, kHeadPt) + 52.0f;
+            customize::ui::Rule("anim-group.hdRule", x2, 168.0f, kNR1, kRuleW0);
         }
 
-        void Vis(const char* rel, bool on)
+        void Tabs(int hover)
         {
-            const uint64_t w = engine::widget::Page(rel);
-            if (w) engine::widget::Visible(w, on);
+            float x = kX0 + 108.0f, ax = x, aw = 100.0f;
+            char path[64], buf[128];
+            for (int k = 0; k < 8; ++k) {
+                std::snprintf(path, sizeof path, "anim-group.tabs.tb%d", k);
+                customize::ui::Vis(path, k < 6);
+                std::snprintf(path, sizeof path, "anim-group.tabs.tbHit%d", k);
+                customize::ui::Vis(path, k < 6);
+                if (k >= 6) continue;
+                const char* lb = engine::locale::Tr(kClanTabs[k]);
+                const float w = customize::ui::TextWidth(lb, kTabPt) + 8.0f;
+                if (k == kMeTab || k == hover)
+                    std::snprintf(buf, sizeof buf, "%s", lb);
+                else
+                    std::snprintf(buf, sizeof buf, "<font color=\"#8C8C8C\">%s</font>", lb);
+                std::snprintf(path, sizeof path, "anim-group.tabs.tb%d", k);
+                customize::ui::RawText(path, buf);
+                customize::ui::Pivot(path, x, kTabY);
+                std::snprintf(path, sizeof path, "anim-group.tabs.tbHit%d", k);
+                customize::ui::Pivot(path, x - 30.0f, kTabY - 60.0f);
+                if (k == kMeTab) { ax = x; aw = w; }
+                x += w + 80.0f;
+            }
+            const float ex = x - 80.0f + 28.0f;
+            customize::ui::Pivot("anim-group.tabs.tbE", ex + 30.0f, kTabY);
+            customize::ui::Pivot("anim-group.tabs.tbEHit", ex + 30.0f, kTabY);
+            customize::ui::Pivot("anim-group.tabs.tbU", ax, kTabY + 38.0f);
+            customize::ui::Scale("anim-group.tabs.tbU", aw / kPanelW0, 1.0f);
         }
 
-        void Vis(uint64_t w, bool on)
+        void Week(const net::clan::State& c)
         {
-            if (w) engine::widget::Visible(w, on);
+            const bool on = c.ok != 0;
+            for (const char* n : { "wkDay", "wkSv", "wkBarT", "wkBarF" }) {
+                char path[64];
+                std::snprintf(path, sizeof path, "anim-group.%s", n);
+                customize::ui::Vis(path, on);
+            }
+            if (!on) return;
+            // The clan-page view the ext reads is built from the day count;
+            // mfnr / nrui use day/7+1 and day%7+1 for the header.
+            const int done = std::max(0, c.day);
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "WEEK %d: DAY %d", done / 7 + 1, done % 7 + 1);
+            customize::ui::Text("anim-group.wkDay", buf);
+            std::snprintf(buf, sizeof buf, "DAYS SURVIVED %d | 84", done);
+            customize::ui::Text("anim-group.wkSv", buf);
+            customize::ui::Bar("anim-group.wkBarF", kNR1 - 760.0f, kNR1, 352.0f + 3.0f,
+                               done / 84.0f);
         }
 
-        void DrawGrid()
+        void Section(const char* base, float x0, float x1, float y,
+                     const char* title, const char* right)
+        {
+            char path[96];
+            std::snprintf(path, sizeof path, "%sTx", base);
+            customize::ui::Text(path, title);
+            std::snprintf(path, sizeof path, "%sRt", base);
+            customize::ui::Text(path, right);
+            const float xa = x0 + customize::ui::TextWidth(title, kSectionPt) + 40.0f;
+            const float xb = x1 - (right && right[0]
+                                   ? customize::ui::TextWidth(right, kCountPt) + 40.0f
+                                   : 0.0f);
+            std::snprintf(path, sizeof path, "%sRl", base);
+            customize::ui::Rule(path, xa, y, xb, kRuleW0);
+        }
+
+        void Chip(const char* base, const char* text, float x, float y)
+        {
+            char path[96];
+            const float w = customize::ui::TextWidth(text, kChipPt) + 32.0f;
+            float px = 0.0f, py = y;
+            std::snprintf(path, sizeof path, "%sTx", base);
+            customize::ui::RawText(path, text);
+            const uint64_t tw = customize::ui::W(path);
+            if (tw && engine::widget::PivotGet(tw, &px, &py))
+                customize::ui::Pivot(path, x + 16.0f, py);
+            else
+                customize::ui::Pivot(path, x + 16.0f, y);
+            std::snprintf(path, sizeof path, "%sBg", base);
+            const uint64_t bw = customize::ui::W(path);
+            if (bw && engine::widget::PivotGet(bw, &px, &py))
+                customize::ui::Pivot(path, x, py);
+            else
+                customize::ui::Pivot(path, x, y);
+            customize::ui::Scale(path, w / kChipW0, 1.0f);
+        }
+
+        void FrameAt(float x, float y, float w, float h, bool on)
+        {
+            static const char S[4] = { 'T', 'B', 'L', 'R' };
+            char path[64];
+            for (int k = 0; k < 4; ++k) {
+                std::snprintf(path, sizeof path, "anim-group.rows.foc%c", S[k]);
+                customize::ui::Vis(path, on);
+                if (!on) continue;
+                if (k == 0) {
+                    customize::ui::Pivot(path, x, y + 2.0f);
+                    customize::ui::Scale(path, w / kPanelW0, 1.0f);
+                } else if (k == 1) {
+                    customize::ui::Pivot(path, x, y + h - 2.0f);
+                    customize::ui::Scale(path, w / kPanelW0, 1.0f);
+                } else {
+                    customize::ui::Pivot(path, k == 2 ? x : x + w - 4.0f, y);
+                    customize::ui::Scale(path, 1.0f, h / kPanelW0);
+                }
+            }
+        }
+
+        void HorizontalScroll(int r, int first, int shown, int n)
+        {
+            char path[64];
+            const bool on = n > shown;
+            std::snprintf(path, sizeof path, "anim-group.rows.rs%dT", r);
+            customize::ui::Vis(path, on);
+            std::snprintf(path, sizeof path, "anim-group.rows.rs%dH", r);
+            customize::ui::Vis(path, on);
+            if (!on) return;
+            const float a = static_cast<float>(first) / static_cast<float>(n);
+            float b = static_cast<float>(first + shown) / static_cast<float>(n);
+            if (b > 1.0f) b = 1.0f;
+            std::snprintf(path, sizeof path, "anim-group.rows.rs%dH", r);
+            customize::ui::Pivot(path, kX0 + (kX1 - kX0) * a,
+                                 TileY(r) + kBarDy + 31.0f);
+            customize::ui::Scale(path, (kX1 - kX0) * (b - a) / kRuleW0, 1.0f);
+        }
+
+        void VerticalScroll(int first, int shown, int n)
+        {
+            const bool on = n > shown && n > 0;
+            customize::ui::Vis("anim-group.rows.sbVT", on);
+            customize::ui::Vis("anim-group.rows.sbVH", on);
+            if (!on) return;
+            const float a = static_cast<float>(first) / static_cast<float>(n);
+            const float span = kSidebarY1 - kSidebarY0;
+            customize::ui::Pivot("anim-group.rows.sbVH", kSidebarX - 2.0f,
+                                 kSidebarY0 + span * a);
+            customize::ui::Scale("anim-group.rows.sbVH", 1.0f,
+                                 std::max(8.0f, span * static_cast<float>(shown)
+                                                      / static_cast<float>(n)) / span);
+        }
+
+        // nr_prompts(): declared left to right, drawn right to left. The
+        // prompt index is the declaration index (tabs=0, rows=1, back=2).
+        void Prompts(bool rowsOn)
+        {
+            const bool pad = engine::menu_input::PadMode();
+            PromptItem items[3] = {
+                { "menu:prev+menu:next", "CLAN TABS", true },
+                { "W / S", "ROWS", rowsOn },
+                { "menu:back", "BACK", true },
+            };
+            int decl[3] = { 2, 1, 0 };
+            g.pbN = PromptCount(pad);
+            if (pad) {
+                items[1] = items[2];        // nrui.c: pr[1] = pr[2], then 2 prompts
+                decl[0] = 1;
+                decl[1] = 0;
+                customize::ui::Vis("anim-group.pbar.pb2", false);
+            }
+            float x = kNR1;
+            char path[96], k1[48], k2[48];
+            for (int k = 0; k < g.pbN; ++k) {
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d", k);
+                customize::ui::Vis(path, true);
+                const PromptItem& q = items[decl[k]];
+                const char* key = q.key ? q.key : "";
+                k1[0] = k2[0] = 0;
+                const bool glyph = std::strncmp(key, "menu:", 5) == 0;
+                if (glyph) {
+                    const char* plus = std::strchr(key, '+');
+                    if (plus) {
+                        std::snprintf(k1, sizeof k1, "%.*s", static_cast<int>(plus - key), key);
+                        std::snprintf(k2, sizeof k2, "%s", plus + 1);
+                    } else {
+                        std::snprintf(k1, sizeof k1, "%s", key);
+                    }
+                }
+                const float kw = glyph ? (k2[0] ? 136.0f : 64.0f)
+                                       : std::max(60.0f, customize::ui::TextWidth(key, kPromptKeyPt) + 28.0f);
+                const float lw = customize::ui::TextWidth(q.label, kPromptPt);
+                const float tot = 18.0f + kw + 22.0f + lw + 26.0f;
+                g.pbX0[k] = x - tot;
+                g.pbX1[k] = x;
+                customize::ui::Pivot(path, x - tot, kPromptY - kPromptH * 0.5f);
+                const float a = q.on ? 70.0f / 255.0f : 30.0f / 255.0f;
+                static const char S4[4] = { 'T', 'B', 'L', 'R' };
+                for (int s = 0; s < 4; ++s) {
+                    std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%d%c", k, k, S4[s]);
+                    customize::ui::Vis(path, true);
+                    customize::ui::Alpha(path, a);
+                    if (s < 2) customize::ui::Scale(path, tot / kPromptW0, 1.0f);
+                    if (s == 3) customize::ui::Pivot(path, tot - 4.0f, 0.0f);
+                }
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%dKg", k, k);
+                customize::ui::Vis(path, glyph);
+                if (glyph) {
+                    customize::ui::Image(path, k1);
+                    customize::ui::Alpha(path, q.on ? 1.0f : 0.4f);
+                }
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%dKg2", k, k);
+                customize::ui::Vis(path, glyph && k2[0]);
+                if (glyph && k2[0]) {
+                    customize::ui::Image(path, k2);
+                    customize::ui::Alpha(path, q.on ? 1.0f : 0.4f);
+                }
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%dKb", k, k);
+                customize::ui::Vis(path, !glyph);
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%dKt", k, k);
+                customize::ui::Vis(path, !glyph);
+                if (!glyph) {
+                    customize::ui::RawText(path, key);
+                    customize::ui::Pivot(path, 18.0f + kw * 0.5f - 50.0f, 16.0f);
+                }
+                std::snprintf(path, sizeof path, "anim-group.pbar.pb%d.pb%dTx", k, k);
+                char lb[128];
+                const char* label = engine::locale::Tr(q.label);
+                if (q.on)
+                    std::snprintf(lb, sizeof lb, "%s", label);
+                else
+                    std::snprintf(lb, sizeof lb, "<font color=\"#585858\">%s</font>", label);
+                customize::ui::RawText(path, lb);
+                customize::ui::Pivot(path, 18.0f + kw + 22.0f, kPromptH * 0.5f);
+                x -= tot + 28.0f;
+            }
+        }
+
+        // ach.<id>.title / ach.<id>.desc, falling back to the daemon's English.
+        const char* AchText(const Row& r, bool desc, char* out, size_t n)
+        {
+            char key[96];
+            LocKey(r, desc, key, sizeof key);
+            const char* t = engine::locale::Tr(key);
+            if (!t || std::strcmp(t, key) == 0)
+                std::snprintf(out, n, "%s", desc ? r.desc : r.title);
+            else
+                std::snprintf(out, n, "%s", t);
+            return out;
+        }
+
+        // ---- page fill ---------------------------------------------------------
+
+        void DrawPage(uint64_t now)
         {
             if (!g.built) {
                 BuildGroups(g.ui, g.table);
                 g.built = true;
             }
-            const uint64_t top = engine::widget::TopPage();
-            if (top != g.lastTop) {
-                g.lastTop = top;
-                g.hUp = g.hDown = g.hLeft = g.hRight = true;
-                g.hPrev = g.hNext = g.hSel = g.hBack = true;
+            g.ui.seenT = g.uiSeenT;
+            ClampFocus(g.ui);
+
+            const net::clan::State& c = net::clan::Get();
+            Header(c);
+            Tabs(g.ui.hvTab);
+            Week(c);
+            Prompts(g.ui.groups > kRows);
+
+            const bool ok = g.table.ok && g.table.n > 0;
+            customize::ui::Vis("anim-group.ldTx", !ok);
+            if (!ok) customize::ui::Text("anim-group.ldTx", "LOADING...");
+            customize::ui::Vis("anim-group.rows", ok);
+            customize::ui::Vis("anim-group.det", ok);
+            if (!ok) return;
+
+            bool focusOn = false;
+            for (int r = 0; r < kRows; ++r) {
+                const int ri = g.ui.row0 + r;
+                const bool on = ri < g.ui.groups;
+                char path[96];
+                std::snprintf(path, sizeof path, "anim-group.rows.rw%dTx", r);
+                customize::ui::Vis(path, on);
+                std::snprintf(path, sizeof path, "anim-group.rows.rw%dRt", r);
+                customize::ui::Vis(path, on);
+                std::snprintf(path, sizeof path, "anim-group.rows.rw%dRl", r);
+                customize::ui::Vis(path, on);
+                if (on) {
+                    int unlocked = 0;
+                    for (int k = 0; k < g.ui.g[ri].n; ++k)
+                        if (g.table.rows[g.ui.g[ri].item[k]].t) ++unlocked;
+                    char right[32];
+                    std::snprintf(right, sizeof right, "%d | %d", unlocked, g.ui.g[ri].n);
+                    char base[64];
+                    std::snprintf(base, sizeof base, "anim-group.rows.rw%d", r);
+                    Section(base, kX0, kX1, kRowY0 + kRowPitch * r,
+                            g.ui.g[ri].label, right);
+                }
+                HorizontalScroll(r, on ? g.ui.off[ri] : 0, kCols, on ? g.ui.g[ri].n : 0);
+
+                for (int col = 0; col < kCols; ++col) {
+                    const int k = on ? g.ui.off[ri] + col : 0;
+                    const bool vis = on && k < g.ui.g[ri].n;
+                    std::snprintf(path, sizeof path, "anim-group.rows.t%d_%d", r, col);
+                    customize::ui::Vis(path, vis);
+                    std::snprintf(path, sizeof path, "anim-group.rows.t%d_%dBT", r, col);
+                    customize::ui::Vis(path, false);
+                    if (!vis) continue;
+                    const Row& row = g.table.rows[g.ui.g[ri].item[k]];
+                    const bool locked = row.t == 0;
+                    const bool hidden = row.hidden && locked;
+                    const bool focus = ri == g.ui.fr && k == g.ui.fc;
+                    const bool bar = TileBar(row);
+                    char bp[64];
+                    std::snprintf(bp, sizeof bp, "anim-group.rows.t%d_%dBT", r, col);
+                    customize::ui::Vis(bp, bar);
+                    char bf[64];
+                    std::snprintf(bf, sizeof bf, "anim-group.rows.t%d_%dBF", r, col);
+                    customize::ui::Vis(bf, bar);
+                    if (bar) {
+                        const float x = TileX(col);
+                        customize::ui::Bar(bf, x, x + kTileW, TileY(r) + kBarDy + 2.0f,
+                                           TileBarFraction(row));
+                        customize::ui::Alpha(bf, focus ? 1.0f : 150.0f / 255.0f);
+                    }
+                    char child[96];
+                    char icon[96];
+                    IconPath(row, icon, sizeof icon);
+                    std::snprintf(child, sizeof child, "anim-group.rows.t%d_%d.t%d_%dP", r, col, r, col);
+                    customize::ui::Image(child, icon);
+                    customize::ui::Alpha(child, TileAlpha(focus || (ri == g.ui.hvR && k == g.ui.hvC),
+                                                          locked, hidden));
+                    std::snprintf(child, sizeof child, "anim-group.rows.t%d_%d.t%d_%dL", r, col, r, col);
+                    customize::ui::Vis(child, locked && !hidden);
+                    if (locked && !hidden)
+                        customize::ui::Alpha(child, focus ? 1.0f : 170.0f / 255.0f);
+                    std::snprintf(child, sizeof child, "anim-group.rows.t%d_%d.t%d_%dBg", r, col, r, col);
+                    customize::ui::Alpha(child, static_cast<float>(focus ? 215 : 175) / 255.0f);
+                    std::snprintf(child, sizeof child, "anim-group.rows.t%d_%d.t%d_%dN", r, col, r, col);
+                    customize::ui::Vis(child, NewDot(row, g.uiSeenT));
+                    if (focus) {
+                        float fx = 0.0f, fy = 0.0f, fw = 0.0f, fh = 0.0f;
+                        FocusFrame(col, r, fx, fy, fw, fh);
+                        FrameAt(fx, fy, fw, fh, true);
+                        focusOn = true;
+                    }
+                }
             }
-            const bool up = engine::menu_input::CommandEdge(SID("menu-up"), g.hUp);
-            const bool down = engine::menu_input::CommandEdge(SID("menu-down"), g.hDown);
-            const bool left = engine::menu_input::CommandEdge(SID("menu-left"), g.hLeft);
-            const bool right = engine::menu_input::CommandEdge(SID("menu-right"), g.hRight);
+            if (!focusOn) FrameAt(0.0f, 0.0f, 0.0f, 0.0f, false);
+            VerticalScroll(g.ui.row0, kRows, g.ui.groups);
+
+            const int total = g.table.n;
+            const int unlocked = UnlockedCount(g.table);
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "%d | %d  (%d%%)", unlocked, total,
+                          total ? unlocked * 100 / total : 0);
+            Section("anim-group.det.dTot", kDetailX0, kDetailX1, kRowY0, "UNLOCKED", buf);
+            customize::ui::Bar("anim-group.det.dTotBF", kDetailX0, kDetailX1,
+                               kRowY0 + 34.0f + 3.0f,
+                               total ? static_cast<float>(unlocked) / static_cast<float>(total) : 0.0f);
+
+            const int idx = FocusedIndex(g.ui);
+            customize::ui::Vis("anim-group.det.dArt", idx >= 0);
+            if (idx < 0) {
+                customize::ui::Vis("anim-group.det.dUnl", false);
+                return;
+            }
+            const Row& row = g.table.rows[idx];
+            const bool locked = row.t == 0;
+            const bool hidden = row.hidden && locked;
+            char icon[96];
+            IconPath(row, icon, sizeof icon);
+            customize::ui::Image("anim-group.det.dArt", icon);
+            customize::ui::Alpha("anim-group.det.dArt", hidden ? 140.0f / 255.0f : 1.0f);
+            customize::ui::Vis("anim-group.det.dLock", locked && !hidden);
+
+            customize::ui::Text("anim-group.det.dGrp", g.ui.g[g.ui.fr].label);
+            char at[160];
+            if (hidden)
+                customize::ui::Fit("anim-group.det.dTitle", "?", kDetailX1 - kDetailX0, kFitPt);
+            else
+                customize::ui::Fit("anim-group.det.dTitle", AchText(row, false, at, sizeof at),
+                                   kDetailX1 - kDetailX0, kFitPt);
+            if (hidden)
+                customize::ui::Text("anim-group.det.dDesc", "Hidden achievement. Keep playing.");
+            else
+                customize::ui::Text("anim-group.det.dDesc", AchText(row, true, at, sizeof at));
+
+            const bool bar = !hidden;
+            customize::ui::Vis("anim-group.det.dBarT", bar);
+            customize::ui::Vis("anim-group.det.dBarF", bar);
+            customize::ui::Vis("anim-group.det.dCnt", bar);
+            if (bar) {
+                int prog = 0, goal = 0;
+                DetailProgress(row, prog, goal);
+                std::snprintf(buf, sizeof buf, "%d | %d", prog, goal);
+                customize::ui::Text("anim-group.det.dCnt", buf);
+                customize::ui::Bar("anim-group.det.dBarF", kDetailX0, kDetailX1 - 300.0f,
+                                   kTitleY + 230.0f + 3.0f,
+                                   static_cast<float>(prog) / static_cast<float>(goal));
+            }
+
+            char status[160];
+            if (row.t) {
+                const std::time_t tt = static_cast<std::time_t>(row.t);
+                std::tm lt{};
+#if defined(_WIN32)
+                localtime_s(&lt, &tt);
+#else
+                if (std::tm* p = std::localtime(&tt)) lt = *p;
+#endif
+                std::snprintf(status, sizeof status, "%s %02d %s %d",
+                              engine::locale::Tr("UNLOCKED"), lt.tm_mday,
+                              engine::locale::Tr(MonthKey(lt.tm_mon % 12)),
+                              lt.tm_year + 1900);
+            } else {
+                std::snprintf(status, sizeof status, "%s",
+                              engine::locale::Tr(StatusKey(row)));
+            }
+            const int ci = StatusOf(row);
+            for (int i = 0; i < 3; ++i) {
+                const char* chip = StatusChip(i);
+                char path[96];
+                std::snprintf(path, sizeof path, "%sBg", chip);
+                customize::ui::Vis(path, i == ci);
+                std::snprintf(path, sizeof path, "%sTx", chip);
+                customize::ui::Vis(path, i == ci);
+            }
+            customize::ui::Text("anim-group.det.dSt", "Status:");
+            Chip(StatusChip(ci), status, kDetailX0 + 170.0f, 0.0f);
+
+            char u[160];
+            UnlocksFor(row.id, u, sizeof u);
+            const bool unlocksOn = !hidden && u[0];
+            customize::ui::Vis("anim-group.det.dUnl", unlocksOn);
+            if (unlocksOn) {
+                std::snprintf(buf, sizeof buf, "UNLOCKS: %s", u);
+                customize::ui::Text("anim-group.det.dUnl", buf);
+            }
+            (void)now;
+        }
+
+        // ---- mouse / input -----------------------------------------------------
+
+        int TabHover()
+        {
+            const uint64_t q = customize::ui::W("anim-group.tabs.tbQHit");
+            const uint64_t e = customize::ui::W("anim-group.tabs.tbEHit");
+            if (q && engine::widget::MouseOver(q, true)) return -2;
+            if (e && engine::widget::MouseOver(e, true)) return -3;
+            for (int k = 0; k < 6; ++k) {
+                char path[64];
+                std::snprintf(path, sizeof path, "anim-group.tabs.tbHit%d", k);
+                const uint64_t w = customize::ui::W(path);
+                if (w && engine::widget::MouseOver(w, true)) return k;
+            }
+            return -1;
+        }
+
+        int PromptHover(float cx, float cy)
+        {
+            if (engine::menu_input::PadMode()) return -1;
+            if (cy < kPromptY - kPromptH * 0.5f - 6.0f
+                || cy > kPromptY + kPromptH * 0.5f + 6.0f) return -1;
+            for (int k = 0; k < g.pbN; ++k)
+                if (cx >= g.pbX0[k] && cx <= g.pbX1[k]) return g.pbN - 1 - k;
+            return -1;
+        }
+
+        void Scan(float cx, float cy, bool haveCursor)
+        {
+            g.ui.hvR = g.ui.hvC = -1;
+            g.ui.hvTab = TabHover();
+            g.ui.hvPb = PromptHover(cx, cy);
+            int row = -1, col = -1;
+            if (haveCursor && HoverCell(cx, cy, g.ui, row, col)) {
+                g.ui.hvR = row;
+                g.ui.hvC = g.ui.off[row] + col;
+            }
+        }
+
+        void PageTick(uint64_t now)
+        {
+            float cx = 0.0f, cy = 0.0f;
+            const bool haveCursor = engine::window::CursorCanvas(&cx, &cy);
+            const bool pad = engine::menu_input::PadMode();
+            const int wheel = engine::menu_input::WheelNotches();
+            const int wr = WheelRows(wheel);
+
+            bool up = engine::menu_input::CommandRepeat(SID("menu-up"), g.hUp, g.tUp, now);
+            bool down = engine::menu_input::CommandRepeat(SID("menu-down"), g.hDown, g.tDown, now);
+            const bool left = engine::menu_input::CommandRepeat(SID("menu-left"), g.hLeft, g.tLeft, now);
+            const bool right = engine::menu_input::CommandRepeat(SID("menu-right"), g.hRight, g.tRight, now);
+            if (wr < 0) up = true;
+            if (wr > 0) down = true;
+            const bool back = engine::menu_input::CommandEdge(SID("menu-back"), g.hBack);
+            engine::menu_input::CommandEdge(SID("menu-select"), g.hSel);
             const bool prev = engine::menu_input::CommandEdge(SID("menu-prev-tab"), g.hPrev);
             const bool next = engine::menu_input::CommandEdge(SID("menu-next-tab"), g.hNext);
-            const bool sel = engine::menu_input::CommandEdge(SID("menu-select"), g.hSel);
-            engine::menu_input::CommandEdge(SID("menu-back"), g.hBack);
+
+            const bool escNow = engine::window::KeyDown(VK_ESCAPE);
+            const bool fNow = engine::window::KeyDown('F');
+            const bool qNow = engine::window::KeyDown('Q');
+            const bool eNow = engine::window::KeyDown('E');
+            const bool esc = escNow && !g.hEsc;
+            const bool f = fNow && !g.hF;
+            const bool tabL = (qNow && !g.hQ) || prev;
+            const bool tabR = (eNow && !g.hE) || next;
+            g.hEsc = escNow;
+            g.hF = fNow;
+            g.hQ = qNow;
+            g.hE = eNow;
+
+            const bool click = engine::menu_input::ClickEdge();
+            Scan(cx, cy, haveCursor);
+            const int sig = HoverSignature(g.ui);
+            bool dirty = !g.built || sig != g.hoverSig || pad != g.lastPad;
+
+            const bool early = engine::frame::Count() <= g.f0 + 10;
+            const int backPb = pad ? 1 : 2;   // nr_prompts() drops ROWS on pad
+            if (!early && (back || esc || f || (click && g.ui.hvPb == backPb))) {
+                LeavePage(back ? "menu-back" : esc ? "Esc" : f ? "F" : "BACK clicked", !back);
+                return;
+            }
+            if (!early) {
+                if (tabL || (click && g.ui.hvPb == 0) || (click && g.ui.hvTab == -2)) {
+                    LeavePage("prev tab", true);
+                    return;
+                }
+                if (tabR || (click && g.ui.hvTab == -3)) {
+                    LeavePage("next tab", true);
+                    return;
+                }
+                if (click && g.ui.hvTab >= 0 && g.ui.hvTab != kMeTab) {
+                    LeavePage("tab clicked", true);
+                    return;
+                }
+            }
+
+            const int ofr = g.ui.fr, ofc = g.ui.fc;
             if (up) MoveRow(g.ui, -1);
             if (down) MoveRow(g.ui, 1);
             if (left) MoveCol(g.ui, -1);
             if (right) MoveCol(g.ui, 1);
-            if (sel) ClampFocus(g.ui);
-            (void)prev; (void)next;
-
-            // The group headers and tiles are only written when the GUI pak
-            // carries them; a missing widget is simply skipped.
-            for (int r = 0; r < kRows; ++r) {
-                const int gr = g.ui.row0 + r;
-                const bool have = gr < g.ui.groups;
-                char rel[64];
-                std::snprintf(rel, sizeof rel, "anim-group.rows.rw%dRt", r);
-                Vis(rel, have);
-                if (have) Text(rel, g.ui.g[gr].label);
-                for (int c = 0; c < kCols; ++c) {
-                    std::snprintf(rel, sizeof rel, "anim-group.rows.t%d_%d", r, c);
-                    Vis(rel, have && c < g.ui.g[gr].n);
-                    if (!have || c >= g.ui.g[gr].n) continue;
-                    const int idx = FocusedIndex(g.ui);
-                    const Row& row = g.table.rows[g.ui.g[gr].item[c]];
-                    char buf[160];
-                    std::snprintf(buf, sizeof buf, "%s", row.title);
-                    Text(rel, buf);
-                    std::snprintf(rel, sizeof rel, "anim-group.rows.t%d_%dT", r, c);
-                    Vis(rel, row.t != 0);
-                    (void)idx;
-                }
+            if (click && g.ui.hvR >= 0 && !early)
+                FocusHover(g.ui, g.ui.hvR, g.ui.hvC);
+            if (g.ui.fr != ofr || g.ui.fc != ofc) {
+                dirty = true;
+                customize::ui::Sfx("sfx-cycle");
             }
 
-            const int idx = FocusedIndex(g.ui);
-            if (idx >= 0) {
-                const Row& row = g.table.rows[idx];
-                Text("anim-group.det.dGrp", row.group);
-                Text("anim-group.det.dTitle", row.title);
-                Text("anim-group.det.dDesc", row.desc);
-                char cnt[64];
-                std::snprintf(cnt, sizeof cnt, "%d | %d", row.prog, row.goal);
-                Text("anim-group.det.dCnt", cnt);
+            if (dirty || engine::frame::Count() % 30 == 0) {
+                DrawPage(now);
+                g.hoverSig = sig;
+                g.lastPad = pad;
             }
         }
 
         // achc_w in achieve_ui.c: the card lives on the match HUD while a match
-        // runs, otherwise under anim-group on one of four menu pages. Nowhere
-        // else: the timer stands still when none of those places is on top.
+        // runs, otherwise under anim-group on one of four menu pages.
         constexpr const char* kCardPageNames[kCardPages] = {
             "main-menu", "find-match-menu", "clan13x", "clanach"
         };
@@ -374,20 +940,20 @@ namespace net::ui::achieve {
             const uint64_t dt = g.cardLast ? now - g.cardLast : 0;
             g.cardLast = now;
             if (place < 0) {
-                if (g.card.active) { g.card.t0 += dt; Vis(root, false); }
+                if (g.card.active) { g.card.t0 += dt; engine::widget::Visible(root, false); }
                 return;
             }
             if (!g.card.active) {
                 if (g.card.n <= 0 || !root) return;
                 StartCard(g.card, now, place);
-                Vis(root, false);
-                WriteCard(hud);          // written while hidden, shown next frame
+                engine::widget::Visible(root, false);
+                WriteCard(hud);
                 g.card.t0 += dt;
                 return;
             }
             if (!root) { g.card.t0 += dt; return; }
             if (g.card.page != place) {
-                Vis(root, false);
+                engine::widget::Visible(root, false);
                 WriteCard(hud);
                 g.card.page = place;
                 g.card.t0 += dt;
@@ -406,13 +972,13 @@ namespace net::ui::achieve {
             engine::widget::Scale(root, kCardS, kCardS);
             engine::widget::Pivot(root, kCardCX - kCardS * cc - 90.0f * slide, kCardY);
             engine::widget::Alpha(root, a);
-            Vis(root, true);
+            engine::widget::Visible(root, true);
             if (!g.card.snd) {
                 g.card.snd = true;
-                AUDIO::PLAY_SOUND(SID("sfx-select"));
+                customize::ui::Sfx("sfx-select");
             }
             if (AdvanceCard(g.card, now)) {
-                Vis(root, false);
+                engine::widget::Visible(root, false);
                 g.card.snd = false;
                 if (g.card.active) WriteCard(hud);
             }
@@ -428,24 +994,27 @@ namespace net::ui::achieve {
 
     void Tick(uint64_t now)
     {
-        if (Disabled()) return;
-        ReadSeen();
+        if (Disabled()) {
+            if (g.uiEntered) LeavePage("disabled", false);
+            return;
+        }
+        ReadCardSeen();
 
-        // Match end -> the 1.5 s-delayed 0xA9 report.
         if (net::match::liveness::MatchEndHold()) ArmReport(now);
         else if (!net::match::liveness::Live()) g.endLatched = false;
         TickReport(now);
 
-        const uint64_t page = engine::widget::PageId("clanach");
-        g.page = page;
+        const uint64_t page = Page();
         const bool onPage = engine::widget::TopPage() == page;
+        if (onPage && !g.uiEntered) EnterPage();
+        else if (!onPage && g.uiEntered) LeavePage("page popped", false);
         if (onPage && now >= g.tableAt) {
             g.tableAt = AskTable(now) ? now + kPageAskMs : now + kAskRetryMs;
         } else if (!onPage) {
             g.tableAt = 0;
         }
         TickLive(now);
-        if (onPage) DrawGrid();
+        if (onPage) PageTick(now);
         DrawCard(now);
     }
 

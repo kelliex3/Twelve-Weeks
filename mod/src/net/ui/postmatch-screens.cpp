@@ -14,6 +14,7 @@
 #include "engine/locale.hpp"
 #include "engine/script.hpp" // MENU2 / MenuStack / DC::Call
 #include "engine/widget.hpp" // PageId / Page / SetText
+#include "fac13-core.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/online/clan-state.hpp"
 
@@ -104,6 +105,29 @@ namespace net::ui::postmatch {
         void UiAlpha(const char* path, float a)
         {
             engine::widget::Alpha(engine::widget::Page(path), a);
+        }
+
+        // ext f13_header(): the 2013 Factions header of the post-match and clan
+        // event pages. Generated paths come from clan_widgets.py; absent widgets
+        // are no-ops, so a private GUI pak is not required to compile or run.
+        void F13Header(int fac, const char* label, int day, int survived)
+        {
+            namespace f13 = fac13::core;
+            UiVisible("anim-group.f13IcW", f13::IconW(fac));
+            UiVisible("anim-group.f13IcS", f13::IconS(fac));
+            char b[64], p[64];
+            if (f13::WeekDay(b, sizeof b, day)) UiText("anim-group.f13Day", b);
+            UiText("anim-group.f13Lab", label ? label : "");
+            if (f13::Survived(b, sizeof b, survived)) UiText("anim-group.f13Sv", b);
+            const int sv = f13::ClampSurvived(survived);
+            for (int k = 0; k < f13::kDays; ++k) {
+                if (!f13::PipPath(p, sizeof p, k)) continue;
+                UiAlpha(p, f13::PipOn(k, sv) ? f13::kPipOn : f13::kPipOff);
+            }
+            UiVisible("anim-group.f13Today", f13::TodayVisible(sv));
+            const uint64_t today = engine::widget::Page("anim-group.f13Today");
+            if (today)
+                engine::widget::Pivot(today, f13::TodayX(sv), f13::TodayY());
         }
 
         void PopPage()
@@ -267,6 +291,7 @@ namespace net::ui::postmatch {
             std::snprintf(b, sizeof b, "WEEK %d: DAY %d", d / 7 + 1, d % 7 + 1);
             UiText("anim-group.pmTitle", b);
             UiText("anim-group.pmFaction", kSideFull[fac]);
+            F13Header(fac, "SUPPLIES", d, c.ok ? c.day : d);
             UiText("anim-group.earned.pmPartsLabel", "PARTS EARNED");
             UiText("anim-group.convert.pmConvLabel", "CONVERTED:");
             UiText("anim-group.result.pmDailyLabel", "DAILY SUPPLIES:");
@@ -505,6 +530,12 @@ namespace net::ui::postmatch {
                 UiVisible("anim-group.earned", false);
                 UiVisible("anim-group.convert", false);
                 UiVisible("anim-group.result", true);
+                {
+                    const int rd = net::clan::PostDay();
+                    const int cd = rd < 0 ? 0 : rd < 84 ? rd : 83;
+                    const int rf = c.fac >= 1 && c.fac <= 2 ? c.fac : 1;
+                    F13Header(rf, "SUPPLIES", cd, c.ok ? c.day : cd);
+                }
                 PmResult(c);
                 RunDots(g_pm.dots, c, true);
                 UiPrompt(true);
@@ -611,6 +642,7 @@ namespace net::ui::postmatch {
             UiVisible("anim-group.evEmblemW", fac == 1);
             UiVisible("anim-group.evEmblemS", fac == 2);
             UiText("anim-group.evKind", mode == 1 ? "INCOMING EVENT" : "EVENT RESULT");
+            F13Header(fac, fac13::core::EventLabel(mode), d, d);
             UiText("anim-group.evRisk", "");
             UiText("anim-group.evLine0", "");
             UiText("anim-group.evLine1", "");

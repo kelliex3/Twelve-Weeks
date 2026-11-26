@@ -46,6 +46,8 @@ namespace engine::menu_input {
     // L3 + R3 must keep meaning "freecam" to the features that read both.
     uint16_t PadButtons();
     bool RightStick(float& x, float& y);   // -1..1, false when no pad / not focused
+    bool LeftStick(float& x, float& y);    // -1..1, y > 0 = forward (freecam fly)
+    bool Triggers(float& lt, float& rt);   // 0..1, false when no pad / not focused
 
     // ext g_pad_mode: the last device used (true = pad). Picker / customize
     // prompts use it to choose between key and glyph labels.

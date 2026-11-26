@@ -51,6 +51,10 @@ namespace engine::armor_rig {
 
     // ---- decision / twins -----------------------------------------------------------------
     bool On();                                           // ext ArmorRigOn (decides once, then cached)
+    // ext cz_rec(): the typed look2 record behind a name. nullptr when the
+    // resolver prologue moved or the record is not loaded. Callers must still
+    // bound-check every array they read from it.
+    uint8_t* LookRecord(const char* name);
     int  LookExists(const char* name);                   // ext DcLookExists: 1 yes, 0 no, -1 cannot tell
     int  TwinIdx(uint64_t look);                         // ext ArmorRigTwinIdx (-1 none)
     int  TwinName(const char* look, char* out);          // ext ArmorRigTwinName (out cap 0x28)

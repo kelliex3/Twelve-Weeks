@@ -29,6 +29,7 @@ namespace net::clan {
         int ag[3] = { 0, 0, 0 };
         int lmh = 0, rk = 0, dt = 0;
         int ro = 0;                          // ext build-201 ClanT.ro: our own role (tools/roles.py)
+        int rc = 0;                          // ext caps bit0: living clan must choose its side again
     };
 
     // ext ClanParse's key table. Unknown keys are skipped so a newer daemon
@@ -42,7 +43,7 @@ namespace net::clan {
             "lparts", "lsup", "lneed", "lgain", "ldied", "lhungry", "lsick",
             "lheal", "lleft", "ev", "evn", "levk", "levn", "levl", "levg",
             "levt", "mx", "rw", "rl", "ag1", "ag2", "ag3", "lmh", "rk", "dt",
-            "ro"          // build 201: own role, read by chat's name colour
+            "ro", "rc"    // build 201: own role (chat colour), one-time re-choice (side page)
         };
         State c{};
         // Rebind the field table to the local snapshot: a malformed reply must
@@ -54,7 +55,7 @@ namespace net::clan {
             &c.lleft, &c.ev, &c.evn, &c.levk, &c.levn, &c.levl,
             &c.levg, &c.levt, &c.mx, &c.rw, &c.rl, &c.ag[0],
             &c.ag[1], &c.ag[2], &c.lmh, &c.rk, &c.dt,
-            &c.ro
+            &c.ro, &c.rc
         };
         const char* t = text;
         char k[16];

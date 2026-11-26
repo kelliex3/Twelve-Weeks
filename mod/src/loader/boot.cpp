@@ -60,6 +60,8 @@
 #include "net/ui/choose.hpp"
 #include "net/ui/customize.hpp"
 #include "net/ui/customize-challenges.hpp"
+#include "net/ui/customize-compose.hpp"
+#include "net/ui/customize-stage.hpp"
 #include "net/game/net-direct.hpp"
 #include "net/online/jip-report.hpp"
 #include "net/online/requeue.hpp"
@@ -263,8 +265,14 @@ namespace boot {
 		net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
 		net::ui::achieve::Tick(now);     // 0xA9/0xAA/0xAB client half + clanach/cards (yields to ext)
 		net::ui::choose::Tick(now);      // CHOOSE YOUR SIDE widget owner (camera/mixer seams inert)
+		// The stage samples the settled page state first so its freecam can
+		// suppress this frame's CUSTOMIZE / CHALLENGES input (ext czs_tick order).
+		net::ui::customize::stage::Tick(now, net::ui::customize::Active()
+			|| net::ui::customize::challenges::Active(),
+			net::ui::customize::EditingFaction(), net::ui::customize::CurrentSide());
 		net::ui::customize::Tick(now);   // CUSTOMIZE page owner (shared profile, atomic save + NEVT_CUSTOM_LOOK)
 		net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
+		net::ui::customize::compose::Tick(now); // 0x59 outfit cache + composed look2 registry (yields to ext)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
@@ -322,6 +330,10 @@ namespace boot {
 			TO1_LOG("[boot] FATAL: script init failed.\n");
 			return false;
 		}
+
+		// The stage's compaction hook is deferred until early ticks have let
+		// ExtLoaded() settle; storing the module here keeps that first tick cheap.
+		net::ui::customize::stage::Install(gameModule);
 
 		if (!engine::InitDebugDraw(gameModule)) {
 			TO1_LOG("[boot] FATAL: debug draw init failed.\n");
