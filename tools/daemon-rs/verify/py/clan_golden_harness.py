@@ -77,7 +77,7 @@ def gen(seed, days, nclans):
     for i in range(nclans):
         tok = "%064x" % r.getrandbits(256)
         cd = {"tok": tok, "key": "s:%d" % r.randrange(10 ** 16, 10 ** 17), "name": r.choice(NAMES) + (str(i) if r.random() < .5 else ""),
-              "style": r.choice(["starve", "mixed", "mixed", "feast", "feast", "huge"]), "lang": r.choice([0, 0, 1, 1, 2, 255]),
+              "style": "hero" if i == 0 else r.choice(["starve", "mixed", "mixed", "feast", "feast", "huge"]), "lang": r.choice([0, 0, 1, 1, 2, 255]),
               "fac": r.choice([clan.WLF, clan.SERAPHITES])}
         clans.append(cd)
         E(op="player", tok=tok, key=cd["key"], name=cd["name"])
@@ -87,8 +87,11 @@ def gen(seed, days, nclans):
 
     def counts(style):
         c = {}
-        big = style in ("feast", "huge")
-        if r.random() < .85:
+        big = style in ("feast", "huge", "hero")
+        if style == "hero":
+            for lab in (1, 2, 3, 4, 5):                  # (the attack days of the run need the count of the day's mission)
+                c[lab] = r.randint(25, 150)
+        elif r.random() < .85:
             c[1] = r.choice([0, 1, 2, 3, 5, 8, 12, 20, 40, 90] if big else [0, 0, 1, 2, 4, 7])
         for lab in (2, 3, 4, 5):
             if r.random() < .35:
@@ -123,6 +126,8 @@ def gen(seed, days, nclans):
         return c
 
     def parts_of(style):
+        if style == "hero":
+            return 0 if r.random() < .03 else r.randint(30000, 100000)
         lo, hi = {"starve": (0, 900), "mixed": (100, 4000), "feast": (1500, 9000), "huge": (6000, 40000)}[style]
         x = r.random()
         if x < .05:
@@ -141,6 +146,8 @@ def gen(seed, days, nclans):
             mid = "%08x" % r.getrandbits(32)
             k = r.randint(1, min(8, len(clans)))
             ps = r.sample(clans, k)
+            if clans[0] not in ps and r.random() < .85:          # clan 0 is the hero: it plays nearly every match and is always fed (runs reach the winning day)
+                ps[r.randrange(len(ps))] = clans[0]
             for p in ps:
                 if r.random() < .7:
                     E(op="side", tok=p["tok"], fac=r.choice([clan.WLF, clan.SERAPHITES]), only_over=True, lang=p["lang"])
@@ -228,7 +235,7 @@ def gen(seed, days, nclans):
                 E(op="read", tok=p["tok"], kind="B6", lang=r.choice([p["lang"], 0, 1]), section=r.choice([1, 1, 2, 2, 3, 4, 5, 6, 7, 8]),
                   seen_id=r.choice([0, 0, r.randrange(0, 900)]), seen_day=r.choice([0, 0, r.randrange(0, 90)]), big=r.randrange(2))
         if day % 11 == 7 and len(clans) > 1:
-            p = r.choice(clans)
+            p = r.choice(clans[1:])
             adv(1, 30)
             E(op="reset", tok=p["tok"], names=r.random() < .3)
             resets.append(p["tok"])
