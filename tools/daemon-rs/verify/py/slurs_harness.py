@@ -66,7 +66,7 @@ def gen(r, n):
         else:
             yield {"op": "find", "text": r.choice(BAD) + " " + rand_text(r)}
     # a few ranges of code points; seed 1 covers everything
-    for lo in (0, 0x10000, 0x20000, 0x30000, 0xE0000, 0xF0000):
+    for lo in range(0, 0x110000, 0x10000):
         yield {"op": "sweep", "lo": lo, "hi": lo + 0x10000}
     yield {"op": "find", "text": "nigger"}
     yield {"op": "extra", "hex": "".encode().hex(), "missing": True}
