@@ -485,7 +485,7 @@ pub fn late_countdown(tok: &str, conn: &Conn) {
         return; // (a join-in-progress player has its own countdown: jip_countdown)
     }
     let (tok, conn) = (tok.to_string(), conn.clone());
-    let _ = std::thread::Builder::new().name("late-countdown".into()).stack_size(256 * 1024).spawn(move || {
+    spawn_t("late-countdown", move || {
         nap(1.0);
         for (phase, n) in [(1u8, 0u8), (2, 3), (2, 2), (2, 1), (2, 0)] {
             if LOADED.lock().contains(&tok) || !MM.in_match(&tok) {

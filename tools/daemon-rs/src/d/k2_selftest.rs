@@ -156,7 +156,7 @@ fn state() -> Value {
         "aborted": CLAN_ABORTED.lock().iter().map(|(k, v)| json!([kk(k), v])).collect::<Vec<_>>(),
         "due": CLAN_DUE.lock().iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
         "linkex": sorted_str(&CLAN_LINK_EXCUSES.lock(), &|v| json!(v)), "lostex": sorted_str(&CLAN_LOST_EXCUSES.lock(), &|v| json!(v)),
-        "win": sorted_pairs(&CLAN_WIN.lock(), &|v| json!(v)),
+        "win": sorted_pairs(&CLAN_WIN.lock().iter().map(|(k, v)| (k.clone(), *v)).collect::<HashMap<_, _>>(), &|v| json!(v)),
         "bp": sorted_str(&BOOST_PICK.lock(), &|v| json!(v)), "ba": sorted_str(&BOOST_ACTIVE.lock(), &|v| json!(v)),
         "achdone": achdone,
         "achpend": ACH_PEND.lock().iter().map(|(k, v)| json!([kk(k), counts_items(v)])).collect::<Vec<_>>(),

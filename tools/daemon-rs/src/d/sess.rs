@@ -492,8 +492,7 @@ pub fn reattach_missed_start(tok: &str, mid: &str, lost_at: f64, conn: &Conn) ->
         return false;
     }
     let (tok, mid, conn) = (tok.to_string(), mid.to_string(), conn.clone());
-    let _ = std::thread::Builder::new().name("reattach-start".into()).stack_size(256 * 1024).spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs_f64(REATTACH_START_DELAY_S));
+    py_timer(REATTACH_START_DELAY_S, Box::new(move || {
         let running = match_running(&mid, &tok);
         let still = SESSIONS.conn(&tok).is_some_and(|c| Arc::ptr_eq(&c, &conn));
         if !running || MM.mid_of(&tok).as_deref() != Some(mid.as_str()) || !still {
@@ -512,7 +511,7 @@ pub fn reattach_missed_start(tok: &str, mid: &str, lost_at: f64, conn: &Conn) ->
             format!("(it went out {} s after the socket was lost)", py::fixed(t_start - lost_at, 1))
         );
         evt!("session-back-start", mid, tag(&tok), "GAME-START re-sent: it went out while the session socket was down");
-    });
+    }));
     true
 }
 

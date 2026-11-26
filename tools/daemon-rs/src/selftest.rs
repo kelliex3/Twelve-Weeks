@@ -42,6 +42,7 @@ pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         "k4" => crate::d::k4_selftest::selftest(input, out),
         "k2" => crate::d::k2_selftest::selftest(input, out),
         "k3" => crate::d::k3_selftest::selftest(input, out),
+        "k5" => crate::d::k5_selftest::selftest(input, out),
         _ => {
             let _ = (input, out);
             eprintln!("selftest: unknown module {}", module);

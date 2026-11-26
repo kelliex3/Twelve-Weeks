@@ -73,7 +73,7 @@ pub static CLAN_LOST_EXCUSE_WINDOW: LazyLock<f64> = LazyLock::new(|| crate::env_
 /// daemon.py:1627 `_clanlock` (guards CLAN_PENDING compound updates, CLAN_REPORTED_END, _end_timers, _clan_sched)
 pub static CLANLOCK: Mutex<()> = Mutex::new(());
 /// daemon.py:1685 CLAN_WIN: (token, mid) -> True win / False loss / None draw of the token's team (read once by clan_match_facts)
-pub static CLAN_WIN: LazyLock<Mutex<HashMap<(String, String), Option<bool>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static CLAN_WIN: LazyLock<Mutex<IndexMap<(String, String), Option<bool>>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
 /// daemon.py:1686 CLAN_WEAPONS: optional extended label 24 -> clan_saga_data.WEAPONS key
 pub const CLAN_WEAPONS: [&str; 12] = ["", "bow", "revolver", "shorty", "hunting", "semi", "burst", "pistol", "crossbow", "melee", "bomb", "molotov"];
 /// daemon.py:1710 CLAN_MOVED: (token, mid) -> time: the admin moved it to the other team
@@ -342,7 +342,7 @@ pub fn clan_match_facts(token: &str, mid: &str, r: &Value, parts: i64, counts: &
             m.insert("weapon".into(), Value::String(CLAN_WEAPONS[w as usize].to_string()));
         }
     }
-    if let Some(Some(b)) = CLAN_WIN.lock().remove(&clan_tk(token, mid)) {
+    if let Some(Some(b)) = CLAN_WIN.lock().shift_remove(&clan_tk(token, mid)) {
         m.insert("win".into(), Value::Bool(b));
     }
     Value::Object(m)
@@ -1403,6 +1403,22 @@ pub fn k2_reset() {
     END_TIMERS.lock().clear();
     TEST_TIMERS.lock().clear();
     clan_ops::k2_reset_ops();
+}
+
+/// (selftest) run every queued timer now in start order (a harness that fires its whole `threading.Timer` list at once); the count.
+pub fn test_fire_timers_all() -> usize {
+    let mut q: Vec<(f64, u64, TimerFn)> = std::mem::take(&mut *TEST_TIMERS.lock());
+    q.sort_by_key(|e| e.1);
+    let n = q.len();
+    for (_, _, f) in q {
+        f();
+    }
+    n
+}
+
+/// (selftest) forget every queued timer
+pub fn test_fire_timers_clear() {
+    TEST_TIMERS.lock().clear();
 }
 
 /// (selftest) the number of queued timers

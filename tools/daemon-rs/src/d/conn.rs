@@ -438,6 +438,22 @@ pub struct ConnSt {
     pub authed: bool,
     pub session: bool,
     pub is_bridge: bool,
+    /// st.get("closed_sent"): the boot reply ended in 0x0d on this connection
+    pub closed_sent: bool,
+    /// st.get("menu"): a held menu socket (announce kept open)
+    pub menu: bool,
+    /// st.get("started"): the mid whose match-start frame went out on this connection
+    pub started: Option<String>,
+    /// st.get("sent_name"): the last own-name 0x10 sent
+    pub sent_name: Option<String>,
+    /// st.get("sent_lobby", []): the last party lobby list sent
+    pub sent_lobby: Vec<Vec<u8>>,
+}
+
+impl ConnSt {
+    pub fn new() -> ConnSt {
+        ConnSt { token: None, name: "PLAYER".into(), authed: false, session: false, is_bridge: false, closed_sent: false, menu: false, started: None, sent_name: None, sent_lobby: Vec::new() }
+    }
 }
 
 /// What a handler can raise (tcp_conn's except clauses).
@@ -500,6 +516,10 @@ impl AddrLimiter {
         }
         q.push_back(now);
         true
+    }
+    /// (selftest) forget every address
+    pub fn clear(&self) {
+        self.hits.lock().clear();
     }
     pub fn prune(&self, now: Option<f64>) -> usize {
         let now = now.unwrap_or_else(crate::clock::now);
@@ -598,7 +618,7 @@ pub fn tcp_conn(conn: Conn, addr: Addr) {
     conn.set_timeout(cfg.first_frame_s);
     let t_conn = Instant::now();
     let mut got_frame = false;
-    let mut st = ConnSt { token: None, name: "PLAYER".into(), authed: false, session: false, is_bridge: false };
+    let mut st = ConnSt::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut close_why = "handler ended".to_string();
     let mut partial_since: Option<Instant> = None;

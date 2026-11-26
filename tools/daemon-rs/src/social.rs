@@ -1709,6 +1709,14 @@ impl Social {
         }
     }
 
+    /// (selftest) every pending note: (token, [(id, kind, subject, until)]) sorted by token
+    pub fn dump_notes(&self) -> Vec<(String, Vec<(i64, String, String, f64)>)> {
+        let g = self.notes.lock();
+        let mut v: Vec<(String, Vec<(i64, String, String, f64)>)> = g.map.iter().map(|(t, l)| (t.clone(), l.iter().map(|n| (n.id, n.kind.clone(), n.subj.clone(), n.until)).collect())).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+
     // py: social.py:889 Social.notes_for
     /// [(id, 'p', seconds on screen, text)] for the notice poll of this token's game (each stays NOTE_KEEP_S; the ext shows every id once).
     pub fn notes_for(&self, token: &str, lang: i64, ingame: bool) -> Vec<(i64, &'static str, i64, String)> {

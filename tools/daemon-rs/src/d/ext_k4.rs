@@ -30,7 +30,7 @@ pub fn silence(token: &str, now: f64) -> f64 {
     SILENCE.lock().get(token).copied().unwrap_or(0.0) // (K2 selftest table; 0 otherwise)
 }
 pub fn readopt_claim(token: &str) {
-    // (K2 selftest: no-op until K6 lands)
+    stub_note("readopt_claim", token.to_string())
 }
 pub fn afk_report(token: &str, idle_s: i64, flags: u8) {
     unimplemented!()

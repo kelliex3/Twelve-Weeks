@@ -61,12 +61,6 @@ impl AcStub {
 pub static AC: Option<AcStub> = None;
 /// `anticheat.S_ORPHAN`
 pub const S_ORPHAN: i64 = 3;
-/// `ac_server_event(token, mid, kind, w, evidence)`
-pub fn ac_server_event(token: &str, mid: Option<&str>, kind: i64, w: f64, evidence: &str) {}
-
-// ---------------------------------------------------------------- K5 batch
-/// `loaded_clear_match(mid, players)` (double: no-op)
-pub fn loaded_clear_match(mid: &str, players: &[String]) {}
 
 // ---------------------------------------------------------------- K6 loop
 pub static OFFLINE_GRACE: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_OFFLINE_GRACE", 60.0));
