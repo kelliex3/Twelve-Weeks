@@ -153,7 +153,7 @@ pub fn combat_text(t: &str, lang: Option<&str>) -> bool {
     }
     let r = combat_text_raw(t, lang);
     let mut m = MEMO.lock();
-    if m.len() > 200_000 {
+    if m.len() > 50_000 {
         m.clear();
     }
     m.insert((t.to_string(), lk), r);
