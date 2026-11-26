@@ -7,7 +7,7 @@ pydir=$here/py
 tmp=/tmp/k5cmp; mkdir -p $tmp
 bad=0
 for s in $(seq $a $b); do
-  export T2R_PY_DIR=$pydir T2R_TEST_SEED=$s T2R_TOOLS_DIR=$tmp/tools T2R_PRIVATE=0
+  export T2R_PY_DIR=$pydir T2R_TEST_SEED=$s T2R_TOOLS_DIR=$tmp/tools T2R_PRIVATE=0 T2R_HOST_CAP=0
   case $((s % 4)) in 0) export T2R_STEAM_ONLY=0 ;; *) unset T2R_STEAM_ONLY ;; esac
   case $((s % 5)) in 1) export T2R_ANNOUNCE_CLOSE=1 ;; *) unset T2R_ANNOUNCE_CLOSE ;; esac
   case $((s % 6)) in 2) export T2R_PRESTART_HOSTLOST_REQUEUE=0 ;; *) unset T2R_PRESTART_HOSTLOST_REQUEUE ;; esac

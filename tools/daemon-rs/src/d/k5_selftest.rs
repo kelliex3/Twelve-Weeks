@@ -127,7 +127,9 @@ fn dbdump() -> Value {
             rows.push(Value::Array(row));
         }
         rows.sort_by_key(|v| crate::py::dumps_compact(v));
-        out.insert(t, Value::Array(rows));
+        if !rows.is_empty() {
+            out.insert(t, Value::Array(rows));
+        }
     }
     Value::Object(out)
 }

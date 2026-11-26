@@ -235,7 +235,8 @@ def dbdump():
         for r in c.execute("SELECT * FROM %s" % t).fetchall():
             rows.append([x.hex() if isinstance(x, (bytes, bytearray)) else x for x in r])
         rows.sort(key=jr)
-        out[t] = rows
+        if rows:
+            out[t] = rows
     c.close()
     return out
 
