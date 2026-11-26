@@ -605,7 +605,7 @@ impl Crowd {
 
 // py: clan.py:256 resolve_day
 /// One match = one day (ProcessClanDay). Returns (new clan dict, result dict). Pure except for the rng.
-pub fn resolve_day(clan: &Value, parts: i64, left_early: bool, downs: i64, counts: Option<&Counts>, mult: f64, forgive: bool, bottles: i64) -> (Value, Value) {
+pub fn resolve_day(clan: &Value, parts: i64, left_early: bool, downs: i64, counts: Option<&Counts>, mult: f64, forgive: bool, bottles: i64, protect: bool) -> (Value, Value) {
     let mut c = clan.clone();
     let mut counts: Counts = counts.cloned().unwrap_or_default();
     if downs != 0 && !counts.contains_key(&1) {
@@ -625,10 +625,14 @@ pub fn resolve_day(clan: &Value, parts: i64, left_early: bool, downs: i64, count
     let q = (eff - need as f64).trunc() as i64;
     let mut deficit = (-q).max(0);
     let surplus = q.max(0);
-    if forgive && deficit > 0 {
+    if (forgive || protect) && deficit > 0 {
         deficit = 0;
     }
-    let counted = mult_all <= DAY_MULT_LIMIT;
+    let mut counted = mult_all <= DAY_MULT_LIMIT;
+    let ev = event_window(gi(&c, "day", 0));
+    if protect && counted && ev >= 0 && EVENT_DAYS.get(&ev).map(|e| !e.growth).unwrap_or(false) {
+        counted = false; // an attack is only settled by matches that were fair
+    }
     let mut r = Map::new();
     r.insert("day".into(), Value::from(gi(&c, "day", 0)));
     r.insert("parts".into(), Value::from(parts));
@@ -639,6 +643,9 @@ pub fn resolve_day(clan: &Value, parts: i64, left_early: bool, downs: i64, count
         r.insert(k.into(), Value::from(0));
     }
     r.insert("counted".into(), Value::from(counted as i64));
+    if protect {
+        r.insert("prot".into(), Value::from(1));
+    }
     if n <= 0 {
         return (c, Value::Object(r));
     }
@@ -1055,13 +1062,13 @@ pub fn threshold_booster(k: i64) -> i64 {
 
 // py: clan.py:588 apply_match
 /// End of a match for one player. Once per match id. counts = {award label id: n} of the match. Returns (clan, result or None).
-pub fn apply_match(c: &Connection, tid: &str, mid: &str, parts: i64, left_early: bool, counts: Option<&Counts>, mult: f64, forgive: bool, bottles: i64) -> rusqlite::Result<(Value, Option<Value>)> {
+pub fn apply_match(c: &Connection, tid: &str, mid: &str, parts: i64, left_early: bool, counts: Option<&Counts>, mult: f64, forgive: bool, bottles: i64, protect: bool) -> rusqlite::Result<(Value, Option<Value>)> {
     let clan = load(c, tid)?;
     if gi(&clan, "status", 0) != ALIVE || mid.is_empty() || clan.get("last_mid").and_then(|v| v.as_str()) == Some(mid) {
         return Ok((clan, None));
     }
     let downs = counts.and_then(|m| m.get(&1)).copied().unwrap_or(0);
-    let (mut new, mut r) = resolve_day(&clan, parts, left_early, downs, counts, mult, forgive, bottles);
+    let (mut new, mut r) = resolve_day(&clan, parts, left_early, downs, counts, mult, forgive, bottles, protect);
     let day0 = gi(&clan, "day", 0);
     let size0 = gi(&clan, "healthy", 0) + gi(&clan, "hungry", 0) + gi(&clan, "sick", 0);
     {
@@ -1106,7 +1113,7 @@ pub fn apply_match(c: &Connection, tid: &str, mid: &str, parts: i64, left_early:
                             ro.get("parts").map(int_of).unwrap_or(0),
                             counts.unwrap_or(&empty),
                             ro.get("left").map(truthy).unwrap_or(false),
-                            forgive,
+                            forgive || protect,
                         ))
                     }
                 }

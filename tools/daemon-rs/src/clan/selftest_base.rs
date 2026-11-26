@@ -150,13 +150,13 @@ fn op(c: &Connection, o: &Value, bdir: &str) -> Result<Value, String> {
         }
         "apply" => {
             let counts = counts_opt(o, "counts");
-            let (x, r) = cl::apply_match(c, tid, js(o, "mid"), ji(o, "parts"), jb(o, "left"), counts.as_ref(), jf(o, "mult"), jb(o, "forgive"), ji(o, "bottles")).map_err(e)?;
+            let (x, r) = cl::apply_match(c, tid, js(o, "mid"), ji(o, "parts"), jb(o, "left"), counts.as_ref(), jf(o, "mult"), jb(o, "forgive"), ji(o, "bottles"), jb(o, "protect")).map_err(e)?;
             json!([x, r])
         }
         "resolve" => {
             let x = cl::load(c, tid).map_err(e)?;
             let counts = counts_opt(o, "counts");
-            let (n, r) = cl::resolve_day(&x, ji(o, "parts"), jb(o, "left"), ji(o, "downs"), counts.as_ref(), jf(o, "mult"), jb(o, "forgive"), ji(o, "bottles"));
+            let (n, r) = cl::resolve_day(&x, ji(o, "parts"), jb(o, "left"), ji(o, "downs"), counts.as_ref(), jf(o, "mult"), jb(o, "forgive"), ji(o, "bottles"), jb(o, "protect"));
             json!([n, r])
         }
         "mchoose" => {
