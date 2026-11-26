@@ -1213,7 +1213,7 @@ pub fn elo_shown(e: f64, matches: i64) -> f64 {
 // py: daemon.py:1405 elo_key -> (key, steam id)
 pub fn elo_key(c: &Connection, token: &str) -> ER<(String, i64)> {
     use rusqlite::OptionalExtension;
-    let r = c.query_row("SELECT steamid FROM players WHERE token=?", [token], |r| r.get::<_, Option<i64>>(0)).optional().map_err(es)?;
+    let r = c.prepare_cached("SELECT steamid FROM players WHERE token=?").and_then(|mut s| s.query_row([token], |r| r.get::<_, Option<i64>>(0))).optional().map_err(es)?;
     let sid = r.flatten().unwrap_or(0);
     let key = if sid != 0 {
         format!("s{}", sid)
@@ -1289,7 +1289,8 @@ pub fn elo_seed(c: &Connection, _key: &str, sid: i64, token: &str, record: Optio
 
 // py: daemon.py:1428 elo_ensure
 pub fn elo_ensure(c: &Connection) -> ER<()> {
-    c.execute_batch("CREATE TABLE IF NOT EXISTS ratings(key TEXT PRIMARY KEY, elo REAL, n INT DEFAULT 0, updated REAL)").map_err(es)
+    // (prepared once per connection: elo_of_tokens calls this for every leaderboard row while holding the DB lock)
+    c.prepare_cached("CREATE TABLE IF NOT EXISTS ratings(key TEXT PRIMARY KEY, elo REAL, n INT DEFAULT 0, updated REAL)").and_then(|mut s| s.execute([])).map(|_| ()).map_err(es)
 }
 
 // py: daemon.py:1432 elo_get -> (key, rating, rated matches)
@@ -1297,7 +1298,11 @@ pub fn elo_get(c: &Connection, token: &str, record: Option<(i64, i64, i64)>) -> 
     use rusqlite::OptionalExtension;
     elo_ensure(c)?;
     let (key, sid) = elo_key(c, token)?;
-    let r = c.query_row("SELECT elo, n FROM ratings WHERE key=?", [&key], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, Option<i64>>(1)?))).optional().map_err(es)?;
+    let r = c
+        .prepare_cached("SELECT elo, n FROM ratings WHERE key=?")
+        .and_then(|mut s| s.query_row([&key], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, Option<i64>>(1)?))))
+        .optional()
+        .map_err(es)?;
     if let Some((e, n)) = r {
         return Ok((key, e, n.unwrap_or(0)));
     }
@@ -1436,7 +1441,8 @@ pub fn elo_of_tokens(tokens: &[String], records: Option<&HashMap<String, (i64, i
             let m = match rec {
                 Some((a, b, d)) => a + b + d,
                 None => c
-                    .query_row("SELECT matches FROM players WHERE token=?", [t], |r| r.get::<_, Option<i64>>(0))
+                    .prepare_cached("SELECT matches FROM players WHERE token=?")
+                    .and_then(|mut s| s.query_row([t], |r| r.get::<_, Option<i64>>(0)))
                     .ok()
                     .flatten()
                     .unwrap_or(0),

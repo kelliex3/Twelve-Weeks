@@ -101,6 +101,7 @@ fn db_ident(path: &str) -> Option<(u64, bool)> {
 pub fn open_rw(path: &str) -> rusqlite::Result<Connection> {
     let c = Connection::open(path)?;
     c.busy_timeout(Duration::from_secs(10))?;
+    c.set_prepared_statement_cache_capacity(128); // (Python sqlite3: cached_statements=128 per connection)
     c.execute_batch("PRAGMA synchronous=FULL")?;
     if CFG.wal {
         let _: String = c.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
@@ -266,6 +267,7 @@ fn ro_get() -> rusqlite::Result<Ro> {
     }
     let conn = Connection::open_with_flags(&CFG.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI)?;
     conn.busy_timeout(Duration::from_secs(10))?;
+    conn.set_prepared_statement_cache_capacity(128);
     Ok(Ro { conn, ident })
 }
 
