@@ -179,6 +179,7 @@ fn run_serve() -> i32 {
 }
 
 fn main() {
+    heap::tune();
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("serve") | None => run_serve(),

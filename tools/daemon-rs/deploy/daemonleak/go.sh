@@ -1,6 +1,8 @@
 #!/bin/bash
-# Memory fix: replace the live Rust TCP daemon binary (bin/t2r-daemon-tcp) with the same daemon built on the mimalloc allocator
-# (plus the MEM / MEM-KINDS / SIZES log lines of the diagnostic build). Staged in ~/t2r-live/staging/daemonrsleak/.
+# Memory fix: replace the live Rust TCP daemon binary (bin/t2r-daemon-tcp) with the same daemon built for glibc (x86_64-linux-gnu,
+# dynamically linked to the system libc) instead of static musl: musl's malloc kept freed memory mapped (heap flat, RSS climbing).
+# glibc malloc with at most 2 arenas (T2R_MALLOC_ARENAS) and malloc_trim(0) once a minute (T2R_MALLOC_TRIM=0 turns it off),
+# plus the MEM / MEM-KINDS / SIZES log lines of the diagnostic build. Staged in ~/t2r-live/staging/daemonrsleak/.
 # Run ONLY with the user's go. Rollback: bash ~/t2r-live/staging/daemonrsleak/go_back.sh (one command).
 # - guards: the live binary and run-daemon.sh must be what this build replaces (staged md5 values), the staged binary must be intact,
 #   t2r-relay active, no server-relay match in the daemon.log tail (FORCE=1 overrides that last one)
@@ -11,6 +13,7 @@ S=staging/daemonrsleak
 grep -qx "$(md5sum bin/t2r-daemon-tcp | cut -d' ' -f1)" $S/live-binary.md5 || { echo "bin/t2r-daemon-tcp is not a binary this build replaces (live-binary.md5 lists them), stop"; exit 1; }
 [ "$(md5sum run-daemon.sh | cut -d' ' -f1)" = "$(cat $S/run-daemon.md5)" ] || { echo "run-daemon.sh changed since staging, stop"; exit 1; }
 [ "$(md5sum $S/t2r-daemon-tcp | cut -d' ' -f1)" = "$(cat $S/t2r-daemon-tcp.md5)" ] || { echo "staged binary md5 wrong, stop"; exit 1; }
+! ldd $S/t2r-daemon-tcp 2>&1 | grep -qE "not found|not a dynamic" || { echo "staged binary misses a shared library on this host, stop"; exit 1; }
 grep -q 't2r-daemon-tcp serve' run-daemon.sh || { echo "run-daemon.sh does not start t2r-daemon-tcp, stop"; exit 1; }
 systemctl is-active t2r-relay || { echo "t2r-relay not active, stop"; exit 1; }
 D=$(cat host-dir)

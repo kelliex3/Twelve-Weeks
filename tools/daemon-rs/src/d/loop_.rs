@@ -1595,7 +1595,8 @@ pub fn status_loop() {
         std::thread::sleep(std::time::Duration::from_secs(10));
         n += 1;
         if n % 6 == 0 {
-            dlog!("MEM", crate::heap::line()); // (Rust only, once a minute: live heap vs RSS)
+            let tr = crate::heap::trim(); // (glibc: freed memory back to the kernel, once a minute)
+            dlog!("MEM", format!("{}{}", crate::heap::line(), tr)); // (Rust only, once a minute: live heap vs RSS)
             dlog!("MEM-KINDS", crate::heap::kinds_line()); // (Rust only: net bytes per op / thread kind since start)
         }
         if n % 60 == 0 {

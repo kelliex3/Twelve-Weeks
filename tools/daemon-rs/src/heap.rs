@@ -1,10 +1,10 @@
-//! The global allocator (mimalloc; libc malloc with --features sysalloc), wrapped to count the live bytes the daemon's Rust code holds, so the status loop can log the live heap
+//! The global allocator (the libc malloc; mimalloc with --features mimalloc), wrapped to count the live bytes the daemon's Rust code holds, so the status loop can log the live heap
 //! next to SQLite's own memory (C malloc, not counted here) and the process RSS ("MEM" line once a minute): it tells a growing data set
 //! apart from memory the allocator keeps mapped after it was freed.
-#[cfg(not(feature = "sysalloc"))]
+#[cfg(feature = "mimalloc")]
 use mimalloc::MiMalloc as System;
-#[cfg(feature = "sysalloc")]
-use std::alloc::System; // (diagnostic build: libc malloc as before, only counted)
+#[cfg(not(feature = "mimalloc"))]
+use std::alloc::System;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -88,6 +88,31 @@ unsafe impl GlobalAlloc for Counting {
         }
         q
     }
+}
+
+/// Process start, before the threads: on glibc at most T2R_MALLOC_ARENAS (default 2) malloc arenas. musl's malloc kept freed memory
+/// mapped (live 11-26: heap 68 MB, RSS 424 MB and climbing); glibc's can hand it back (trim).
+pub fn tune() {
+    #[cfg(all(target_env = "gnu", not(feature = "mimalloc")))]
+    {
+        let n: i32 = std::env::var("T2R_MALLOC_ARENAS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2);
+        if n > 0 {
+            unsafe { libc::mallopt(libc::M_ARENA_MAX, n) };
+        }
+    }
+}
+
+/// glibc malloc_trim(0): free memory at the top of every arena and the free pages inside them go back to the kernel. "" elsewhere.
+pub fn trim() -> &'static str {
+    #[cfg(all(target_env = "gnu", not(feature = "mimalloc")))]
+    {
+        if std::env::var("T2R_MALLOC_TRIM").map(|v| v.trim() == "0").unwrap_or(false) {
+            return "";
+        }
+        return if unsafe { libc::malloc_trim(0) } != 0 { " trimmed" } else { " trim-none" };
+    }
+    #[allow(unreachable_code)]
+    ""
 }
 
 fn status_kb(s: &str, key: &str) -> i64 {
