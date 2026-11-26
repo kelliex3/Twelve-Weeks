@@ -760,6 +760,75 @@ impl Run {
     }
 }
 
+// ---- T2R_GOLD_PROF=<file>: an in-process sampler (SIGPROF every 5 ms of CPU, rbp walk, needs -C force-frame-pointers=yes); the raw addresses go to <file>
+const SAMP_MAX: usize = 3_000_000;
+static SAMP: [std::sync::atomic::AtomicUsize; SAMP_MAX] = [const { std::sync::atomic::AtomicUsize::new(0) }; SAMP_MAX];
+static SAMP_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+extern "C" fn on_prof(_s: libc::c_int, _i: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
+    use std::sync::atomic::Ordering::Relaxed;
+    unsafe {
+        let uc = ctx as *mut libc::ucontext_t;
+        let rip = (*uc).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
+        let mut bp = (*uc).uc_mcontext.gregs[libc::REG_RBP as usize] as usize;
+        let n = SAMP_N.load(Relaxed);
+        if n + 34 >= SAMP_MAX {
+            return;
+        }
+        let mut k = n;
+        SAMP[k].store(rip, Relaxed);
+        k += 1;
+        for _ in 0..30 {
+            if bp == 0 || bp % 8 != 0 {
+                break;
+            }
+            let ip = *((bp + 8) as *const usize);
+            let nb = *(bp as *const usize);
+            if ip < 0x400000 || ip > 0x4000_0000 {
+                break;
+            }
+            SAMP[k].store(ip, Relaxed);
+            k += 1;
+            if nb <= bp || nb - bp > (1 << 20) {
+                break;
+            }
+            bp = nb;
+        }
+        SAMP[k].store(0, Relaxed);
+        SAMP_N.store(k + 1, Relaxed);
+    }
+}
+
+fn prof_start() {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = on_prof as *const () as usize;
+        sa.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+        libc::sigaction(libc::SIGPROF, &sa, std::ptr::null_mut());
+        let it = libc::itimerval { it_interval: libc::timeval { tv_sec: 0, tv_usec: 5000 }, it_value: libc::timeval { tv_sec: 0, tv_usec: 5000 } };
+        libc::setitimer(libc::ITIMER_PROF, &it, std::ptr::null_mut());
+    }
+}
+
+fn prof_dump(path: &str) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let it = libc::itimerval { it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 }, it_value: libc::timeval { tv_sec: 0, tv_usec: 0 } };
+    unsafe {
+        libc::setitimer(libc::ITIMER_PROF, &it, std::ptr::null_mut());
+    }
+    let n = SAMP_N.load(Relaxed);
+    let mut o = String::new();
+    for i in 0..n {
+        let v = SAMP[i].load(Relaxed);
+        if v == 0 {
+            o.push(char::from(10));
+        } else {
+            o.push_str(&format!("{:x} ", v));
+        }
+    }
+    let _ = std::fs::write(path, o);
+}
+
 pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     let dbp = std::env::var("T2R_CL_DB").unwrap_or_else(|_| "/tmp/clan_golden_rs.db".into());
     let _ = std::fs::remove_file(&dbp);
@@ -804,6 +873,10 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     let _ = std::fs::remove_dir_all(&rdir);
     cl::capture_prints(true);
     let timing = std::env::var("T2R_GOLD_TIME").is_ok();
+    let prof = std::env::var("T2R_GOLD_PROF").ok();
+    if prof.is_some() {
+        prof_start();
+    }
     let mut spent: HashMap<String, (f64, u64)> = HashMap::new();
     let mut i = 0usize;
     for op in script(input) {
@@ -850,6 +923,9 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         i += 1;
     }
     cl::capture_prints(false);
+    if let Some(p) = &prof {
+        prof_dump(p);
+    }
     if timing {
         let mut v: Vec<_> = spent.into_iter().collect();
         v.sort_by(|a, b| b.1 .0.partial_cmp(&a.1 .0).unwrap_or(std::cmp::Ordering::Equal));
