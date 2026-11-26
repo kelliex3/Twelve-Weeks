@@ -75,10 +75,10 @@ pub struct MMState {
 }
 
 pub struct MatchMaker {
-    pub lock: Mutex<MMState>,
+    pub lock: MmMutex,
 }
 
-pub static MM: LazyLock<MatchMaker> = LazyLock::new(|| MatchMaker { lock: Mutex::new(MMState::new()) });
+pub static MM: LazyLock<MatchMaker> = LazyLock::new(|| MatchMaker { lock: MmMutex::new(MMState::new()) });
 
 /// `MatchMaker._in_match` on the fields (usable while another field is borrowed)
 pub fn in_match_in(matches: &IndexMap<String, Vec<String>>, departed: &HashMap<String, HashSet<String>>, ended: &HashSet<String>, token: &str) -> bool {

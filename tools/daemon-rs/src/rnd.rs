@@ -24,6 +24,11 @@ pub fn pinned() -> bool {
     *PINNED.get_or_init(|| std::env::var("T2R_TEST_SEED").map(|v| !v.trim().is_empty()).unwrap_or(false))
 }
 
+/// (tests) `random.Random(seed)` stream restarted
+pub fn reseed(seed: i64) {
+    *rng().lock() = PyRandom::from_i64(seed);
+}
+
 /// `random.random()`
 pub fn random() -> f64 {
     rng().lock().random()

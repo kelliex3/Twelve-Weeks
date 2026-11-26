@@ -98,7 +98,7 @@ fn world(w: &Value) {
     WORLD_ON.store(true, std::sync::atomic::Ordering::Relaxed);
     *ALL.lock() = strs(&w["all"]);
     *MM.lock.lock() = MMState::new();
-    TEST_MM.lock().clear();
+    MATCH_MAP.lock().clear();
     JIP_BACK.lock().clear();
     TEAM_SWAP.lock().clear();
     PING_KICKED.lock().clear();
@@ -129,7 +129,7 @@ fn sorted_set(m: &HashSet<String>) -> Value {
 fn mmstate() -> Value {
     let g = MM.lock.lock();
     let jb = JIP_BACK.lock();
-    let mm = TEST_MM.lock();
+    let mm = MATCH_MAP.lock();
     let mut mmv: Vec<(Vec<String>, i64)> = mm.iter().map(|(k, v)| (k.iter().cloned().collect(), *v)).collect();
     mmv.sort();
     let lobbies: HashMap<String, crate::lobbybook::Lobby> = g.book.lobbies.iter().map(|(k, l)| (k.clone(), l.clone())).collect();
@@ -217,7 +217,7 @@ fn mm_op(c: &Value) -> Value {
                 g.started.insert(mid.clone());
                 g.started_t.insert(mid.clone(), crate::clock::now());
                 g.launched.insert(mid.clone());
-                TEST_MM.lock().insert(key_of(&pl), c["map"].as_i64().unwrap_or(0));
+                MATCH_MAP.lock().insert(key_of(&pl), c["map"].as_i64().unwrap_or(0));
             }
             json!(mid)
         }
