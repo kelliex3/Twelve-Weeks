@@ -52,6 +52,8 @@ pub use loop_::*;
 pub mod admin;
 pub use admin::*;
 pub mod k6_selftest;
+pub mod delta2;
+pub use delta2::*;
 pub mod k4_selftest;
 pub mod k1_selftest;
 pub mod k2_selftest;

@@ -138,7 +138,7 @@ impl LobbyBook {
 
     // ------------------------------------------------------------------ changes
     // py: lobbybook.py:84 _new
-    fn new_lobby(&mut self, now: f64, src: Option<&str>, lid: Option<&str>) -> String {
+    pub fn new_lobby(&mut self, now: f64, src: Option<&str>, lid: Option<&str>) -> String {
         let lid = match lid {
             Some(l) if !self.lobbies.contains_key(l) => l.to_string(),
             _ => format!("L{}", rnd::token_hex("lobbybook:_new", 4)),
@@ -149,7 +149,7 @@ impl LobbyBook {
     }
 
     // py: lobbybook.py:90 _add
-    fn add(&mut self, lid: &str, token: &str, now: f64, at: Option<f64>) {
+    pub fn add(&mut self, lid: &str, token: &str, now: f64, at: Option<f64>) {
         let old = self.of.get(token).cloned();
         if old.as_deref() == Some(lid) {
             if let Some(lb) = self.lobbies.get_mut(lid) {

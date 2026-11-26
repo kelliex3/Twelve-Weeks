@@ -72,3 +72,12 @@ key = "<module>:<function>" of the Python function that calls `secrets.*` / `ran
 With `T2R_TEST_SEED_STREAMS=1` (the wire-level bot test, verify/bot/env.sh + verify/py/seedhook.py) each key has its own stream
 `random.Random("<seed>/<key>")`. An unseeded Python `random.Random()` instance = `rnd::unseeded()` (= Random(seed + 1) when pinned).
 `T2R_TEST_EPOCH=<unix s>`: `clock::now()` / `wall_time()` start at that value.
+
+## daemon.py delta srv202 (git 6291ca1 -> 3181f9a): what is ported and what is not
+- Ported (src/d/delta2.rs + the chunk files): region preference (op 0xC4 trailing byte, `DED.prefs`, `region_lock_*`), party lobby wait / seats, fair clan days
+  (`join_progress`, `presence_tick`, `clan_fair_reason`, `boost_keep*`, `protect` in `clan_finalize`), `bk=1` in the booster reply, feed cache 60 s, join in
+  progress "could not reach the host" memory (`JIP_UNREACH`), auto balance Interrogation guard, lobby voice room push (`voice_room_tick`), `public_map_pool`,
+  the T2RFWD first line of a loopback connection (`_fwd_line`), social paths (automod / voice ban / peers).
+- Dedicated match servers are NOT ported: `DED.enabled()` is false (the T2R_DEDICATED=0 path). Every `DED.is_dedicated(..)` branch of daemon.py is its off branch.
+  Only the preference store and the 0xC4 reply (`region_list`) of dedicated.py exist.
+- Private hooks (acscan.py: `acscan_block`, `acscan_op` op 0xC2, `acscan_autoban`, `_bans_append`) are not ported: the public build behaves like `acscan is None`.

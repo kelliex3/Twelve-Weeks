@@ -431,7 +431,8 @@ pub fn maybe_game_start(token: &str) -> db::DbResult<bool> {
 
 // py: daemon.py:9120 EXT_PRESENCE_OPS
 /// Ext short-connection ops whose payload starts with the 64-hex-char token: each one is proof of life of a player that is already present.
-pub const EXT_PRESENCE_OPS: [u8; 17] = [0xBC, 0xCC, 0xD6, 0xE0, 0xE2, 0xE3, 0xE4, 0xE6, 0xE8, 0xEE, 0xEF, 0xBA, 0xDE, 0xCA, 0xB4, 0xB6, 0xD0];
+/// (0xC4 = the capability + region preference report; 11-26: also with T2R_DEDICATED off, the preference is stored)
+pub const EXT_PRESENCE_OPS: [u8; 18] = [0xBC, 0xCC, 0xD6, 0xE0, 0xE2, 0xE3, 0xE4, 0xE6, 0xE8, 0xEE, 0xEF, 0xBA, 0xDE, 0xCA, 0xB4, 0xB6, 0xD0, OP_CAPS];
 
 const OP_HWID: u8 = 0xB2;
 const OP_ATTEST_REQ: u8 = 0xA1;
@@ -478,6 +479,20 @@ pub fn handle_batch(conn: &Conn, addr: Addr, st: &mut ConnSt, batch: &mut Batch)
     }
     if has(0x02) {
         handle_leave(addr, st)?;
+    }
+
+    // --- dedicated match servers: capability + region pings (t2r-ext's own short connection) ---
+    if has(OP_CAPS) {
+        for (op, pl) in batch.iter() {
+            if *op == OP_CAPS {
+                if let Some(rep) = dedicated_caps_op(pl) {
+                    if !rep.is_empty() {
+                        conn.sendall(&rep)?;
+                    }
+                }
+            }
+        }
+        return Ok(());
     }
 
     // --- custom name / clan tag from t2r-ext (its own short connection) ---
@@ -642,6 +657,7 @@ pub fn handle_batch(conn: &Conn, addr: Addr, st: &mut ConnSt, batch: &mut Batch)
         }
         return Ok(());
     }
+    // --- anti-cheat scan report (op 0xC2, acscan.py) // PRIVATE HOOK: the public build has no acscan, so the op falls through like Python's `acscan is None` ---
     // --- install check file report from t2r-ext (its own short connection): op 0xA1, see attest_op ---
     if has(OP_ATTEST_REQ) {
         for (op, pl) in batch.iter() {

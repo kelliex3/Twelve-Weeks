@@ -626,6 +626,9 @@ pub fn clan_leave_excuse(token: &str, mid: &str, why: &str, at: Option<f64>) -> 
     let js = JIP_STARTED.lock().get(token).cloned();
     if let Some((jm, jt)) = js {
         if jm == mid && 0.0 <= now - jt && now - jt < *CLAN_START_GRACE_S {
+            if *JIP_UNREACH_S > 0.0 {
+                jip_unreach_note(token, mid, now);
+            }
             return Some(format!(
                 "left {} s after its join-in-progress start (< {} s: could not reach the host / bad start)",
                 py::fixed(now - jt, 0),

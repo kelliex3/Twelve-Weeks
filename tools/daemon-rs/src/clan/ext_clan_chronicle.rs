@@ -130,7 +130,9 @@ pub mod story {
 
     // py: clan_story.py:474 spare_sick   (TEST DOUBLE: the real one draws a name from the pools)
     pub fn spare_sick(rng: &mut PyRandom, st: &mut Value, day: i64) -> Value {
-        need_doubles("clan_story::spare_sick");
+        if !DOUBLES.load(Ordering::SeqCst) {
+            return crate::clan::clan_story::spare_sick(rng, st, day); // production / real-module runs: the real port
+        }
         let _ = rng.random();
         let pid = st.get("pid").map(int_of).unwrap_or(0) + 1;
         st["pid"] = json!(pid);

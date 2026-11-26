@@ -277,6 +277,11 @@ fn clear_all() {
     JIP_STARTED.lock().clear();
     JIP_REPUSH.lock().clear();
     JIP_LATE.lock().clear();
+    VOICE_PUSH.lock().last.clear();
+    DED.prefs.lock().clear();
+    MATCH_PRES.lock().clear();
+    JIP_UNREACH.lock().clear();
+    region_lock_reset();
     _SILENT.lock().clear();
     CLAN_LAST_MATCH.lock().clear();
     NEW_TOKENS.clear();
@@ -360,6 +365,14 @@ fn call(f: &str, a: &[Value]) -> Value {
         "loaded_clear" => {
             loaded_clear_match(&s(0), &ss(1));
             Value::Null
+        }
+        "asay" => {
+            let (lid, err) = SOCIAL.admin_say(&s(0), &s(1), &s(2), &s(3));
+            json!([lid, err])
+        }
+        "voice" => {
+            let sent = voice_room_tick(Some(crate::clock::now()));
+            Value::Array(sent.into_iter().map(|(t, pl)| json!([t, pl.iter().map(|b| format!("{:02x}", b)).collect::<String>()])).collect())
         }
         "jip_requeue" => json!(jip_requeue_if_empty(&s(0))),
         "prestart" => json!(prestart_host_lost(&s(0), &ss(1), &ss(2))),

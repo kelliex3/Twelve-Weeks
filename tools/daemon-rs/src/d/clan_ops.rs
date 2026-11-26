@@ -62,6 +62,9 @@ pub fn meta_op(op: u8, pl: &[u8]) -> DbR<Option<Vec<u8>>> {
     })?;
     let Some(mut text) = text else { return Ok(None) };
     text.push_str(&format!(" mf={}", flow_extra_secs())); // seconds after CHOOSE LOADOUT before the level start (ext timer)
+    if boost_keep_now(&token) {
+        text.push_str(" bk=1"); // (the booster page tells a late backfill that its booster is not used up)
+    }
     Ok(Some(msg(0xE9, text.as_bytes())))
 }
 
@@ -87,8 +90,10 @@ pub fn feed_latest(token: &str, limit: usize, lang: &str) -> Vec<(String, String
     }
 }
 
-/// daemon.py:2431 _FEED_CACHE: (token, lang, slot) -> (monotonic time, reply bytes), 20 s
+/// daemon.py:2431 _FEED_CACHE: (token, lang, slot) -> (monotonic time, reply bytes), the whole 60 s slot (FEED_CACHE_S)
 static FEED_CACHE: LazyLock<Mutex<HashMap<(String, String, i64), (f64, Vec<u8>)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// daemon.py:2432 FEED_CACHE_S (T2R_FEED_CACHE_S, 11-26: 20 -> 60 s)
+pub static FEED_CACHE_S: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_FEED_CACHE_S", 60.0));
 
 /// `bytes.decode("utf-8", "ignore")`
 fn utf8_ignore(b: &[u8]) -> String {
@@ -130,7 +135,7 @@ pub fn feed_op(pl: &[u8]) -> Option<Vec<u8>> {
     {
         let c = FEED_CACHE.lock();
         if let Some(hit) = c.get(&ck) {
-            if clock::mono() - hit.0 < 20.0 {
+            if clock::mono() - hit.0 < *FEED_CACHE_S {
                 return Some(hit.1.clone());
             }
         }

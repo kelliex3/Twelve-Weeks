@@ -880,6 +880,8 @@ pub fn team_swap_now(mid: &str, slot: i64, tok: &str, want: i64, why: &str) -> O
 pub static AUTO_BALANCE: LazyLock<bool> = LazyLock::new(|| crate::env_on("T2R_AUTO_BALANCE", true));
 pub static AUTO_BALANCE_S: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_AUTO_BALANCE_S", 90.0));
 pub const AUTO_BALANCE_MIN_LEFT: f64 = 30.0;
+/// daemon.py:7110 AUTO_BALANCE_INT_LATE (11-26): no move in an Interrogation match once either team has this much intel
+pub static AUTO_BALANCE_INT_LATE: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_AUTO_BALANCE_INT_LATE", 3i64));
 pub static AB_NEXT: LazyLock<Mutex<HashMap<String, f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // py: daemon.py:6448 auto_balance_tick
@@ -925,15 +927,17 @@ pub fn auto_balance_tick() {
         if (n[0] - n[1]).abs() < 2 {
             continue;
         }
-        let mut why: Option<&str> = None;
+        let mut why: Option<String> = None;
         if joining {
-            why = Some("a joiner is loading into it");
+            why = Some("a joiner is loading into it".to_string());
         } else if ck.is_some_and(|c| c.2 || (c.1 > 0.0 && c.0 - (now - c.3) < AUTO_BALANCE_MIN_LEFT)) {
-            why = Some("the match is ending");
+            why = Some("the match is ending".to_string());
+        } else if INT.lead(&mid).unwrap_or(0) >= *AUTO_BALANCE_INT_LATE && *AUTO_BALANCE_INT_LATE > 0 {
+            why = Some(format!("a team has {} of {} intel", INT.lead(&mid).unwrap_or(0), INT.need));
         } else if HM.enabled {
             if let Some(hi) = HM.host_info(&mid) {
                 if hi.pending || hi.given_up || hi.alone {
-                    why = Some("host migration in progress");
+                    why = Some("host migration in progress".to_string());
                 }
             }
         }
@@ -1222,9 +1226,23 @@ pub static SOCIAL: LazyLock<Social> = LazyLock::new(|| {
     let mut s = Social::new(Arc::new(SocialHostImpl), PARTIES.clone());
     s.lobby_of = Some(Box::new(|t: &str| lobby_chat_key(t)));
     s.match_of = Some(Box::new(|t: &str| chat_match_of(t)));
-    s.mute_path = Some(std::path::Path::new(&db::CFG.path).parent().map(|p| p.to_path_buf()).unwrap_or_default().join("mutes.txt"));
+    let dbdir = std::path::Path::new(&db::CFG.path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    s.mute_path = Some(dbdir.join("mutes.txt"));
+    s.automod_path = Some(dbdir.join("automod.json")); // automatic slur strikes + mutes (social.py)
+    crate::slurs::load_extra(&dbdir.join("slurs.txt")); // extra patterns (slurs.py)
+    s.vban_path = Some(dbdir.join("voicebans.txt")); // voice bans (the admin site writes it, like mutes.txt)
+    s.match_peers = Some(Box::new(|t: &str| Some(chat_match_peers(t))));
     s
 });
+
+// py: daemon.py:7341 _chat_match_peers
+/// The tokens of the token's current match, departed ones left out (S_MUTE "vbanned", S_VSPAM).
+pub fn chat_match_peers(tok: &str) -> Vec<String> {
+    let g = MM.lock.lock();
+    let Some(mid) = g.mid_locked(tok) else { return Vec::new() };
+    let gone = g.departed.get(&mid);
+    g.matches.get(&mid).map(|pl| pl.iter().filter(|t| !gone.is_some_and(|d| d.contains(*t))).cloned().collect()).unwrap_or_default()
+}
 
 // py: daemon.py:6682 party_op
 pub fn party_op(pl: &[u8]) -> Option<Vec<u8>> {

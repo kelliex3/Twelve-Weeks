@@ -69,6 +69,10 @@ impl MMState {
                 why_not.push(format!("{}: other PART I MAPS preference", mid));
                 continue;
             }
+            if !in_pl && !region_lock_fits(&[std::iter::once(token.to_string()).chain(mates.iter().filter(|m| m.as_str() != token).cloned()).collect()], &pl.iter().filter(|t| !self.departed.get(&mid).is_some_and(|d| d.contains(*t))).map(|t| vec![t.clone()]).collect::<Vec<_>>(), true) {
+                why_not.push(format!("{}: region preference", mid));
+                continue;
+            }
             if !in_pl && !PRIV.jip_ok(token, &mid) {
                 why_not.push(format!("{}: private match / private lobby", mid));
                 continue;
@@ -130,6 +134,12 @@ impl MMState {
             if dep.contains(&host) {
                 why_not.push(format!("{}: host gone", mid));
                 continue;
+            }
+            if let Some(ur) = JIP_UNREACH.lock().get(&(token.to_string(), mid.clone())).cloned() {
+                if now - ur.0 < *JIP_UNREACH_S && (ur.1.is_none() || ur.1.as_deref() == Some(host.as_str())) {
+                    why_not.push(format!("{}: could not reach its host {} s ago (not sent there again for {} s while that host stays)", mid, py::fixed(now - ur.0, 0), py::fixed(*JIP_UNREACH_S, 0)));
+                    continue;
+                }
             }
             let joining: HashSet<String> = self.joining.keys().cloned().collect();
             let lim = if *MM_PING_GATE { ping_match_ms() } else { *PING_KICK_MS };
@@ -596,6 +606,13 @@ impl MatchMaker {
         } else {
             g.late_mult.remove(token);
         }
+        if old_key != new_key && !moved {
+            let (prog, behind) = join_progress(ck, lv, team, now);
+            g.late_prog.insert(token.to_string(), (mid.clone(), prog, behind));
+            dlog!("jip: join progress", tag(token), format!("{} %{}", py::fixed(100.0 * prog, 0), if behind != 0 { ", its team behind on lives" } else { "" }));
+        } else {
+            g.late_prog.remove(token);
+        }
         if bonus != 0 && old_key != new_key && !moved {
             g.late_bonus.insert(token.to_string(), (mid.clone(), bonus));
             dlog!("jip: late-join bonus", tag(token), bonus, format!("parts ({} late-join points, {} v {} players)", down, n_ally, n_enemy));
@@ -893,7 +910,7 @@ pub fn jip_roster_op(pl: &[u8]) -> Option<Vec<u8>> {
     let mids = mid.as_deref().unwrap_or("");
     let mut body: Vec<u8> = Vec::new();
     let mut n: u8 = 0;
-    for (i, tok) in players.iter().take(8).enumerate() {
+    for (i, tok) in players.iter().take(std::cmp::max(8, *ENGINE_SLOTS) as usize).enumerate() {
         if (gone.contains(tok) && *tok != t) || tok.starts_with(&ph) {
             continue;
         }
@@ -913,7 +930,7 @@ pub fn jip_roster_op(pl: &[u8]) -> Option<Vec<u8>> {
     let mut tail: Vec<u8> = Vec::new();
     if flags & 0x10 != 0 && mid.is_some() {
         let sw: HashMap<String, i64> = TEAM_SWAP.lock().get(mids).cloned().unwrap_or_default();
-        let items: Vec<(usize, i64)> = players.iter().take(8).enumerate().filter(|(_, tok)| sw.contains_key(*tok) && !gone.contains(*tok)).map(|(i, tok)| (i, roster_team_in(mids, i as i64, Some(tok)))).collect();
+        let items: Vec<(usize, i64)> = players.iter().take(std::cmp::max(8, *ENGINE_SLOTS) as usize).enumerate().filter(|(_, tok)| sw.contains_key(*tok) && !gone.contains(*tok)).map(|(i, tok)| (i, roster_team_in(mids, i as i64, Some(tok)))).collect();
         if !items.is_empty() {
             tail.push(0xA7);
             tail.push(items.len() as u8);

@@ -112,8 +112,8 @@ pub fn name_from_session(payload: &[u8]) -> Option<String> {
 }
 
 // py: daemon.py:8005 NOISY_OPS
-pub const NOISY_OPS: [u8; 24] = [
-    0xBC, 0xCC, 0xBA, 0xB4, 0xB6, 0x05, 0x15, 0xE3, 0xE6, 0xDC, 0xEA, 0xE8, 0xE0, 0xD0, 0xF3, 0xF4, 0xF6, 0xDA, 0xC6, 0xC8, 0xCA, 0x13, 0xDE, 0xBF,
+pub const NOISY_OPS: [u8; 25] = [
+    0xC2, 0xBC, 0xCC, 0xBA, 0xB4, 0xB6, 0x05, 0x15, 0xE3, 0xE6, 0xDC, 0xEA, 0xE8, 0xE0, 0xD0, 0xF3, 0xF4, 0xF6, 0xDA, 0xC6, 0xC8, 0xCA, 0x13, 0xDE, 0xBF,
 ];
 pub static NOISY_COUNT: AtomicU64 = AtomicU64::new(0);
 // py: POLL_DEADLINE_OPS
@@ -826,6 +826,148 @@ fn release(ip: &str, capped: bool) {
     }
 }
 
+fn release_ip(ip: &str) {
+    let mut l = TCP_LIVE.lock();
+    let gone = match l.per_ip.get_mut(ip) {
+        Some(v) => {
+            *v -= 1;
+            *v <= 0
+        }
+        None => false,
+    };
+    if gone {
+        l.per_ip.remove(ip);
+    }
+}
+
+/// py: daemon.py:8727 FWD_TRUST (T2R_FWD_TRUST=0 = off: the line then reaches tcp_conn as garbage and the connection ends)
+pub static FWD_TRUST: LazyLock<bool> = LazyLock::new(|| env_str("T2R_FWD_TRUST", "1") != "0");
+
+/// `str(ipaddress.ip_address(ip))` of Python 3.10 (IPv6: longest zero run compressed, no embedded IPv4 form)
+fn py_ip_str(ip: &std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(v) => v.to_string(),
+        std::net::IpAddr::V6(v) => {
+            let h = v.segments();
+            let (mut best, mut blen, mut cur, mut clen) = (usize::MAX, 0usize, usize::MAX, 0usize);
+            for (i, x) in h.iter().enumerate() {
+                if *x == 0 {
+                    if cur == usize::MAX {
+                        cur = i;
+                        clen = 0;
+                    }
+                    clen += 1;
+                    if clen > blen {
+                        best = cur;
+                        blen = clen;
+                    }
+                } else {
+                    cur = usize::MAX;
+                    clen = 0;
+                }
+            }
+            if blen < 2 {
+                return h.iter().map(|x| format!("{:x}", x)).collect::<Vec<_>>().join(":");
+            }
+            let left = h[..best].iter().map(|x| format!("{:x}", x)).collect::<Vec<_>>().join(":");
+            let right = h[best + blen..].iter().map(|x| format!("{:x}", x)).collect::<Vec<_>>().join(":");
+            format!("{}::{}", left, right)
+        }
+    }
+}
+
+// py: daemon.py:8729 _fwd_line
+/// A loopback connection's 'T2RFWD <ip>\n' first line -> the ip (the line is consumed); anything else -> None, nothing consumed.
+fn fwd_line(c: &TcpStream) -> Option<String> {
+    use std::io::Read as _;
+    let cfg = &*CONN_CFG;
+    let _ = c.set_read_timeout(if cfg.first_frame_s > 0.0 { Some(Duration::from_secs_f64(cfg.first_frame_s)) } else { None });
+    let deadline = Instant::now() + Duration::from_secs_f64(cfg.first_frame_s.max(0.0));
+    let k;
+    loop {
+        let mut head = [0u8; 64];
+        let n = c.peek(&mut head).ok()?;
+        if n == 0 {
+            return None;
+        }
+        let head = &head[..n];
+        let want = b"T2RFWD ";
+        let m = n.min(7);
+        if want[..n.min(7)] != head[..m] {
+            return None; // a normal client frame
+        }
+        if let Some(p) = head.iter().position(|b| *b == b'\n') {
+            k = p;
+            break;
+        }
+        if n >= 64 || Instant::now() > deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut line: Vec<u8> = Vec::new();
+    let mut s = c;
+    while line.len() < k + 1 {
+        let mut part = vec![0u8; k + 1 - line.len()];
+        let n = s.read(&mut part).ok()?;
+        if n == 0 {
+            return None;
+        }
+        line.extend_from_slice(&part[..n]);
+    }
+    // bytes.strip() (ASCII whitespace only), then decode("ascii", "replace")
+    let raw = &line[7..];
+    let is_ws = |b: &u8| matches!(*b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c);
+    let a = raw.iter().position(|b| !is_ws(b)).unwrap_or(raw.len());
+    let z = raw.iter().rposition(|b| !is_ws(b)).map(|p| p + 1).unwrap_or(a);
+    let ip: String = raw[a..z].iter().map(|b| if *b < 0x80 { *b as char } else { '\u{fffd}' }).collect();
+    ip.parse::<std::net::IpAddr>().ok().map(|a| py_ip_str(&a))
+}
+
+/// `t2r-daemon selftest fwd`: the Rust side of verify/py/fwd_harness.py (the T2RFWD first line of a loopback connection)
+pub fn fwd_selftest(input: &mut dyn std::io::BufRead, out: &mut dyn std::io::Write) -> i32 {
+    use std::io::Write as _;
+    for (n, c) in crate::c_util::script(input).into_iter().enumerate() {
+        let chunks: Vec<Vec<u8>> = c["chunks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|h| h.as_str().unwrap_or("").as_bytes().chunks(2).map(|x| u8::from_str_radix(std::str::from_utf8(x).unwrap_or("0"), 16).unwrap_or(0)).collect())
+            .collect();
+        let delay = c["delay"].as_f64().unwrap_or(0.0);
+        let close = c["close"].as_bool().unwrap_or(true);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let t = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).unwrap();
+            for ch in chunks {
+                let _ = s.write_all(&ch);
+                let _ = s.flush();
+                std::thread::sleep(Duration::from_secs_f64(delay));
+            }
+            if !close {
+                std::thread::sleep(Duration::from_millis(1800));
+            }
+        });
+        let (s, _) = l.accept().unwrap();
+        let ip = fwd_line(&s);
+        let _ = s.set_read_timeout(Some(Duration::from_millis(300)));
+        let mut rest = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match (&s).read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(k) => rest.extend_from_slice(&buf[..k]),
+            }
+        }
+        let _ = t.join();
+        let r = serde_json::json!([ip, rest.iter().map(|b| format!("{:02x}", b)).collect::<String>()]);
+        crate::c_util::emit(out, n + 1, r, serde_json::Value::Null);
+    }
+    0
+}
+
 // py: daemon.py:9080 bind_exclusive + 9109 tcp_server
 pub fn tcp_server() {
     let cfg = &*CONN_CFG;
@@ -870,13 +1012,37 @@ pub fn tcp_server() {
             drop(c);
             continue;
         }
-        let conn = OutConn::new(c, a);
         let ip2 = ip.clone();
         let spawned = std::thread::Builder::new().name("tcp".into()).stack_size(256 * 1024).spawn(move || {
-            if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tcp_conn(conn, a))) {
-                dlog!("TCP", pa(a), "CONN THREAD ERR", panic_text(&p));
+            let (mut ra, mut rcap): (SocketAddr, Option<String>) = (a, None); // ra = the player's address (wslink's T2RFWD line), rcap = counted under it
+            if *FWD_TRUST && ip2 == "127.0.0.1" {
+                if let Some(fip) = fwd_line(&c) {
+                    if let Ok(pip) = fip.parse::<std::net::IpAddr>() {
+                        ra = SocketAddr::new(pip, a.port());
+                    }
+                    {
+                        let mut l = TCP_LIVE.lock();
+                        if l.per_ip.get(&fip).copied().unwrap_or(0) < cfg.max_per_ip {
+                            *l.per_ip.entry(fip.clone()).or_insert(0) += 1;
+                            rcap = Some(fip.clone());
+                        }
+                    }
+                    if rcap.is_none() {
+                        dlog!("TCP", pa(ra), format!("refused (wslink): {} live connections from this address", cfg.max_per_ip));
+                        drop(c);
+                        release(&ip2, capped);
+                        return;
+                    }
+                }
+            }
+            let conn = OutConn::new(c, ra);
+            if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tcp_conn(conn, ra))) {
+                dlog!("TCP", pa(ra), "CONN THREAD ERR", panic_text(&p));
             }
             release(&ip2, capped);
+            if let Some(r) = rcap {
+                release_ip(&r);
+            }
         });
         if let Err(e) = spawned {
             dlog!("TCP-THREAD-ERR", format!("RuntimeError('{}')", e));

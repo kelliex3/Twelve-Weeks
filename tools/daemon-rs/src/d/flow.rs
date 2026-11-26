@@ -330,7 +330,7 @@ pub fn start_match(players: &[String]) {
         }
     }
     {
-        let mid0 = MM.mid_of(&players[0]);
+        let mid0 = MM.mid_of(&lookup_token(players));
         let mut formed: HashMap<PairKey, i64> = HashMap::new();
         for (i, a) in players.iter().enumerate() {
             for b in &players[i + 1..] {
@@ -345,7 +345,7 @@ pub fn start_match(players: &[String]) {
             pf.shift_remove_index(0);
         }
     }
-    let mid0 = MM.mid_of(&players[0]);
+    let mid0 = MM.mid_of(&lookup_token(players));
     let p2p = match_p2p_get(&key).unwrap_or(false);
     let mut cv = serde_json::Map::new();
     for t in players {
@@ -369,7 +369,7 @@ pub fn start_match(players: &[String]) {
     dlog!("load timing: START-MATCH sent", tag_list(players));
     MATCH_MAP.lock().shift_remove(&key); // pick this match's map afresh
     VOTES.lock().shift_remove(&key);
-    let pmid = MM.mid_of(&players[0]);
+    let pmid = MM.mid_of(&lookup_token(players));
     match pmid.filter(|m| PRIV.is_private_mid(m)) {
         Some(pmid) => {
             // private match (11-17): the lobby's map, a random pool map, or a vote over the lobby's pool
@@ -440,7 +440,7 @@ pub fn countdown_run(players: &[String]) {
     }
     let mut in_vote = false;
     for (phase, n) in steps {
-        if MM.players_of(&players[0]).as_deref() != Some(players) {
+        if MM.players_of(&lookup_token(players)).as_deref() != Some(players) {
             dlog!("COUNTDOWN aborted (match cancelled)", tag_list(players));
             VOTES.lock().shift_remove(&key);
             return;
