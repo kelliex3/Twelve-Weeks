@@ -1132,7 +1132,14 @@ impl SocialHost for SocialHostImpl {
         let c = dbc()?;
         c.execute_batch("BEGIN")?;
         match f(&c) {
-            Ok(()) => c.execute_batch("COMMIT"),
+            // (Python `with conn:` after a `c.commit()` inside the block: nothing left to commit)
+            Ok(()) => {
+                if c.is_autocommit() {
+                    Ok(())
+                } else {
+                    c.execute_batch("COMMIT")
+                }
+            }
             Err(e) => {
                 let _ = c.execute_batch("ROLLBACK");
                 Err(e)

@@ -142,6 +142,7 @@ def setup():
         if hasattr(v, "__dict__"):
             repoint(v, 0)
     d.log = log
+    d._SocialHost.log = staticmethod(log)       # (class attribute bound to the original log at import)
     d.evt = lambda kind, *a: log("EVT", kind, *a)
     d.SERVER_VERSION = "sv-test"
     d._ping_gate = lambda a, b, now=None: d.pair_ping(a, b)
@@ -550,6 +551,7 @@ def gen(r, n):
             m["m%d" % i] = [pool.pop() for _ in range(min(k, len(pool)))]
             i += 1
         q = [x for x in pool if r.random() < 0.5]
+        FREE[:] = pool
         mids = list(m)
         started = [x for x in mids if r.random() < 0.5]
         launched = [x for x in mids if x in started or r.random() < 0.7]
@@ -569,6 +571,7 @@ def gen(r, n):
         return c
 
     emit_(world())
+    FREE = []
     emit_(mm())
     # every player logs in on its session conn and registers a bridge
     for i in range(12):
@@ -585,7 +588,12 @@ def gen(r, n):
         elif k < 0.06:
             emit_(world())
         elif k < 0.07:
-            emit_({"t": t, "op": "party", "groups": [[toks[a], toks[b]] for a, b in [r.sample(range(12), 2) for _ in range(r.randint(0, 3))] if a != b]})
+            if len(FREE) >= 2 and r.random() < 0.6:
+                fr_ = FREE[:]
+                r.shuffle(fr_)
+                emit_({"t": t, "op": "party", "groups": [fr_[:r.choice([2, 2, 3])]] + ([fr_[3:5]] if len(fr_) >= 5 and r.random() < 0.4 else [])})
+            else:
+                emit_({"t": t, "op": "party", "groups": [[toks[a], toks[b]] for a, b in [r.sample(range(12), 2) for _ in range(r.randint(0, 3))] if a != b]})
         elif k < 0.10:
             emit_({"t": t, "op": "fire"})
         elif k < 0.13:
