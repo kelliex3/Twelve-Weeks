@@ -42,19 +42,19 @@ fn set_path(st: &mut Value, path: &[Value], v: &Value) {
     }
 }
 
-struct Run {
-    c: Connection,
-    sts: Vec<(String, Value)>,
+pub(crate) struct Run {
+    pub(crate) c: Connection,
+    pub(crate) sts: Vec<(String, Value)>,
 }
 
 impl Run {
-    fn st(&mut self, k: &str) -> Option<&mut Value> {
+    pub(crate) fn st(&mut self, k: &str) -> Option<&mut Value> {
         self.sts.iter_mut().find(|(n, _)| n == k).map(|(_, v)| v)
     }
 }
 
 /// One call: `Ok(Some(r))` = the call has a result, `Ok(None)` = no "r" key.
-fn op(run: &mut Run, o: &Value) -> Result<Option<Value>, String> {
+pub(crate) fn op(run: &mut Run, o: &Value) -> Result<Option<Value>, String> {
     let k = js(o, "k").to_string();
     let fk_of = |st: &Value| if st.get("fac").map(int_of) == Some(2) { "S" } else { "W" };
     match js(o, "op") {

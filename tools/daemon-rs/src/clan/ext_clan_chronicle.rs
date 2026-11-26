@@ -14,6 +14,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use t2r_clanstory::pyrand::PyRandom;
 
 static DOUBLES: AtomicBool = AtomicBool::new(false);
+static REAL_SAGA: AtomicBool = AtomicBool::new(false);
+
+/// Selftest only: with the doubles on, the saga and loot calls still go to the REAL clan_saga / clan_loot (`selftest clan_saga`).
+pub fn real_saga(on: bool) {
+    REAL_SAGA.store(on, Ordering::SeqCst);
+}
+
+/// The saga / loot functions are real in production and in `selftest clan_saga`; only `selftest clan_chronicle` runs their doubles.
+fn real() -> bool {
+    !DOUBLES.load(Ordering::SeqCst) || REAL_SAGA.load(Ordering::SeqCst)
+}
 
 /// Test doubles on (selftest only).
 pub fn doubles(on: bool) {
@@ -275,13 +286,19 @@ pub mod saga {
 
     // py: clan_saga.py:140 fit  (TEST DOUBLE)
     pub fn fit(cs: &Value, kind: &str, p: &Value) -> i64 {
+        if real() {
+            return crate::clan::clan_saga::fit(cs, kind, p);
+        }
         need_doubles("clan_saga::fit");
         let _ = cs;
         (p.get("i").map(int_of).unwrap_or(0) * 7 + kind.len() as i64) % 5 - 2
     }
 
     // py: clan_saga.py:922 run  (TEST DOUBLE). `cs` = st["ch"] is taken from `st`; `ch` (the chronicle module) is this crate's clan_chronicle.
-    pub fn run(d: &mut Day, st: &mut Value, newc: &Value, r: &Value, matchv: &Value, rng: &mut PyRandom, loot: &[Value], died_now: &[Value], arc_rows: &[Value]) -> Result<Vec<Value>, String> {
+    pub fn run(d: &mut Day, st: &mut Value, newc: &Value, r: &Value, matchv: &Value, rng: &mut PyRandom, loot: &[Value], died_now: &[Value], arc_rows: &mut [Value]) -> Result<Vec<Value>, String> {
+        if real() {
+            return crate::clan::clan_saga::run(d, st, newc, r, matchv, rng, loot, died_now, arc_rows);
+        }
         need_doubles("clan_saga::run");
         let _ = (newc, r, matchv, loot, died_now, arc_rows);
         let _ = rng.random();
@@ -306,6 +323,9 @@ pub mod saga {
 
     // py: clan_saga.py render_msg  (TEST DOUBLE)
     pub fn render_msg(lid: &str, params: &Value, lang: &str) -> Option<String> {
+        if real() {
+            return crate::clan::clan_saga::render_msg(lid, params, lang);
+        }
         need_doubles("clan_saga::render_msg");
         let _ = (params, lang);
         Some(format!("SAGA-RENDER {}", lid))
@@ -318,6 +338,9 @@ pub mod loot {
 
     // py: clan_loot.py:125 fortune  (TEST DOUBLE)  `fo_st` = dict(st, morale=...) ; updates st["ch"]["fort"] (here: `cs` = the real st's ch)
     pub fn fortune(fo_st: &Value, cs: &mut Value, hist: &[Value]) -> Result<Value, String> {
+                if real() {
+            return crate::clan::clan_loot::fortune(fo_st, cs, hist);
+        }
         need_doubles("clan_loot::fortune");
         let _ = fo_st;
         let s = hist.len() as i64 - 3;
@@ -327,6 +350,9 @@ pub mod loot {
 
     // py: clan_loot.py:353 roll_finds  (TEST DOUBLE)
     pub fn roll_finds(rng: &mut PyRandom, st: &mut Value, r: &Value, matchv: &Value, score: &Value, day: i64) -> Result<Vec<Value>, String> {
+                if real() {
+            return crate::clan::clan_loot::roll_finds(rng, st, r, matchv, score, Some(day));
+        }
         need_doubles("clan_loot::roll_finds");
         let _ = (st, r, matchv, score, day);
         let n = rng.randrange(0, 3).map_err(|e| format!("{:?}", e))?;
@@ -342,6 +368,9 @@ pub mod loot {
 
     // py: clan_loot.py:552 legacy_loot  (TEST DOUBLE)
     pub fn legacy_loot(finds: &[Value], have: &Value) -> Vec<Value> {
+                if real() {
+            return crate::clan::clan_loot::legacy_loot(finds, have);
+        }
         need_doubles("clan_loot::legacy_loot");
         let _ = have;
         finds.iter().map(|f| json!([f["k"], if crate::clan::clan_chronicle::is_keep(f["k"].as_str().unwrap_or("")) { 1 } else { int_of(&f["n"]) }])).collect()
@@ -349,6 +378,9 @@ pub mod loot {
 
     // py: clan_loot.py:157 update_moods  (TEST DOUBLE)
     pub fn update_moods(st: &mut Value) -> Result<(), String> {
+                if real() {
+            return crate::clan::clan_loot::update_moods(st);
+        }
         need_doubles("clan_loot::update_moods");
         let n = st["ch"].get("moods").map(int_of).unwrap_or(0) + 1;
         st["ch"]["moods"] = json!(n);
@@ -357,6 +389,9 @@ pub mod loot {
 
     // py: clan_loot.py:509 items_text  (TEST DOUBLE)
     pub fn items_text(finds: &Value, lang: &str) -> String {
+                if real() {
+            return crate::clan::clan_loot::items_text(finds, lang);
+        }
         need_doubles("clan_loot::items_text");
         let _ = lang;
         finds.as_array().map(|a| a.iter().map(|f| format!("{}x{}", f["n"], f["k"].as_str().unwrap_or(""))).collect::<Vec<_>>().join(", ")).unwrap_or_default()
@@ -364,6 +399,9 @@ pub mod loot {
 
     // py: clan_loot.py:514 public  (TEST DOUBLE)
     pub fn public(finds: &Value, lang: &str) -> Value {
+                if real() {
+            return crate::clan::clan_loot::public(finds, lang);
+        }
         need_doubles("clan_loot::public");
         json!(finds.as_array().map(|a| a.iter().map(|f| json!({"k": f["k"], "lang": lang})).collect::<Vec<_>>()).unwrap_or_default())
     }
