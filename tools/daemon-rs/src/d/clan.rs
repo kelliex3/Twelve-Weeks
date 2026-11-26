@@ -140,6 +140,7 @@ pub fn py_timer(delay: f64, f: TimerFn) {
         return;
     }
     let _ = std::thread::Builder::new().name("clan-timer".into()).stack_size(256 * 1024).spawn(move || {
+        crate::heap::set_kind_name("clan-timer");
         std::thread::sleep(std::time::Duration::from_secs_f64(delay.max(0.0)));
         f();
     });
@@ -1175,7 +1176,10 @@ pub fn clan_report(token: &str, parts: i64, flags: i64, counts: IndexMap<i64, i6
             !CLAN_SCHED.swap(true, Ordering::SeqCst)
         };
         if start && !TEST_TIMERS_ON.load(Ordering::Relaxed) {
-            let _ = std::thread::Builder::new().name("clan-scheduler".into()).stack_size(256 * 1024).spawn(clan_scheduler);
+            let _ = std::thread::Builder::new().name("clan-scheduler".into()).stack_size(256 * 1024).spawn(|| {
+                crate::heap::set_kind_name("clan-scheduler");
+                clan_scheduler()
+            });
         }
     }
     clan_state(token, 0)

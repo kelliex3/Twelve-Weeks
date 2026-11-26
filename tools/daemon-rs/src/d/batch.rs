@@ -1172,5 +1172,9 @@ pub fn spawn_t(name: &str, f: impl FnOnce() + Send + 'static) {
         f();
         return;
     }
-    let _ = std::thread::Builder::new().name(name.to_string()).stack_size(256 * 1024).spawn(f);
+    let nm = name.to_string();
+    let _ = std::thread::Builder::new().name(name.to_string()).stack_size(256 * 1024).spawn(move || {
+        crate::heap::set_kind_name(&nm);
+        f()
+    });
 }

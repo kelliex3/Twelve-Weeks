@@ -286,7 +286,10 @@ impl OutConn {
         }
         if start {
             let me = Arc::clone(self);
-            if std::thread::Builder::new().name("sendq".into()).stack_size(64 * 1024).spawn(move || me.run()).is_err() {
+            if std::thread::Builder::new().name("sendq".into()).stack_size(64 * 1024).spawn(move || {
+                crate::heap::set_kind_name("sendq");
+                me.run()
+            }).is_err() {
                 self.st.lock().writer = false;
                 self.kill("cannot start writer thread");
                 return Err(brokenpipe("no writer thread"));
@@ -618,6 +621,7 @@ fn rd(conn: &Conn, buf: &mut [u8]) -> Rd {
 
 // py: daemon.py:8099 tcp_conn
 pub fn tcp_conn(conn: Conn, addr: Addr) {
+    crate::heap::set_kind(crate::heap::K_TCP);
     let cfg = &*CONN_CFG;
     conn.set_timeout(cfg.first_frame_s);
     let t_conn = Instant::now();
@@ -739,10 +743,12 @@ pub fn tcp_conn(conn: Conn, addr: Addr) {
                 db::set_deadline(Some(mono + Duration::from_secs_f64(cfg.poll_deadline_s)));
             }
             // a panic in a handler = Python's uncaught exception in tcp_conn's try: logged, the connection kept
+            crate::heap::set_kind(batch[0].0 as u16);
             let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_batch(&conn, addr, &mut st, &mut batch))) {
                 Ok(r) => r,
                 Err(p) => Err(HErr::Other(panic_text(&p))),
             };
+            crate::heap::set_kind(crate::heap::K_TCP);
             db::set_deadline(None);
             match r {
                 Ok(()) => {}

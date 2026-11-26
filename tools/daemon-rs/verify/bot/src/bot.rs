@@ -116,6 +116,35 @@ pub fn make_token(name: &str, idx: usize) -> String {
     hex(&raw)
 }
 
+/// T2R_BOT_REAL_TOKENS=<file of "token steamid" lines> (load tests on a copy of the live database): bot idx plays as line idx % n,
+/// so matches run the clan engine on real clans; the shown name is the one inside the token.
+fn real_identity(idx: usize) -> Option<(String, String, u64)> {
+    static IDS: std::sync::OnceLock<Vec<(String, u64)>> = std::sync::OnceLock::new();
+    let ids = IDS.get_or_init(|| {
+        let Ok(p) = std::env::var("T2R_BOT_REAL_TOKENS") else { return Vec::new() };
+        std::fs::read_to_string(p)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| {
+                let mut it = l.split_whitespace();
+                let t = it.next()?.to_string();
+                let sid = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                (t.len() == 64).then_some((t, sid))
+            })
+            .collect()
+    });
+    if ids.is_empty() {
+        return None;
+    }
+    // T2R_BOT_REAL_ROTATE=1: every new bot takes the next line (each match brings players the daemon has not seen yet)
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let i = if std::env::var("T2R_BOT_REAL_ROTATE").map(|v| v == "1").unwrap_or(false) { NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) } else { idx };
+    let (t, sid) = ids[i % ids.len()].clone();
+    let raw: Vec<u8> = (0..t.len()).step_by(2).filter_map(|i| u8::from_str_radix(&t[i..i + 2], 16).ok()).collect();
+    let name: String = raw.get(4..).unwrap_or(&[]).iter().take_while(|&&c| c != 0).map(|&c| c as char).collect();
+    Some((if name.is_empty() { format!("R{}", idx) } else { name }, t, if sid == 0 { STEAMID_BASE + 1000 + idx as u64 } else { sid }))
+}
+
 /// Payload column of a reply: hex and text; the friends reply (JSON with ages and seconds) is printed normalised instead.
 fn show(op: u8, p: &[u8]) -> String {
     if op == 0xD9 {
@@ -156,11 +185,15 @@ fn connect(ctx: &Ctx) -> std::io::Result<TcpStream> {
 
 impl Bot {
     pub fn new(ctx: &Arc<Ctx>, idx: usize, name: &str) -> Bot {
+        let (name, token, sid) = match real_identity(idx) {
+            Some(r) => r,
+            None => (name.to_string(), make_token(name, idx), STEAMID_BASE + 1000 + idx as u64),
+        };
         Bot {
             idx,
-            name: name.to_string(),
-            token: make_token(name, idx),
-            sid: STEAMID_BASE + 1000 + idx as u64,
+            name: name.clone(),
+            token,
+            sid,
             hport: 40000 + idx as u16,
             ctx: ctx.clone(),
             sh: Arc::new(Shared {

@@ -17,6 +17,8 @@ default = []
 # The private modules (anti-cheat, identity, install check) live in ./private (never on GitHub).
 # Without this feature the daemon builds with neutral stubs (src/privstub.rs).
 private = []
+# Diagnostic build: keep libc malloc (musl) as the global allocator, only counted (MEM log line).
+sysalloc = []
 
 [dependencies]
 indexmap = "2"
@@ -26,6 +28,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 t2r-clanstory = { path = "../clanstory-rs" }
 parking_lot = "0.12"
+mimalloc = { version = "0.1", default-features = false }
 getrandom = "0.2"
 sha2 = "0.10"
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case", "unicode-gencat"] }

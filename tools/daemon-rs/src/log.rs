@@ -204,6 +204,7 @@ fn open_new(path: &Path, header: &str) -> Option<File> {
 }
 
 fn flusher() {
+    crate::heap::set_kind_name("log");
     let Some(l) = LOGGER.get() else { return };
     let path = l.cfg.path.clone();
     rotate(&path, l.cfg.keep);

@@ -1,0 +1,16 @@
+#!/bin/bash
+# Rollback of go.sh: the binary go.sh replaced (bin/t2r-daemon-tcp.bak-leak = 012b2085 diag or 3485c20f) again, restart. run-daemon.sh was not changed by go.sh.
+set -e
+cd $HOME/t2r-live
+S=staging/daemonrsleak
+[ -f bin/t2r-daemon-tcp.bak-leak ] || { echo "no bin/t2r-daemon-tcp.bak-leak, stop"; exit 1; }
+grep -qx "$(md5sum bin/t2r-daemon-tcp.bak-leak | cut -d' ' -f1)" $S/live-binary.md5 || { echo "bin/t2r-daemon-tcp.bak-leak is not a binary go.sh replaces, stop"; exit 1; }
+cp -p bin/t2r-daemon-tcp.bak-leak bin/t2r-daemon-tcp.new
+mv -f bin/t2r-daemon-tcp.new bin/t2r-daemon-tcp
+sudo systemctl restart t2r-daemon
+sleep 25
+D=$(cat host-dir)
+for p in $(pgrep -u kellie -f "t2r-daemon-tcp serve"); do [ "$(readlink /proc/$p/cwd)" = "$HOME/t2r-live/$D" ] && ps -o pid,etime,pcpu,rss,cmd -p $p; done
+echo "binary $(md5sum bin/t2r-daemon-tcp | cut -c1-8)"
+systemctl is-active t2r-daemon t2r-relay
+tail -n 400 $D/daemon.log | grep -aciE "panic|HANDLER ERR|CONN THREAD ERR" || true

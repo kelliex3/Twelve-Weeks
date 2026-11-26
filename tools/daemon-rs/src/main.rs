@@ -5,6 +5,9 @@ mod clock;
 mod d;
 mod gen_modes;
 mod gunlimit;
+mod heap;
+#[global_allocator]
+static GLOBAL: heap::Counting = heap::Counting;
 mod hostcap;
 mod hostmig;
 mod interrogation;

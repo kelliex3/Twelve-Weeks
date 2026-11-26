@@ -962,6 +962,7 @@ pub fn readopt_expire(now: Option<f64>) -> Vec<String> {
 // py: daemon.py:9912 supervised (run fn for ever: a panic is logged and the loop restarts)
 pub fn supervised(f: fn(), name: &'static str) -> impl FnOnce() + Send + 'static {
     move || {
+        crate::heap::set_kind_name(name);
         let mut n = 0u32;
         loop {
             match std::panic::catch_unwind(f) {
@@ -1588,9 +1589,18 @@ fn take_sorted<K: Clone>(c: &mut Vec<(K, i64)>) -> Vec<(K, i64)> {
 // py: daemon.py:10318 status_loop
 pub fn status_loop() {
     let mut last_bak = clock::now();
+    let mut n: u64 = 0;
     // 11-25: db_guard checked the DB at start; the first backup waits DB_BACKUP_S
     loop {
         std::thread::sleep(std::time::Duration::from_secs(10));
+        n += 1;
+        if n % 6 == 0 {
+            dlog!("MEM", crate::heap::line()); // (Rust only, once a minute: live heap vs RSS)
+            dlog!("MEM-KINDS", crate::heap::kinds_line()); // (Rust only: net bytes per op / thread kind since start)
+        }
+        if n % 60 == 0 {
+            dlog!("SIZES", py::dumps_compact(&state_sizes())); // (Rust only, every 10 min: the registry sizes of admin GET /sizes)
+        }
         if clock::now() - last_bak > db::CFG.backup_s {
             last_bak = clock::now();
             if std::path::Path::new(&db::CFG.path).exists() && db::db_backup() {
