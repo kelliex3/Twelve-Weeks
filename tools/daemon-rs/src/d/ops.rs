@@ -311,8 +311,8 @@ impl PrivStub {
         None
     }
     /// `PRIV.is_private_mid(mid)`
-    pub fn is_private_mid(&self, _mid: &str) -> bool {
-        false
+    pub fn is_private_mid(&self, mid: &str) -> bool {
+        PRIV_MIDS.lock().contains(mid) // (K2 selftest hook; empty in production)
     }
 }
 pub static PRIV: PrivStub = PrivStub;
