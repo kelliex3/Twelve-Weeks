@@ -4,7 +4,7 @@ set -u
 a=$1; b=$2; n=$3
 here=$HOME/rsverify/daemon/k4
 pydir=$HOME/rsverify/daemon/py
-tmp=/tmp/k4mmcmp; mkdir -p $tmp
+tmp=${TMPDIR:-/tmp}/k4mmcmp; mkdir -p $tmp
 bad=0
 for s in $(seq $a $b); do
   export T2R_PY_DIR=$pydir T2R_TOOLS_DIR=$tmp/tools T2R_TEST_SEED=$s ${K4_ENV:-}

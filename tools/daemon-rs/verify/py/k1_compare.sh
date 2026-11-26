@@ -4,7 +4,7 @@ set -u
 a=$1; b=$2; n=$3
 here=$(cd "$(dirname "$0")/../.." && pwd)
 pydir=$here/py
-tmp=/tmp/k1cmp; mkdir -p $tmp
+tmp=${TMPDIR:-/tmp}/k1cmp; mkdir -p $tmp
 bad=0
 for s in $(seq $a $b); do
   export T2R_PY_DIR=$pydir T2R_TEST_SEED=$s T2R_TOOLS_DIR=$tmp
