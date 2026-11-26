@@ -37,11 +37,27 @@ pub fn str_repr(s: &str) -> String {
                 out.push(c);
             }
             c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if (c as u32) >= 0x80 && !printable(c) => {
+                let u = c as u32;
+                if u < 0x100 {
+                    out.push_str(&format!("\\x{:02x}", u));
+                } else if u < 0x10000 {
+                    out.push_str(&format!("\\u{:04x}", u));
+                } else {
+                    out.push_str(&format!("\\U{:08x}", u));
+                }
+            }
             c => out.push(c),
         }
     }
     out.push(quote);
     out
+}
+
+/// `str.isprintable()` for a character from U+0080 up (CPython's table, see unprintable.rs).
+fn printable(c: char) -> bool {
+    let u = c as u32;
+    crate::unprintable::RANGES.binary_search_by(|&(a, b)| if u < a { std::cmp::Ordering::Greater } else if u > b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Equal }).is_err()
 }
 
 pub fn os_error_repr(e: &std::io::Error) -> String {
@@ -55,6 +71,10 @@ pub fn os_error_repr(e: &std::io::Error) -> String {
         libc::EINTR => "InterruptedError",
         libc::EACCES | libc::EPERM => "PermissionError",
         libc::ETIMEDOUT => "TimeoutError",
+        libc::ENOENT => "FileNotFoundError",
+        libc::EEXIST => "FileExistsError",
+        libc::ENOTDIR => "NotADirectoryError",
+        libc::EISDIR => "IsADirectoryError",
         _ => "OSError",
     };
     let msg = match glibc_strerror(code) {

@@ -4,6 +4,7 @@
 //! Script lines (JSON): {"m":"social","op":<name>,"t":<frozen time>, ...}. The "world" op replaces what the host reports (game tokens, matchmaker
 //! states, Steam ids, shown names, alive tokens). Every op prints "R <json>", then one "L <text>" line per log line it produced.
 //! The folder is $T2R_VERIFY_DIR/social (database t.db, mutes.txt).
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -24,6 +25,7 @@ struct World {
     names: HashMap<String, String>,
     alive: Vec<String>,
     logs: Vec<String>,
+    badpeers: HashSet<String>,
 }
 
 struct Host {
@@ -79,6 +81,10 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     let dir = crate::selftest::tmp_dir("social");
     let dbp = dir.join("t.db");
     let mutes = dir.join("mutes.txt");
+    let vbans = dir.join("voicebans.txt");
+    let automod = dir.join("automod.json");
+    let bad_automod = dir.join("nodir").join("automod.json");
+    let slurs_txt = dir.join("slurs.txt");
     let clock = Arc::new(AtomicU64::new(0f64.to_bits()));
     let host = Arc::new(Host { clock: clock.clone(), db: dbp.clone(), w: Mutex::new(World::default()) });
     let hc = host.clone();
@@ -102,7 +108,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     let mut first = true;
     let mut social: Option<Social> = None;
     let lobby_map: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
-    let match_map: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let match_map: Arc<Mutex<IndexMap<String, String>>> = Arc::new(Mutex::new(IndexMap::new()));
     let mut line = String::new();
     loop {
         line.clear();
@@ -124,7 +130,36 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
             let mm = match_map.clone();
             s.match_of = Some(Box::new(move |tok: &str| mm.lock().get(tok).cloned()));
             s.mute_path = Some(mutes.clone());
+            s.automod_path = Some(automod.clone());
+            s.vban_path = Some(vbans.clone());
+            let (mm2, h2) = (match_map.clone(), host.clone());
+            s.match_peers = Some(Box::new(move |tok: &str| {
+                if h2.w.lock().badpeers.contains(tok) {
+                    return None;
+                }
+                let m = mm2.lock();
+                let mine = m.get(tok).filter(|x| !x.is_empty());
+                Some(match mine {
+                    None => Vec::new(),
+                    Some(id) => m.iter().filter(|(_, v)| *v == id).map(|(k, _)| k.clone()).collect(),
+                })
+            }));
             social = Some(s);
+        }
+        if v["op"].as_str() == Some("paths") {
+            let sm = social.as_mut().unwrap();
+            sm.automod_path = match v["automod"].as_str() {
+                Some("bad") => Some(bad_automod.clone()),
+                Some("none") => None,
+                _ => Some(automod.clone()),
+            };
+            sm.vban_path = if v["vban"].as_str() == Some("none") { None } else { Some(vbans.clone()) };
+            let _ = writeln!(out, "R null");
+            let logs = std::mem::take(&mut host.w.lock().logs);
+            for l in logs {
+                let _ = writeln!(out, "L {}", l);
+            }
+            continue;
         }
         let s = social.as_ref().unwrap();
         let st = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -156,6 +191,9 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
                 }
                 if let Some(o) = v.get("match").and_then(|x| x.as_object()) {
                     *match_map.lock() = o.iter().map(|(k, x)| (k.clone(), x.as_str().unwrap_or("").to_string())).collect();
+                }
+                if v.get("badpeers").is_some() {
+                    w.badpeers = strs(&v["badpeers"]).into_iter().collect();
                 }
                 Value::Null
             }
@@ -199,6 +237,36 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
                 let _ = std::fs::remove_file(&mutes);
                 Value::Null
             }
+            "vbans" => {
+                let _ = std::fs::write(&vbans, st("text"));
+                if let (Some(mt), Ok(f)) = (v["mt"].as_u64(), std::fs::OpenOptions::new().write(true).open(&vbans)) {
+                    let _ = f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mt));
+                }
+                Value::Null
+            }
+            "novbans" => {
+                let _ = std::fs::remove_file(&vbans);
+                Value::Null
+            }
+            "automod_seed" => {
+                let _ = std::fs::write(&automod, st("text"));
+                Value::Null
+            }
+            "automod_file" => match std::fs::read(&automod) {
+                Ok(b) => json!(String::from_utf8_lossy(&b).into_owned()),
+                Err(_) => Value::Null,
+            },
+            "slur_extra" => {
+                let _ = std::fs::write(&slurs_txt, st("text"));
+                json!(crate::slurs::load_extra(&slurs_txt))
+            }
+            "admin_say" => {
+                let (lid, err) = s.admin_say(&st("mid"), &st("name"), &st("text"), &st("who"));
+                json!([lid, err])
+            }
+            "vban_left" => json!(s.vban_left(&st("me"))),
+            "vban_why" => json!(s.vban_why(&st("me"))),
+            "mute_why" => json!(s.mute_why(&st("me"))),
             "handle" => match s.handle(&st("token"), ints("lang"), ints("sub"), &st("arg")) {
                 Some(r) => json!(String::from_utf8_lossy(&reply_json(&r)).into_owned()),
                 None => json!("EXC"),

@@ -80,7 +80,8 @@ friends = []   # (token a, token b)
 invs = []      # (inviter token, invitee token)
 
 TEXTS = ["hello", "hello | world", "Cześć żółw", "a\x00b\tc\nd", "x" * 300, "\U0001f600\U0001f600", "   ", "‘quoted’ “dq” – dash …",
-         "", "wiadomość z łąka ąę", "plain text message number", "a​b c﻿d", "tab\there", "{n} {t}", "ok " * 40]
+         "", "wiadomość z łąka ąę", "plain text message number", "a​b c﻿d", "tab\there", "{n} {t}", "ok " * 40,
+         "soft\u00adhyphen", "priv\ue000ate", "unas\u0378ign", "emoji\U0001f600", "tag\U000e0041x", "you are a n1gger", "kike!", "p a k i", "hello coon", "ｋｉｋｅ", "Nigeria is nice", "xXniggaXx", "f a g g o t", "porch monkey", "snigger", "wog", "chink!"]
 JUNK = ["", " ", "x", "s:abc", "t:", "x:123", "s:99999999999999999999", "99999999999999999999", "76561190000000001", "s:76561190000000001", "t:0123456789abcdef",
         "zzzz", "a\nb", "%", "_", "\\", "s:1", "t:ff", "12345678901234567"]
 
@@ -141,8 +142,11 @@ def advance():
         T[0] += 15 * 86400
 
 
+BADPEERS = []
+
+
 def world_all():
-    emit("world", game=game, mm=mm, sid=sid_of, names=names, alive=alive, lobby=lobby, **{"match": matchm})
+    emit("world", game=game, mm=mm, sid=sid_of, names=names, alive=alive, lobby=lobby, badpeers=BADPEERS, **{"match": matchm})
 
 
 def shuffle_world():
@@ -202,7 +206,119 @@ def mutes_text():
 mtime = [1_700_000_000]
 
 
+def automod_json():
+    d = {}
+    for p in R.sample(people, R.randrange(0, 5)):
+        k = keyof(p)
+        e = {"s": [T[0] - R.choice([10, 1000, 86400 * 10, 86400 * 40]) for _ in range(R.randrange(0, 4))],
+             "until": R.choice([0, T[0] + 600, T[0] - 600, T[0] + 86400 * 3, int(T[0]) + 99]),
+             "why": R.choice(["", "slur in chat", "x" * 130, "caf\u00e9"]), "name": p.name}
+        if R.random() < 0.6:
+            e["v"] = [T[0] - R.choice([10, 1000, 86400 * 40]) for _ in range(R.randrange(0, 3))]
+            e["vuntil"] = R.choice([T[0] + 300, T[0] - 5, T[0] + 86400, 0])
+            e["vwhy"] = R.choice(["mic spam", "", "y" * 150])
+        d[k] = e
+    if R.random() < 0.15:
+        d["junk"] = R.choice([5, "x", [1], None])
+    text = json.dumps(d, indent=R.choice([None, 1, 2]))
+    if R.random() < 0.08:
+        text = R.choice(["{bad", "[1, 2]", "", "null", text[:len(text) // 2]])
+    return text
+
+
+def voice_text():
+    lines = []
+    for p in R.sample(people, R.randrange(0, 4)):
+        k = keyof(p)
+        if k.startswith("s:") and R.random() < 0.4:
+            k = k[2:]
+        until = R.choice(["0", "", str(int(T[0]) + 600), str(int(T[0]) - 600), "1e9", "abc", "%d.5" % int(T[0] + 30), str(int(T[0]) + 86400)])
+        why = R.choice(["", "# mic spam", "# music # more", "#"])
+        lines.append(("%s %s %s" % (k, until, why)).rstrip() if R.random() < 0.9 else "  " + k + "\t" + until + why)
+    sep = R.choice(["\n", "\r\n", "\r"])
+    return sep.join(lines) + R.choice(["", sep])
+
+
+vmtime = [1_700_000_000]
+
+
+def nl_join(lines):
+    return chr(10).join(lines) + chr(10)
+
+
+def match_group():
+    """Several tokens in one match, then mic spam reports / mute polls / admin lines / chat lines of that match."""
+    ps = R.sample(alltok, R.randrange(2, 6))
+    mid = R.choice(["m1", "m2", "abc123"])
+    for _, t in ps:
+        matchm[t] = mid
+        if t not in game:
+            game.append(t)
+    world_all()
+    if R.random() < 0.6:
+        vmtime[0] += R.randrange(1, 10)
+        emit("vbans", text=nl_join([acct(t) + " " + R.choice(["0", str(int(T[0]) + 900), str(int(T[0]) + 20)]) + " # spam" for _, t in ps if R.random() < 0.6]), mt=vmtime[0])
+    for _ in range(R.randrange(3, 14)):
+        tiny()
+        x = R.choice([t for _, t in ps])
+        k = R.choice(["vspam", "vspam", "vspam", "self", "mute", "mute", "achat", "achat", "say", "mlog", "mlog", "tick", "bad", "badpeers"])
+        if k == "vspam":
+            y = R.choice([t for _, t in ps])
+            handle(x, 21, names.get(y, "") or R.choice(["nobody", " ", "x" * 60]))
+        elif k == "self":
+            handle(x, 21, R.choice(["self", " self ", "SELF"]))
+        elif k == "mute":
+            handle(x, 20)
+        elif k == "achat":
+            handle(x, 22, R.choice(["0", "5", str(R.randrange(0, 10 ** 11)), "", "abc"]))
+        elif k == "say":
+            emit("admin_say", mid=R.choice([mid, mid, " " + mid + " ", "", "other"]), name=R.choice(["Server", "Ke<l>li|e", "", " ", "N" * 40, "Adm\x1fin"]),
+                 text=R.choice(TEXTS), who=R.choice(["", "root", "w" * 60]))
+        elif k == "mlog":
+            handle(x, 17, R.choice(["m", "t"]) + "\n" + R.choice(TEXTS))
+        elif k == "tick":
+            T[0] += R.choice([5, 60, 130, 3600])
+        elif k == "bad":
+            handle(x, 21, R.choice(["", "   ", "self\nx"]))
+        else:
+            BADPEERS[:] = [R.choice([t for _, t in ps])] if R.random() < 0.6 else []
+            world_all()
+    BADPEERS[:] = []
+
+
+def voice_event():
+    r = R.random() * 100
+    tok = token()
+    if r < 28:
+        handle(tok, 21, R.choice(["self", names.get(token(), "") or "x"]))
+    elif r < 40:
+        handle(tok, 22, R.choice(["0", "5", ""]))
+    elif r < 52:
+        match_group()
+    elif r < 58:
+        vmtime[0] += R.randrange(1, 10)
+        emit("vbans", text=voice_text(), mt=vmtime[0])
+    elif r < 60:
+        emit("novbans")
+    elif r < 64:
+        emit("automod_file")
+    elif r < 66:
+        emit("paths", automod=R.choice(["ok", "ok", "bad", "none"]), vban=R.choice(["ok", "ok", "none"]))
+    elif r < 68:
+        emit("slur_extra", text=R.choice(["", "testword", "*longslurx", "# c\nbadwordz\n*xxxxxbigz # c", "word1\r\n*abcdef"]))
+    elif r < 80:
+        handle(tok, R.choice([13, 15, 17, 18]), R.choice(TEXTS[-12:]) if R.random() < 0.6 else R.choice(TEXTS))
+    elif r < 90:
+        k = R.choice(["vban_left", "vban_why", "mute_why", "mute_left"])
+        emit(k, me=acct(token()))
+    else:
+        emit("admin_say", mid=R.choice(["m1", "m2", "abc123"]), name=R.choice(["Server", "Kellie", "Admin <b>"]), text=R.choice(TEXTS), who=R.choice(["", "root"]))
+
+
 def event():
+    if R.random() < 0.14:
+        voice_event()
+        return
     r = R.random() * 100
     tok = token()
     me_p = next(p for p, t in alltok if t == tok)
@@ -288,7 +404,7 @@ def event():
     elif r < 74:
         handle(tok, 20)
     elif r < 75:
-        handle(tok, R.choice([0, 21, 99, -1]), R.choice(TEXTS))
+        handle(tok, R.choice([0, 23, 99, -1]), R.choice(TEXTS))
     elif r < 76.7:
         scenario()
     elif r < 76.85:
@@ -542,6 +658,8 @@ def burst():
 
 
 def main():
+    if R.random() < 0.6:
+        emit("automod_seed", text=automod_json())
     setup()
     n = 0
     while n < N:

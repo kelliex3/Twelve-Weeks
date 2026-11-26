@@ -27,6 +27,7 @@ mod slurs;
 mod slurs_table;
 mod social_selftest;
 mod udp;
+mod unprintable;
 mod util;
 mod voiceroom;
 mod wslink;
