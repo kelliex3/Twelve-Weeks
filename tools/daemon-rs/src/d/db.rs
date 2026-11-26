@@ -147,6 +147,34 @@ fn schema(c: &Connection) -> rusqlite::Result<()> {
 /// `with _dblock:` (the lock alone, for code that opens nothing itself: the clan worker calls). Honours the thread's deadline.
 pub struct DbLock<'a> {
     g: MutexGuard<'a, Writer>,
+    t0: Instant,
+    at: &'static std::panic::Location<'static>,
+}
+
+/// Diagnostic, off by default: T2R_DB_HOLD_LOG_MS = N logs every DB lock wait or hold of N ms or more with its call site (DB-WAIT / DB-HOLD).
+static HOLD_LOG_MS: LazyLock<u64> = LazyLock::new(|| env_parse("T2R_DB_HOLD_LOG_MS", 0u64));
+
+impl Drop for DbLock<'_> {
+    fn drop(&mut self) {
+        if *HOLD_LOG_MS > 0 {
+            let ms = self.t0.elapsed().as_millis() as u64;
+            if ms >= *HOLD_LOG_MS {
+                dlog!("DB-HOLD", format!("{} ms", ms), format!("{}:{}", self.at.file(), self.at.line()), std::thread::current().name().unwrap_or("-"));
+            }
+        }
+    }
+}
+
+#[track_caller]
+fn locked(g: MutexGuard<'static, Writer>, w0: Instant) -> DbLock<'static> {
+    let at = std::panic::Location::caller();
+    if *HOLD_LOG_MS > 0 {
+        let ms = w0.elapsed().as_millis() as u64;
+        if ms >= *HOLD_LOG_MS {
+            dlog!("DB-WAIT", format!("{} ms", ms), format!("{}:{}", at.file(), at.line()), std::thread::current().name().unwrap_or("-"));
+        }
+    }
+    DbLock { g, t0: Instant::now(), at }
 }
 
 impl<'a> DbLock<'a> {
@@ -172,9 +200,11 @@ impl<'a> DbLock<'a> {
     }
 }
 
+#[track_caller]
 pub fn lock() -> DbResult<DbLock<'static>> {
+    let w0 = Instant::now();
     match deadline() {
-        None => Ok(DbLock { g: DBLOCK.lock() }),
+        None => Ok(locked(DBLOCK.lock(), w0)),
         Some(dl) => {
             let now = Instant::now();
             if dl <= now {
@@ -182,7 +212,7 @@ pub fn lock() -> DbResult<DbLock<'static>> {
                 return Err(DbErr::Abandoned);
             }
             match DBLOCK.try_lock_for(dl - now) {
-                Some(g) => Ok(DbLock { g }),
+                Some(g) => Ok(locked(g, w0)),
                 None => {
                     ABANDONED.fetch_add(1, Ordering::Relaxed);
                     Err(DbErr::Abandoned)
@@ -193,6 +223,7 @@ pub fn lock() -> DbResult<DbLock<'static>> {
 }
 
 /// `with _dblock, dbc() as c:` - commit on Ok, roll back on Err.
+#[track_caller]
 pub fn with_write<R>(f: impl FnOnce(&Connection) -> DbResult<R>) -> DbResult<R> {
     let mut l = lock()?;
     let c = l.conn()?;
@@ -250,6 +281,7 @@ pub fn ro_close_all() {
 }
 
 /// py: db_read(fn) - a pure read on a pooled read-only connection without DBLOCK; any sqlite error falls back to the locked path.
+#[track_caller]
 pub fn db_read<R>(f: impl Fn(&Connection) -> rusqlite::Result<R>) -> DbResult<R> {
     if CFG.ro_reads {
         if let Ok(e) = ro_get() {
