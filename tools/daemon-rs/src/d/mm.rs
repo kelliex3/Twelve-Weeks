@@ -61,6 +61,10 @@ pub struct MMState {
     /// token -> (match id, team wanted, until)
     pub move_team: IndexMap<String, (String, i64, f64)>,
     pub late_mult: HashMap<String, (String, f64)>,
+    /// token -> (match id, progress 0..1, behind 0/1): how far the match was when a backfill joined it (CLAN_FAIR, boosters)
+    pub late_prog: HashMap<String, (String, f64, i64)>,
+    /// (lobby, missing mates) -> last log time (R-5ZCJ wait line)
+    pub party_split_log: HashMap<(String, Vec<String>), f64>,
     // the getattr(self, '_x_logged', 0.0) throttles
     pub qhold_logged: f64,
     pub pwait_logged: f64,
@@ -145,6 +149,14 @@ pub fn book_fits(members: &[String], newcomers: &[String], rq: &Requeue, queue: 
             return false;
         }
     }
+    if !members.is_empty() && !newcomers.is_empty() {
+        // 11-26 REGION PREFERENCE: a hard rule, never relaxed by the wait below
+        let ua: Vec<Vec<String>> = members.iter().map(|m| book_unit(m)).collect();
+        let ub: Vec<Vec<String>> = newcomers.iter().filter(|t| !members.contains(t)).map(|t| book_unit(t)).collect();
+        if !region_lock_fits(&ua, &ub, true) {
+            return false;
+        }
+    }
     if *MM_REGION_ON && *MM_REGION_LOBBY && !members.is_empty() && !newcomers.is_empty() {
         let fresh: Vec<String> = newcomers.iter().filter(|t| !members.contains(t)).cloned().collect();
         let (ga, gb) = (region_group(members), region_group(&fresh));
@@ -225,6 +237,8 @@ impl MMState {
             late_bonus: HashMap::new(),
             move_team: IndexMap::new(),
             late_mult: HashMap::new(),
+            late_prog: HashMap::new(),
+            party_split_log: HashMap::new(),
             qhold_logged: 0.0,
             pwait_logged: 0.0,
             pwait_out_logged: 0.0,
@@ -458,6 +472,15 @@ impl MMState {
                 }
             }
         }
+        // 11-25 R-5ZCJ: the incoming side's party mates that are in no lobby yet need their seats too (a merge took a party of 4 in as 3
+        // into a lobby of 5, which then started with 8 and without the party leader)
+        for t in incoming {
+            for m in book_unit(t) {
+                if !inc.contains(&m) && !lb.members.contains(&m) && !book.of.contains_key(&m) {
+                    res.insert(m);
+                }
+            }
+        }
         *MATCH_SIZE - res.len() as i64
     }
 
@@ -512,7 +535,7 @@ impl MMState {
         self.book.expire(Some(now), lobbybook::GRACE_S);
         let qk: Vec<String> = self.queue.keys().cloned().collect();
         let pubq = PRIV.split_ready(&qk).0;
-        let tick: HashSet<String> = if *REQUEUE && *LOBBY_KEEP { self.rq.tokens().into_iter().collect() } else { HashSet::new() };
+        let mut tick: HashSet<String> = if *REQUEUE && *LOBBY_KEEP { self.rq.tokens().into_iter().collect() } else { HashSet::new() };
         let full = pubq.len() as i64 >= *MATCH_SIZE;
         let mut sorted_pub = pubq.clone();
         sorted_pub.sort_by(|a, b| {
@@ -525,6 +548,10 @@ impl MMState {
                 continue;
             }
             let mut src: Option<String> = None;
+            let unit = book_unit(t);
+            if tick.contains(t) && unit.len() > 1 && unit.iter().any(|u| self.rq.mid_of(u) != self.rq.mid_of(t)) {
+                tick.remove(t); // 11-25 R-5ZCJ: a party formed since that match: a new search
+            }
             if tick.contains(t) {
                 let nm = self.rq.next_of(t);
                 if let Some(nm) = nm {
@@ -534,7 +561,6 @@ impl MMState {
                 }
                 src = self.rq.mid_of(t);
             }
-            let unit = book_unit(t);
             let mut solo = unit.len() == 1 || unit.iter().all(|u| self.queue.contains_key(u));
             solo = solo && !full && self.book_jip_hold(t, &unit, now);
             let at = self.queue.get(t).copied().unwrap_or(now);
@@ -582,10 +608,39 @@ impl MMState {
             }
         }
         let rset: HashSet<&String> = ready.iter().collect();
-        let order: Vec<Lobby> = self.book.launch_order().into_iter().cloned().collect();
-        for lb in order {
+        let pset: HashSet<&String> = pubq.iter().collect();
+        let order: Vec<String> = self.book.launch_order().into_iter().map(|l| l.lid.clone()).collect();
+        for olid in order {
+            let Some(lb) = self.book.get(&olid).cloned() else { continue }; // (the Python loop reads the live lobby: an earlier pass step may have emptied it)
             let mem = lb.members.clone();
             if mem.is_empty() || !lb.away.is_empty() || lb.hold || now < lb.wait_until || mem.iter().any(|t| !rset.contains(t)) {
+                continue;
+            }
+            // 11-25 R-5ZCJ: a party starts together. A searching mate of a member that is not in this lobby: no start; a mate sitting in
+            // another lobby leaves it, so that the next pass places it with its party (place(): the same lobby, else the party moves)
+            let mut miss: Vec<String> = Vec::new();
+            for t in &mem {
+                for m in book_unit(t) {
+                    if !mem.contains(&m) && pset.contains(&m) && !miss.contains(&m) {
+                        miss.push(m);
+                    }
+                }
+            }
+            miss.sort();
+            if !miss.is_empty() {
+                for m in &miss {
+                    if self.book.lobby_of(m).is_some() {
+                        self.book.remove(m, &format!("its party is in lobby {}", lb.lid), None, 0.0);
+                    }
+                }
+                if self.party_split_log.len() > 500 {
+                    self.party_split_log.clear();
+                }
+                let k = (lb.lid.clone(), miss.clone());
+                if self.party_split_log.get(&k).copied().unwrap_or(0.0) < now - 30.0 {
+                    self.party_split_log.insert(k, now);
+                    dlog!("LOBBY-BOOK: lobby", lb.lid, "waits for party mate(s)", tags(&miss), "(a party starts together)");
+                }
                 continue;
             }
             let mut sub = mem.clone();
@@ -667,6 +722,7 @@ impl MMState {
             ready = r;
             grp_p1 = g;
         }
+        ready = region_lock_filter(&ready); // 11-26 REGION PREFERENCE: one match = players that fit each other's lock
         if ready.is_empty() {
             self.log_party_hold(held, now);
             return None;
@@ -971,6 +1027,7 @@ impl MatchMaker {
         prune!(g.departed_t);
         prune!(g.late_bonus);
         prune!(g.late_mult);
+        prune!(g.late_prog);
         let dead: Vec<String> = g.joining.keys().filter(|t| !live.contains(*t)).cloned().collect();
         for t in dead {
             g.joining.shift_remove(&t);

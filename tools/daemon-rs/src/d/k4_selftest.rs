@@ -98,6 +98,14 @@ fn world(w: &Value) {
     WORLD_ON.store(true, std::sync::atomic::Ordering::Relaxed);
     *ALL.lock() = strs(&w["all"]);
     *MM.lock.lock() = MMState::new();
+    DED.prefs.lock().clear();
+    for (t, b) in w.get("prefs").and_then(|p| p.as_object()).cloned().unwrap_or_default() {
+        DED.caps_report(&t, &[0, 0, b.as_u64().unwrap_or(0) as u8]); // the preference byte of an op 0xC4 report (no region list)
+    }
+    region_lock_reset();
+    JIP_UNREACH.lock().clear();
+    JIP_LATE.lock().clear();
+    MATCH_PRES.lock().clear();
     MATCH_MAP.lock().clear();
     JIP_BACK.lock().clear();
     TEAM_SWAP.lock().clear();
@@ -132,6 +140,26 @@ fn mmstate() -> Value {
     let mm = MATCH_MAP.lock();
     let mut mmv: Vec<(Vec<String>, i64)> = mm.iter().map(|(k, v)| (k.iter().cloned().collect(), *v)).collect();
     mmv.sort();
+    let pres_v: Value = {
+        let mp = MATCH_PRES.lock();
+        let mut ks: Vec<&String> = mp.keys().collect();
+        ks.sort();
+        Value::Object(
+            ks.into_iter()
+                .map(|k| {
+                    let mut ts: Vec<(&String, &[f64; 2])> = mp[k].iter().collect();
+                    ts.sort_by(|a, b| a.0.cmp(b.0));
+                    (k.clone(), Value::Object(ts.into_iter().map(|(t, x)| (t.clone(), json!([x[0], x[1]]))).collect()))
+                })
+                .collect(),
+        )
+    };
+    let unreach_v: Value = {
+        let u = JIP_UNREACH.lock();
+        let mut ks: Vec<&(String, String)> = u.keys().collect();
+        ks.sort();
+        Value::Array(ks.into_iter().map(|k| json!([[k.0, k.1], [u[k].0, u[k].1]])).collect())
+    };
     let lobbies: HashMap<String, crate::lobbybook::Lobby> = g.book.lobbies.iter().map(|(k, l)| (k.clone(), l.clone())).collect();
     json!({
         "queue": g.queue.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
@@ -153,6 +181,9 @@ fn mmstate() -> Value {
         "lives": sorted_map(&g.lives, &|v| json!([v.0, v.1, v.2])),
         "late_bonus": sorted_map(&g.late_bonus, &|v| json!([v.0, v.1])),
         "late_mult": sorted_map(&g.late_mult, &|v| json!([v.0, v.1])),
+        "late_prog": sorted_map(&g.late_prog, &|v| json!([v.0, v.1, v.2])),
+        "pres": pres_v,
+        "unreach": unreach_v,
         "move_team": g.move_team.iter().map(|(k, v)| json!([k, [v.0, v.1, v.2]])).collect::<Vec<_>>(),
         "departed_t": sorted_map(&g.departed_t, &|v| json!(v)),
         "departed_vol": sorted_set(&g.departed_vol),
@@ -260,6 +291,14 @@ fn mm_op(c: &Value) -> Value {
                     if let Some(f) = first {
                         MM.jip_clock(&f, c["rem"].as_f64().unwrap_or(0.0), c["dur"].as_f64().unwrap_or(0.0), c["ended"].as_bool().unwrap_or(false));
                     }
+                    let ur = c.get("ur").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    if ur >= 0 {
+                        let upl = MM.lock.lock().matches.get(&mid).cloned();
+                        if let Some(upl) = upl {
+                            let host = if ur == 0 || upl.is_empty() { None } else { Some(upl[((ur - 1) as usize) % upl.len()].clone()) };
+                            JIP_UNREACH.lock().insert((tk.clone(), mid.clone()), (crate::clock::now() - c["ago"].as_f64().unwrap_or(0.0), host));
+                        }
+                    }
                     let mut why: Vec<String> = Vec::new();
                     let j = MM.jip_join(&tk, &mut why, c["need"].as_i64().unwrap_or(1), None, None);
                     let j = j.map(|(m, s, p, k)| json!([m, s, p, k.iter().cloned().collect::<Vec<_>>()]));
@@ -304,6 +343,55 @@ fn mm_op(c: &Value) -> Value {
                 MM.all_loaded(&tok), MM.jip_can_join(&tok, None, 1), MM.jip_age(&tok), q, lv, snap, MM.jip_joiners(&mid)])
         }
         "gc" => json!(MM.gc(&strs(&c["keep"]).into_iter().collect(), None)),
+        "bksplit" => {
+            let now = crate::clock::now();
+            let mut g = MM.lock.lock();
+            match g.book.lobby_of(&tok).map(|s| s.to_string()) {
+                Some(lid) if g.queue.contains_key(&tok) => {
+                    g.book.remove(&tok, "", None, 0.0);
+                    let nl = g.book.new_lobby(now, None, None);
+                    g.book.add(&nl, &tok, now, None);
+                    json!([lid, nl])
+                }
+                _ => Value::Null,
+            }
+        }
+        "mk" => {
+            let mk = c["mid"].as_str().unwrap_or("").to_string();
+            let players = strs(&c["players"]);
+            {
+                let mut g = MM.lock.lock();
+                g.matches.insert(mk.clone(), players.clone());
+                g.launched.insert(mk.clone());
+                g.started.insert(mk.clone());
+                g.formed.insert(mk.clone(), crate::clock::now() - 600.0);
+            }
+            for t in &players {
+                RQ_CAP.lock().insert(t.clone(), crate::clock::now());
+            }
+            MM.end(&mk);
+            Value::Null
+        }
+        "unreach" => {
+            let pl = MM.lock.lock().matches.get(&mid).cloned();
+            let j = c["j"].as_i64().unwrap_or(0);
+            let host = match &pl {
+                Some(p) if !p.is_empty() && j >= 0 => Some(p[(j as usize) % p.len()].clone()),
+                _ => None,
+            };
+            JIP_UNREACH.lock().insert((tok.clone(), mid.clone()), (crate::clock::now() - c["ago"].as_f64().unwrap_or(0.0), host));
+            Value::Null
+        }
+        "presence" => {
+            presence_tick(2.0);
+            Value::Null
+        }
+        "fair" => {
+            if c.get("late").and_then(|v| v.as_bool()).unwrap_or(false) {
+                JIP_LATE.lock().insert(tok.clone(), (mid.clone(), crate::clock::now()));
+            }
+            json!([clan_fair_reason(&tok, &mid), boost_keep(&tok, Some(&mid)), boost_keep(&tok, None), boost_keep_now(&tok)])
+        }
         _ => Value::Null,
     }
 }
@@ -363,6 +451,20 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
                 None => Value::Null,
             },
             "team_order" => jv(&team_order(&strs(&a[0]))),
+            "join_progress" => {
+                let ck = a[0].as_array().map(|x| (x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0), x[2].as_bool().unwrap_or(false), x[3].as_f64().unwrap_or(0.0)));
+                let lv = a[1].as_array().map(|x| (x[0].as_i64().unwrap_or(0), x[1].as_i64().unwrap_or(0), x[2].as_f64().unwrap_or(0.0)));
+                let (p, b) = join_progress(ck, lv, a[2].as_i64().unwrap_or(0), a[3].as_f64().unwrap_or(0.0));
+                json!([p, b])
+            }
+            "caps" => {
+                let raw: Vec<u8> = a[0].as_str().unwrap_or("").as_bytes().chunks(2).map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap_or("0"), 16).unwrap_or(0)).collect();
+                let rep = dedicated_caps_op(&raw).map(|r| r.iter().map(|b| format!("{:02x}", b)).collect::<String>());
+                let tk = a[1].as_str().unwrap_or("");
+                let pv = DED.prefs.lock().get(tk).copied().unwrap_or(0);
+                json!([rep, pv, DED.pref_of(tk)])
+            }
+            "region_filter" => jv(&region_lock_filter(&strs(&a[0]))),
             _ => {
                 eprintln!("unknown f {}", f);
                 return 2;

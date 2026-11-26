@@ -42,6 +42,8 @@ pub mod flow;
 pub use flow::*;
 pub mod ping;
 pub use ping::*;
+pub mod delta2;
+pub use delta2::*;
 pub mod k4_selftest;
 pub mod k1_selftest;
 pub mod k2_selftest;

@@ -358,6 +358,7 @@ fn call(f: &str, a: &[Value]) -> Value {
             let sup = a.get(1).filter(|v| !v.is_null()).map(strs);
             json!(map_pool(&ss(0), sup.as_deref()))
         }
+        "public_map_pool" => json!(public_map_pool()),
         "map_index" => json!(map_index(&ss(0))),
         "vote_options" => json!(vote_options(VOTE_OPTIONS, &ss(0))),
         "vote_start" => json!(vote_start(&ss(0))),

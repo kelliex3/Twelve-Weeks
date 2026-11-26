@@ -100,7 +100,30 @@ fn state() -> Value {
         lm.sort_by(|a, b| a.0.cmp(b.0));
         let mut lb: Vec<(&String, &(String, i64))> = g.late_bonus.iter().collect();
         lb.sort_by(|a, b| a.0.cmp(b.0));
+        let mut lp: Vec<(&String, &(String, f64, i64))> = g.late_prog.iter().collect();
+        lp.sort_by(|a, b| a.0.cmp(b.0));
+        let pres: Vec<Value> = {
+            let mp = MATCH_PRES.lock();
+            let mut ks: Vec<&String> = mp.keys().collect();
+            ks.sort();
+            ks.into_iter()
+                .map(|k| {
+                    let mut ts: Vec<(&String, &[f64; 2])> = mp[k].iter().collect();
+                    ts.sort_by(|a, b| a.0.cmp(b.0));
+                    json!([k, ts.into_iter().map(|(t, x)| json!([t, [x[0], x[1]]])).collect::<Vec<_>>()])
+                })
+                .collect()
+        };
+        let jl: Vec<Value> = {
+            let j = JIP_LATE.lock();
+            let mut v: Vec<(&String, &(String, f64))> = j.iter().collect();
+            v.sort_by(|a, b| a.0.cmp(b.0));
+            v.into_iter().map(|(t, x)| json!([t, [x.0, x.1]])).collect()
+        };
         json!({
+            "lp": lp.into_iter().map(|(k, v)| json!([k, [v.0, v.1, v.2]])).collect::<Vec<_>>(),
+            "pres": pres,
+            "jl": jl,
             "m": m.into_iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
             "st": sorted_set(&g.started), "en": sorted_set(&g.ended),
             "dep": dep.into_iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
@@ -270,6 +293,25 @@ fn mm_set(m: &Value) {
             g.late_bonus.insert(t.clone(), (v[0].as_str().unwrap_or("").to_string(), v[1].as_i64().unwrap_or(0)));
         }
     }
+    if let Some(o) = m.get("late_prog").and_then(|x| x.as_object()) {
+        for (t, v) in o {
+            g.late_prog.insert(t.clone(), (v[0].as_str().unwrap_or("").to_string(), v[1].as_f64().unwrap_or(0.0), v[2].as_i64().unwrap_or(0)));
+        }
+    }
+    if let Some(o) = m.get("pres").and_then(|x| x.as_object()) {
+        let mut mp = MATCH_PRES.lock();
+        for (mid, v) in o {
+            let e: indexmap::IndexMap<String, [f64; 2]> =
+                v.as_object().map(|oo| oo.iter().map(|(t, x)| (t.clone(), [x[0].as_f64().unwrap_or(0.0), x[1].as_f64().unwrap_or(0.0)])).collect()).unwrap_or_default();
+            mp.insert(mid.clone(), e);
+        }
+    }
+    if let Some(o) = m.get("jlate").and_then(|x| x.as_object()) {
+        let mut j = JIP_LATE.lock();
+        for (t, v) in o {
+            j.insert(t.clone(), (v[0].as_str().unwrap_or("").to_string(), v[1].as_f64().unwrap_or(0.0)));
+        }
+    }
 }
 
 fn world(w: &Value) {
@@ -326,6 +368,8 @@ fn world(w: &Value) {
     k2_reset();
     reset_caches();
     *MM.lock.lock() = MMState::new();
+    JIP_LATE.lock().clear();
+    MATCH_PRES.lock().clear();
     {
         let mut ts = TEAM_SWAP.lock();
         ts.clear();

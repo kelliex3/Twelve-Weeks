@@ -963,6 +963,13 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
     }
     let raw_parts = parts;
     let raw_counts = counts.clone();
+    let mut fair = if left { String::new() } else { clan_fair_reason(token, mid) };
+    if rebook && !left && fair.is_empty() {
+        fair = prev.as_ref().and_then(|p| p.get("stint")).and_then(|s| s.get("fair")).filter(|v| cl::truthy(v)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    }
+    if !fair.is_empty() {
+        dlog!("CLAN fair", tag(token), "mid", mid, "protected day:", fair, "- no losses; inside an event window it does not count as a day");
+    }
     if !left {
         if let Err(e) = db::with_write(|c| {
             c.execute("UPDATE players SET parts_total = parts_total + ?, parts_n = parts_n + 1 WHERE token = ?", rusqlite::params![parts, token])?;
@@ -1004,7 +1011,7 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
         let before = Some(cl::load(c, &clan_key_r(c, token)?)?);
         let key = clan_key_r(c, token)?;
         let bottles = if left { 0 } else { counts.get(&33).copied().unwrap_or(0).clamp(0, 200).max(0) };
-        let (st, mut r) = cl::apply_match(c, &key, mid, parts, left, Some(&cmap), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles, false)?; // label 33 = supply bottles picked up; TEMPORARY: protect (daemon.py CLAN_FAIR) is wired with the dispatcher pass
+        let (st, mut r) = cl::apply_match(c, &key, mid, parts, left, Some(&cmap), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles, !fair.is_empty())?; // label 33 = supply bottles picked up
         CLAN_REBOOK.lock().remove(&clan_tk(token, mid));
         let k2 = clan_key_r(c, token)?;
         // this booking's raw numbers, for a later stint of the same match
@@ -1019,6 +1026,7 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
             m.insert("late".into(), Value::from(if left { 0 } else { late }));
             m.insert("mult".into(), serde_json::Number::from_f64(mult).map(Value::Number).unwrap_or(Value::Null));
             m.insert("forgive".into(), Value::Bool(forgive_excused || (mult > 1.0 && !left)));
+            m.insert("fair".into(), Value::String(fair.clone()));
             Value::Object(m)
         };
         if let Err(e) = cl::snap_update(c, &k2, mid, &[("rejoined", Value::Bool(false)), ("stint", stint)]) {
@@ -1297,7 +1305,7 @@ pub fn clan_match_started(players: &[String], mid: &str) {
             CLAN_MATCH.lock().insert(p.clone(), mid.to_string());
             CLAN_LAST_MATCH.lock().insert(p.clone(), mid.to_string());
             PRIV_LAST_MID.lock().remove(p);
-            if let Err(e) = boost_start(p) {
+            if let Err(e) = boost_start(p, Some(mid)) {
                 dlog!("CLAN boost start failed", e);
             }
         }
@@ -1352,8 +1360,16 @@ pub fn clan_match_ended(players: &[String], mid: &str) {
 }
 
 // py: daemon.py:2358 boost_start
-pub fn boost_start(token: &str) -> DbR<()> {
+pub fn boost_start(token: &str, mid: Option<&str>) -> DbR<()> {
     BOOST_ACTIVE.lock().remove(token);
+    let pick = BOOST_PICK.lock().get(token).copied().unwrap_or(0);
+    if pick != 0 && boost_keep(token, mid) {
+        // the pick stays for the next match (the page said so: bk=1)
+        let name = cl::BOOSTERS.iter().find(|(i, _)| *i == pick).map(|(_, n)| n.clone()).unwrap_or_else(|| pick.to_string());
+        let pct = MM.lock.lock().late_prog.get(token).map(|v| py::round0(100.0 * v.1)).unwrap_or(0);
+        dlog!("BOOSTER", tag(token), name, format!("kept: backfill at {} % of the match (not used up)", pct));
+        return Ok(());
+    }
     let bid = BOOST_PICK.lock().remove(token).unwrap_or(0);
     if bid == 0 {
         return Ok(());

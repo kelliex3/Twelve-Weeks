@@ -17,6 +17,10 @@ pub fn tmp_db(name: &str) -> PathBuf {
 }
 
 pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
+    if module.starts_with('k') {
+        let _ = crate::d::DED.mode; // (Python builds DED at import: its 'region REFUSED' lines come before the first scripted call)
+        let _ = crate::log::take_captured();
+    }
     match module {
         // modules register here: "hostmig" => crate::hostmig::selftest(input, out),
         "hostmig" => crate::hostmig::selftest(input, out),
@@ -43,6 +47,7 @@ pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         "k1" => crate::d::k1_selftest::selftest(input, out),
         "clan_alife" | "clan_journal" => crate::clan::selftest_alife::selftest(input, out),
         "k4" => crate::d::k4_selftest::selftest(input, out),
+        "fwd" => crate::d::conn::fwd_selftest(input, out),
         "k2" => crate::d::k2_selftest::selftest(input, out),
         "k3" => crate::d::k3_selftest::selftest(input, out),
         "k5" => crate::d::k5_selftest::selftest(input, out),
