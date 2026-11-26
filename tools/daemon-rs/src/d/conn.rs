@@ -738,7 +738,11 @@ pub fn tcp_conn(conn: Conn, addr: Addr) {
             if cfg.poll_deadline_s > 0.0 && ops_subset(&ops, &POLL_DEADLINE_OPS) && !st.session && !st.is_bridge {
                 db::set_deadline(Some(mono + Duration::from_secs_f64(cfg.poll_deadline_s)));
             }
-            let r = handle_batch(&conn, addr, &mut st, &mut batch);
+            // a panic in a handler = Python's uncaught exception in tcp_conn's try: logged, the connection kept
+            let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_batch(&conn, addr, &mut st, &mut batch))) {
+                Ok(r) => r,
+                Err(p) => Err(HErr::Other(panic_text(&p))),
+            };
             db::set_deadline(None);
             match r {
                 Ok(()) => {}
@@ -869,7 +873,9 @@ pub fn tcp_server() {
         let conn = OutConn::new(c, a);
         let ip2 = ip.clone();
         let spawned = std::thread::Builder::new().name("tcp".into()).stack_size(256 * 1024).spawn(move || {
-            tcp_conn(conn, a);
+            if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tcp_conn(conn, a))) {
+                dlog!("TCP", pa(a), "CONN THREAD ERR", panic_text(&p));
+            }
             release(&ip2, capped);
         });
         if let Err(e) = spawned {
@@ -877,6 +883,17 @@ pub fn tcp_server() {
             release(&ip, capped);
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+}
+
+/// the message of a caught panic
+pub fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        format!("panic: {}", s)
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        format!("panic: {}", s)
+    } else {
+        "panic".to_string()
     }
 }
 

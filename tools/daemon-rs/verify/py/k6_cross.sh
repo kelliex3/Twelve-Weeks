@@ -6,7 +6,7 @@ set -u
 a=$1; b=$2
 here=$(cd "$(dirname "$0")/../.." && pwd)
 pydir=$here/py
-tmp=/tmp/k6x; mkdir -p $tmp
+tmp=${TMPDIR:-/tmp}/k6x; mkdir -p $tmp
 bad=0
 for s in $(seq $a $b); do
   export T2R_HOST_MIGRATION=1 T2R_HOST_REPICK=2 T2R_STATUS_FILE=0 T2R_PRIVATE=0 T2R_HOST_CAP=0 T2R_VERSION=k6test T2R_LOSS_HOST_S=30
