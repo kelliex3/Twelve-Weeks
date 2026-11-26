@@ -374,9 +374,10 @@ pub fn persona(p: &Value, people: &[Value], fk: &str, st: Option<&mut Value>) ->
     };
     let past = if pasts.is_empty() { 0 } else { pasts[((hv >> 8) % pasts.len() as u64) as usize] };
     let mut out = Persona { temper: TEMPERS[(hv % 6) as usize], habit, past, bond: None, bt: None };
-    let mut others: Vec<&Value> = people.iter().filter(|q| vi(q, "i") != vi(p, "i")).collect();
-    others.sort_by_key(|q| hh!("ring", vs(p, "n"), vs(q, "n")));
-    if let Some(q) = others.first() {
+    // sorted(..., key=_h("ring", ...))[0]: the first of the smallest keys (stable sort); one key per person, no full sort
+    let (pn, pi) = (vs(p, "n"), vi(p, "i"));
+    let first = people.iter().filter(|q| vi(q, "i") != pi).min_by_key(|q| t2r_clanstory::crc::h(&["ring", pn, vs(q, "n")]));
+    if let Some(q) = first {
         let mut pair = [vs(p, "n").to_string(), vs(q, "n").to_string()];
         pair.sort();
         let mut bt = BOND_TYPES[(hh!("bond", pair[0], pair[1]) % 4) as usize];
