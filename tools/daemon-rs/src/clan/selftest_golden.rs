@@ -350,7 +350,7 @@ impl Run {
         let before = cl::load(&self.c, &key).map_err(de)?; // daemon.py:2051
         let cc = to_counts(&counts);
         let bottles = if left { 0 } else { counts.get(&33).copied().unwrap_or(0).min(200).max(0) };
-        let (st, r) = cl::apply_match(&self.c, &key, &mid, parts, left, Some(&cc), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles).map_err(de)?;
+        let (st, r) = cl::apply_match(&self.c, &key, &mid, parts, left, Some(&cc), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles, false).map_err(de)?;
         self.clan_rebook.remove(&k2);
         let _ = cl::snap_update(
             &self.c,
