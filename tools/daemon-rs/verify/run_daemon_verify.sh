@@ -3,7 +3,7 @@
 # Needs, in the current folder: t2r-daemon (the musl binary), py/ (the deployed Python files), and verify/py/*.
 M=${1:-social}; SEEDS=${2:-10}; CALLS=${3:-2000}
 export T2R_PY_DIR=${T2R_PY_DIR:-$HOME/rsverify/daemon/py}
-export T2R_VERIFY_DIR=${T2R_VERIFY_DIR:-/tmp/rsv_$M}
+export T2R_VERIFY_DIR=${T2R_VERIFY_DIR:-${TMPDIR:-/tmp}/rsv_$M}
 mkdir -p "$T2R_VERIFY_DIR"
 fail=0
 s=1
