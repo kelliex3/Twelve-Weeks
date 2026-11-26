@@ -6,6 +6,7 @@
 const net = require('net');
 const dns = require('dns');
 const { withTimeout } = require('./util');
+const hosts = require('../update/hosts');
 
 /**
  * Parse a host:port server string.
@@ -33,17 +34,55 @@ function parseServer(s) {
  * @param {string} s
  * @returns {Promise<object|null>}
  */
-async function resolveServer(s) {
+// A TCP connect to ip:port within ms (true = something accepted it). tests: deps.tcpOpen replaces it
+function tcpOpen(ip, port, ms) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: ip, port });
+    const done = (ok) => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(ms, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+}
+
+async function resolveServer(s, deps = {}) {
   const { host, port } = parseServer(s);
   if (net.isIPv4(host)) return { ip: host, port };
+  const lookup = deps.lookup || ((h) => dns.promises.lookup(h, { family: 4 }));
+  const open = deps.tcpOpen || tcpOpen;
   try {
-    const r = await withTimeout(
-      dns.promises.lookup(host, { family: 4 }),
-      30000,
-      `Looking up ${host}`,
-    );
+    const r = await withTimeout(lookup(host), 30000, `Looking up ${host}`);
+    // Some providers' DNS filters answer our own name with their block page
+    // address (a foreign TLS certificate, nothing on the game port). The lookup "works", so the game was sent there and the player saw
+    // "Cannot reach the server". Our own name whose answer is not the server's IP and does not take the game port: the server's own IP,
+    // when that one does.
+    const known = hosts.knownIp(host);
+    if (
+      known &&
+      r.address !== known &&
+      !(await open(r.address, port, 4000)) &&
+      (await open(known, port, 4000))
+    )
+      return {
+        ip: known,
+        port,
+        viaKnownIp: true,
+        lookupError: `${host} resolved to ${r.address}, which does not answer on port ${port} (a provider filter or DNS block)`,
+      };
     return { ip: r.address, port };
   } catch (e) {
+    // our own server name: fall back to its bare IP (a local DNS or filter can fail on the game server name only)
+    const known = hosts.knownIp(host);
+    if (known)
+      return {
+        ip: known,
+        port,
+        viaKnownIp: true,
+        lookupError: (e && (e.code || e.message)) || 'lookup failed',
+      };
     if (e && e.code === 'ETIMEDOUT')
       throw new Error(
         `Looking up the server name '${host}' took longer than 30 s. Your internet connection or DNS is very slow right now - try again in a moment.`,

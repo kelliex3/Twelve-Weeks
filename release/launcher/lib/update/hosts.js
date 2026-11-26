@@ -201,6 +201,20 @@ function blockedRedirect(res, url) {
 /** @returns {{t: string, k: string, path: string, err: string, next: string|null}[]} recent failed requests, oldest first */
 const history = () => failures.slice();
 
+/**
+ * The bare IPv4 of our server for one of its names, or null. The game server name (play.twelve-weeks.com) has no
+ * fallback of its own: a player's own DNS can say it is not found while every public resolver and the Cloudflare
+ * address work, so PLAY stopped at "The server name ... was not found". The update server already uses this IP as its
+ * last try (0.1.50); the game link may use it when the name lookup fails.
+ * @param {string} name
+ * @returns {string|null}
+ */
+function knownIp(name) {
+  if (!configured() || !ip) return null;
+  const n = String(name || '').toLowerCase();
+  return n === direct.hostname || (tls && n === tls.hostname) ? ip.hostname : null;
+}
+
 /** @returns {Record<string, string>} the configured addresses by key (empty when unconfigured) */
 function addresses() {
   const o = {};
@@ -210,6 +224,7 @@ function addresses() {
 
 module.exports = {
   withFallback,
+  knownIp,
   configure,
   configured,
   route,

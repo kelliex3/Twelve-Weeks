@@ -356,6 +356,49 @@ const body = async (res) => {
     }
   });
 
+  await T('game server name: a failed lookup of our own name falls back to the server IP, any other name still fails', async () => {
+    const { resolveServer } = require('../lib/game/server');
+    hosts.configure({ api: 'https://dl.example.invalid', direct: 'http://play.example.invalid:7002', tls: 'https://play.example.invalid', ip: 'http://203.0.113.7:7002' });
+    try {
+      const r = await resolveServer('play.example.invalid:7001');
+      assert.strictEqual(r.ip, '203.0.113.7');
+      assert.strictEqual(r.port, 7001);
+      assert.strictEqual(r.viaKnownIp, true);
+      assert.ok(r.lookupError);
+      await assert.rejects(resolveServer('other.example.invalid:7001'), /The server name 'other\.example\.invalid' was not found/);
+      assert.strictEqual(hosts.knownIp('dl.example.invalid'), null);
+      hosts.configure();
+      await assert.rejects(resolveServer('play.example.invalid:7001'), /was not found/);
+      assert.strictEqual(hosts.knownIp('play.example.invalid'), null);
+    } finally {
+      hosts.configure();
+    }
+  });
+
+  await T('game server name: our own name answered with a block page address falls back to the server IP', async () => {
+    const { resolveServer } = require('../lib/game/server');
+    hosts.configure({ api: 'https://dl.example.invalid', direct: 'http://play.example.invalid:7002', tls: 'https://play.example.invalid', ip: 'http://203.0.113.7:7002' });
+    const up = (set) => async (ip) => set.includes(ip);
+    try {
+      const lookup = async () => ({ address: '198.51.100.9' });
+      let r = await resolveServer('play.example.invalid:7001', { lookup, tcpOpen: up(['203.0.113.7']) });
+      assert.strictEqual(r.ip, '203.0.113.7');
+      assert.strictEqual(r.viaKnownIp, true);
+      assert.ok(/198\.51\.100\.9/.test(r.lookupError));
+      r = await resolveServer('play.example.invalid:7001', { lookup, tcpOpen: up(['198.51.100.9', '203.0.113.7']) });
+      assert.strictEqual(r.ip, '198.51.100.9');           // the answered address takes the port: kept (the server may have moved)
+      r = await resolveServer('play.example.invalid:7001', { lookup, tcpOpen: up([]) });
+      assert.strictEqual(r.ip, '198.51.100.9');           // neither answers: no switch (the probe reports it)
+      r = await resolveServer('other.example.invalid:7001', { lookup, tcpOpen: up(['203.0.113.7']) });
+      assert.strictEqual(r.ip, '198.51.100.9');           // not our name: never switched
+      r = await resolveServer('play.example.invalid:7001', { lookup: async () => ({ address: '203.0.113.7' }), tcpOpen: up([]) });
+      assert.strictEqual(r.ip, '203.0.113.7');
+      assert.ok(!r.viaKnownIp);
+    } finally {
+      hosts.configure();
+    }
+  });
+
   hosts.configure();
   console.log(`hosts-test: ${passed} passed`);
 })();

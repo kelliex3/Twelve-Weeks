@@ -911,7 +911,10 @@ async function play(opts) {
     done: 0,
     total: 0,
   });
-  const { ip, port } = await resolveServer(server);
+  const resolved = await resolveServer(server);
+  if (resolved.viaKnownIp)
+    log(`server: ${server} - ${resolved.lookupError}; using the server's own IP ${resolved.ip}`);
+  const { ip, port } = resolved;
   if (lx) prepareLinuxPrefix(cfg.game_dir, ldeps, log);
   const { helper, steamName } = await startPlayHelper({
     lx,
