@@ -47,6 +47,23 @@ pub const CLAN_DELIBERATE_WHY: [&str; 2] = ["left (0x02)", "searching again"];
 pub static CLAN_EXCUSE_WHY: LazyLock<Mutex<HashMap<(String, String), String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// daemon.py:1605 CLAN_KICKED: (token, mid) -> why (log text)
 pub static CLAN_KICKED: LazyLock<Mutex<IndexMap<(String, String), String>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
+/// (token, mid) -> ban key: a banned player kicked from that match (admin::ban_kick): its day books nothing
+pub static CLAN_BANNED: LazyLock<Mutex<IndexMap<(String, String), String>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
+/// match ids a banned player was kicked from: for the others it is a protected day (no losses, delta2::clan_fair_reason)
+pub static BAN_MIDS: LazyLock<Mutex<IndexMap<String, ()>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
+/// note a ban kick from `mid` (both maps capped at 2000)
+pub fn clan_ban_note(token: &str, mid: &str, key: &str) {
+    let mut b = CLAN_BANNED.lock();
+    b.insert((token.to_string(), mid.to_string()), key.to_string());
+    if b.len() > 2000 {
+        b.shift_remove_index(0);
+    }
+    let mut m = BAN_MIDS.lock();
+    m.insert(mid.to_string(), ());
+    if m.len() > 2000 {
+        m.shift_remove_index(0);
+    }
+}
 /// daemon.py:1611 CLAN_ABORTED: (token, mid) -> why the match was ended for it (log text)
 pub static CLAN_ABORTED: LazyLock<Mutex<IndexMap<(String, String), String>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
 /// daemon.py:1612 CLAN_LEFT_AT: (token, mid) -> time of its departure from the running match
@@ -822,6 +839,11 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
         }
     }
     CLAN_DONE.lock().insert(token.to_string(), mid.to_string()); // this match id is booked (a re-sent report is acknowledged, not booked again)
+    let banned = CLAN_BANNED.lock().get(&clan_tk(token, mid)).cloned();
+    if let Some(key) = banned {
+        dlog!("CLAN day", tag(token), "mid", mid, format!("banned ({}) and kicked - nothing booked", key));
+        return Ok(());
+    }
     if s2(token, mid, &CLAN_CREDITED) {
         dlog!("CLAN day", tag(token), "mid", mid, "already credited for this match (it left, came back and reported again) - ignored");
         return Ok(());

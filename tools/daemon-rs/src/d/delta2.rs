@@ -362,6 +362,9 @@ pub fn presence_tick(dt: f64) {
 
 // py: daemon.py:2528 clan_fair_reason: why this player's clan day for `mid` is protected (CLAN_FAIR), or '' (a normal day)
 pub fn clan_fair_reason(token: &str, mid: &str) -> String {
+    if BAN_MIDS.lock().contains_key(mid) && !CLAN_BANNED.lock().contains_key(&(token.to_string(), mid.to_string())) {
+        return "a banned player was removed from this match".to_string();
+    }
     if !*CLAN_FAIR {
         return String::new();
     }

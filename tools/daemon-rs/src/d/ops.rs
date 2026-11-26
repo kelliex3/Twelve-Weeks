@@ -663,8 +663,9 @@ pub fn leave_running_match(token: &str, why: &str) -> bool {
             None => clock::now(),
         };
         CLAN_LEFT_AT.lock().insert((token.to_string(), pre_mid.clone()), t);
-        let mut why_ex = clan_leave_excuse(token, pre_mid, why, at);
-        if why_ex.is_none() && (lastd.as_ref().is_some_and(|l| l.1 != token && t - l.0 <= *CLAN_EXCUSE_S) || host_lost) {
+        let banned = why == "banned"; // (admin::ban_kick: a banned player's leave is never excused)
+        let mut why_ex = if banned { None } else { clan_leave_excuse(token, pre_mid, why, at) };
+        if !banned && why_ex.is_none() && (lastd.as_ref().is_some_and(|l| l.1 != token && t - l.0 <= *CLAN_EXCUSE_S) || host_lost) {
             why_ex = Some(if host_lost {
                 "host lost (migration pending)".to_string()
             } else {
@@ -672,7 +673,7 @@ pub fn leave_running_match(token: &str, why: &str) -> bool {
                 format!("{} s after {} left", py::fixed(t - l.0, 0), tag(&l.1))
             });
         }
-        if why_ex.is_none() && migrating {
+        if !banned && why_ex.is_none() && migrating {
             // 10-28 07a228ac: the host hitched, the others moved on without it, its ext heard 'replaced as host - leaving the match' and sent the
             // 0x02 itself: that leave was the server's decision, not the player's
             if let Some(rep) = HM.replaced_age(token) {

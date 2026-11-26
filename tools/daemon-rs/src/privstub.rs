@@ -97,6 +97,9 @@ pub fn is_banned(_token: &str, _name: Option<&str>, _ip: Option<&str>) -> bool {
 pub fn ip_banned(_ip: &str) -> Option<String> {
     None
 }
+pub fn ban_key(_token: &str, _name: Option<&str>, _ip: Option<&str>) -> Option<String> {
+    None
+}
 /// `t2r-daemon selftest kp` (private build only)
 pub fn selftest(_input: &mut dyn BufRead, _out: &mut dyn Write) -> i32 {
     eprintln!("selftest kp: private build only");

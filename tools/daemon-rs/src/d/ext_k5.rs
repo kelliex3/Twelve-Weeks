@@ -139,6 +139,17 @@ pub fn is_banned(token: &str, name: Option<&str>, ip: Option<&str>) -> bool {
     }
     crate::private::is_banned(token, name, ip)
 }
+/// `is_banned` with the ban key that matched (for the BAN-KICK log line)
+pub fn ban_key(token: &str, name: Option<&str>, ip: Option<&str>) -> Option<String> {
+    if fake_kp() {
+        let w = STUBS.lock();
+        if w.banned.contains(token) {
+            return Some("token".to_string());
+        }
+        return ip.filter(|i| w.banned_ips.contains(*i)).map(|i| format!("ip {}", i));
+    }
+    crate::private::ban_key(token, name, ip)
+}
 /// `ip_banned(ip)` (daemon.py:1246): the bans.txt entry (as text) that covers the address, else None
 pub fn ip_banned(ip: &str) -> Option<String> {
     if fake_kp() {

@@ -778,6 +778,8 @@ pub struct Bans {
     pub reason: HashMap<String, String>,
 }
 pub static BANS: LazyLock<Mutex<Bans>> = LazyLock::new(|| Mutex::new(Bans::default()));
+/// +1 on every (re)load of bans.txt: the ban sweep (admin::ban_sweep_tick) kicks the online players the new list covers
+pub static BANS_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn py_isdigit(e: &str) -> bool {
     !e.is_empty() && e.chars().all(|c| c.is_ascii_digit())
@@ -971,6 +973,7 @@ pub fn _bans_load() {
         b.pid = pids;
         b.reason = reason;
     }
+    BANS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     dlog!("BANS loaded", ni, "steam id(s),", nn, "name(s),", nh, "hwid(s),", nt, "token(s),", np, "ip / range(s),", nd, "identity id(s) from", &*BAN_PATH);
 }
 
