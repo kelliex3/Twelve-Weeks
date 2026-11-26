@@ -98,7 +98,7 @@ fn db_ident(path: &str) -> Option<(u64, bool)> {
     Some((ino, md.len() > 0))
 }
 
-fn open_rw(path: &str) -> rusqlite::Result<Connection> {
+pub fn open_rw(path: &str) -> rusqlite::Result<Connection> {
     let c = Connection::open(path)?;
     c.busy_timeout(Duration::from_secs(10))?;
     c.execute_batch("PRAGMA synchronous=FULL")?;
