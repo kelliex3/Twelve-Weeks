@@ -64,6 +64,14 @@ pub fn os_error_repr(e: &std::io::Error) -> String {
     format!("{}({}, {})", class, code, str_repr(&msg))
 }
 
+/// `os.strerror(code)` as the server's Python (glibc) words it.
+pub fn strerror(code: i32) -> String {
+    match glibc_strerror(code) {
+        Some(m) => m.to_string(),
+        None => unsafe { std::ffi::CStr::from_ptr(libc::strerror(code)) }.to_string_lossy().into_owned(),
+    }
+}
+
 fn glibc_strerror(code: i32) -> Option<&'static str> {
     Some(match code {
         libc::EPERM => "Operation not permitted",
@@ -88,6 +96,7 @@ fn glibc_strerror(code: i32) -> Option<&'static str> {
         libc::ETIMEDOUT => "Connection timed out",
         libc::ECONNREFUSED => "Connection refused",
         libc::EHOSTUNREACH => "No route to host",
+        libc::ESHUTDOWN => "Cannot send after transport endpoint shutdown",
         _ => return None,
     })
 }

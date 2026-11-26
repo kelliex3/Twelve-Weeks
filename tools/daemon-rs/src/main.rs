@@ -23,9 +23,13 @@ mod rnd;
 mod roles;
 mod selftest;
 mod social;
+mod slurs;
+mod slurs_table;
 mod social_selftest;
 mod udp;
 mod util;
+mod voiceroom;
+mod wslink;
 
 use std::io::{self, BufRead, Write};
 use std::net::SocketAddrV4;
@@ -162,6 +166,7 @@ fn main() {
     let code = match args.get(1).map(|s| s.as_str()) {
         Some("relay") => run_relay(),
         Some("replay-udp") => run_replay_udp(),
+        Some("wslink") => wslink::run_cli(&args[2..]),
         Some("selftest") => {
             log::init_capture();
             let m = args.get(2).cloned().unwrap_or_default();
