@@ -323,7 +323,7 @@ pub fn pair_raw(a: &str, b: &str) -> Option<i64> {
 }
 
 // py: daemon.py:4474 _corr_of
-fn corr_of(t: &str, now: f64) -> i64 {
+pub fn corr_of(t: &str, now: f64) -> i64 {
     let mut c = PING_CORR.lock();
     match c.get(t).copied() {
         None => 0,
@@ -336,7 +336,7 @@ fn corr_of(t: &str, now: f64) -> i64 {
 }
 
 // py: daemon.py:4483 _measured_of
-fn measured_of(a: &str, b: &str, now: f64) -> Option<i64> {
+pub fn measured_of(a: &str, b: &str, now: f64) -> Option<i64> {
     let mut m = MEASURED_PAIR.lock();
     let v = m.get(&(a.to_string(), b.to_string())).copied()?;
     if now - v.1 > *PING_MEMORY_S {

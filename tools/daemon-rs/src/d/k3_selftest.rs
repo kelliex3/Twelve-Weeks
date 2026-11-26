@@ -576,6 +576,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     std::env::set_var("T2R_NO_COUNTDOWN", "1");
     TEST_NO_SLEEP.store(true, Ordering::Relaxed);
     set_server_version("sv-test");
+    STANDIN.store(true, Ordering::Relaxed);
     clear_all();
     let mut n = 0usize;
     for c in script(input) {

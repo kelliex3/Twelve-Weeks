@@ -25,38 +25,6 @@ pub static WORLD: LazyLock<Mutex<World>> = LazyLock::new(|| Mutex::new(World::de
 /// (selftest) get_name / token_steamid answer from WORLD while this is set
 pub static WORLD_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-// ---- K6 loop: silence / re-adopt / AFK / admin / ping gate
-pub fn silence(token: &str, now: f64) -> f64 {
-    0.0
-}
-pub fn readopt_claim(token: &str) {
-    unimplemented!()
-}
-pub fn afk_report(token: &str, idle_s: i64, flags: u8) {
-    unimplemented!()
-}
-pub fn admin_kick(pid: &str, move_: bool) -> serde_json::Value {
-    unimplemented!()
-}
-/// `jip_ping_block(token, mid, host, active, joining, now)`: the ping in ms when the joiner is over the limit to the host, else None
-pub fn jip_ping_block(token: &str, mid: &str, host: &str, active: &[String], joining: &HashSet<String>, now: f64) -> Option<i64> {
-    None
-}
-pub fn _ping_gate(a: &str, b: &str, now: f64) -> Option<i64> {
-    pair_ping(a, b)
-}
-pub fn ping_left_out_note(dropped: &[String], now: f64) {}
-pub fn ping_wait_judge(
-    kept: &[String],
-    host: Option<&str>,
-    pair: &dyn Fn(&str, &str) -> Option<i64>,
-    now: f64,
-    members_fn: &dyn Fn(&str) -> Vec<String>,
-    host_ok: &dyn Fn(&str) -> bool,
-) -> (bool, Vec<String>) {
-    (false, Vec::new())
-}
-
 // ---- K1 / K2: clan bookkeeping that clan_rejoin_after_booking touches
 pub static CLAN_DONE: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 pub static CLAN_CREDITED: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));

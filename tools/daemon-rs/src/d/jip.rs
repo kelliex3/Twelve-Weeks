@@ -607,7 +607,7 @@ impl MatchMaker {
 }
 
 // ---------------------------------------------------------------- join in progress glue
-static JIP_LAST_WHY: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static JIP_LAST_WHY: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// token -> (match id, time): its join in progress put it back into the match it had left (wave_byte bit 2)
 pub static JIP_BACK: LazyLock<Mutex<HashMap<String, (String, f64)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// token -> (match id, time): joined a running match (join in progress)

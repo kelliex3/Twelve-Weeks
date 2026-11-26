@@ -157,9 +157,16 @@ fn run_replay_udp() -> i32 {
     0
 }
 
+fn run_serve() -> i32 {
+    let _ = d::started_at();
+    log::init(log_config("daemon.log"));
+    d::serve()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let code = match args.get(1).map(|s| s.as_str()) {
+        Some("serve") | None => run_serve(),
         Some("relay") => run_relay(),
         Some("replay-udp") => run_replay_udp(),
         Some("selftest") => {
@@ -173,7 +180,7 @@ fn main() {
             c
         }
         _ => {
-            eprintln!("usage: t2r-daemon relay | replay-udp < trace | selftest <module> < script");
+            eprintln!("usage: t2r-daemon [serve] | relay | replay-udp < trace | selftest <module> < script");
             2
         }
     };

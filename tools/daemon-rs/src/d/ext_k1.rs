@@ -33,13 +33,3 @@ pub static CLAN_LOST_EXCUSES: LazyLock<Mutex<HashMap<String, Vec<f64>>>> = LazyL
 pub fn clan_match_ended(players: &[String], mid: &str) {
     unimplemented!()
 }
-
-// ---- K6 loop
-/// `live_save(now=None)` (daemon.py:9741)
-pub fn live_save(now: Option<f64>) {
-    unimplemented!()
-}
-/// `mid in RESTORED_T` (daemon.py:9895)
-pub fn restored_t_has(mid: &str) -> bool {
-    false
-}
