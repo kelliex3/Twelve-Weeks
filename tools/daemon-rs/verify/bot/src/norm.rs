@@ -16,11 +16,23 @@ pub fn norm_json(v: &mut Value) {
     match v {
         Value::Object(m) => {
             m.remove("threads"); // /sizes: the thread count of the Python process
+            m.remove("log_queue"); // /sizes: log lines waiting for the flusher thread
+            if m.contains_key("lines") && m.contains_key("last") {
+                // party / lobby chat: ids are a clock-based counter
+                m.insert("last".into(), Value::String("<id>".into()));
+                if let Some(Value::Array(ls)) = m.get_mut("lines") {
+                    for l in ls.iter_mut() {
+                        if let Some(o) = l.as_object_mut() {
+                            o.insert("id".into(), Value::String("<id>".into()));
+                        }
+                    }
+                }
+            }
             if m.get("kind").and_then(|k| k.as_str()) == Some("r") && m.get("param").map(|p| p.is_number()).unwrap_or(false) {
                 m.insert("param".into(), Value::String("<T>".into())); // a planned restart: seconds left
             }
             for (k, x) in m.iter_mut() {
-                if x.is_number() && (TIME_KEYS.contains(&k.as_str())) {
+                if x.is_number() && (TIME_KEYS.contains(&k.as_str()) || k.ends_with("_s")) {
                     *x = Value::String("<T>".into());
                 } else {
                     norm_json(x);
@@ -46,7 +58,7 @@ pub fn norm_json(v: &mut Value) {
 /// Log categories that depend on scheduling, counters of the run or the machine, not on the protocol.
 const DROP_PREFIX: &[&str] = &[
     "STATUS", "UDP", "SKILL lookup failed", "LOG-SUPPRESSED", "DB ", "DB:", "# daemon", "load timing:", "NET ", "NET-", "RELAY", "ADMIN listening", "daemon start",
-    "daemon version", "DB check", "DB backup", "GC", "ident backfill", "TCP-LIVE",
+    "MAP to1-", "daemon version", "DB check", "DB backup", "GC", "ident backfill", "TCP-LIVE",
 ];
 
 /// Categories written by one connection thread per player, in the order the threads happen to run (keepalive phases, loaded reports):

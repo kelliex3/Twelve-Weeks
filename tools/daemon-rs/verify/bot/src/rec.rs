@@ -12,6 +12,8 @@ use std::time::Instant;
 struct Stream {
     lines: Vec<String>,
     last: Option<(Instant, u8)>,
+    /// a countdown step (0x0c) has been seen on this stream
+    stepped: bool,
 }
 
 #[derive(Default)]
@@ -48,12 +50,26 @@ impl Rec {
         // a gap is only meaningful between frames of the same kind (countdown steps are 1 s apart; the first step after the match record is
         // 0.5 - 2 s, it depends on when the keepalive that re-sends the record came): b? = no bucket
         let b = match s.last {
+            // (the match record is sent again by the first keepalive after the start: when that comes is the poll phase of the client)
+            Some((_, lop)) if lop == op && op == 0x04 => "b?".to_string(),
             Some((t, lop)) if lop == op => format!("b{}", bucket(now.duration_since(t).as_millis())),
             Some(_) => "b?".to_string(),
             None => "b-".to_string(),
         };
         s.last = Some((now, op));
-        s.lines.push(format!("{} 0x{:02x} {} len={} {} ; {} | {}", dir, op, op_name(op), payload.len(), hex(payload), ascii(payload), b));
+        // The first two match records (the start push and the keepalive re-send) carry the PLACEHOLDER map (first vote option). A keepalive that
+        // lands between "match formed" and "vote opened" gets a different placeholder (the daemon picks one then): that race is not stable, so
+        // byte 0x16 of such a record is masked; the vote options are in the 0xEB state and the final record (after the vote) is kept as it is.
+        let mut payload = payload.to_vec();
+        if op == 0x0c {
+            s.stepped = true;
+        }
+        let masked = op == 0x04 && !s.stepped && payload.len() > 0x16;
+        if masked {
+            payload[0x16] = 0xee;
+        }
+        let payload = &payload[..];
+        s.lines.push(format!("{} 0x{:02x} {} len={} {} ; {}{} | {}", dir, op, op_name(op), payload.len(), hex(payload), ascii(payload), if masked { " (placeholder map masked: byte 0x16 = ee)" } else { "" }, b));
     }
 
     pub fn note(&self, bot: &str, stream: &str, text: &str) {

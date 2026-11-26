@@ -73,8 +73,9 @@ pub fn vote(ctx: &Arc<Ctx>, bots: &[Bot], marks: &[usize], choices: &[u8]) -> bo
         let got = b.sh.wait(*m, Duration::from_secs(60), |h| h.stream == "sess" && h.op == 0x0c && h.pl.len() == 2 && h.pl[0] == 2 && (161..200).contains(&h.pl[1]));
         ok &= got.is_some();
     }
+    // read the open state once, then every vote (the window is a few seconds on a loaded box), then every bot reads the result back
+    bots[0].rpc(0xEA, bots[0].token.as_bytes(), Some(0xEB));
     for (i, b) in bots.iter().enumerate() {
-        b.rpc(0xEA, b.token.as_bytes(), Some(0xEB));
         let mut pl = b.token.as_bytes().to_vec();
         pl.push(choices[i % choices.len()]);
         b.rpc(0xEC, &pl, Some(0xEB));

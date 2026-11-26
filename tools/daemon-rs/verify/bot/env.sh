@@ -35,6 +35,6 @@ export T2R_SEARCH_CACHE_S=0          # searching-list cache (1 s live): same
 # plain daemon settings (T2R_PRE_COUNTDOWN / T2R_VOTE_SECS / T2R_COUNTDOWN); the frame sequence has the same shape, only fewer 0x0c steps.
 if [ "${T2R_FAST:-1}" = "1" ]; then
   export T2R_PRE_COUNTDOWN=2
-  export T2R_VOTE_SECS=4
+  export T2R_VOTE_SECS=10
   export T2R_COUNTDOWN=4
 fi
