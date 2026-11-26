@@ -18,6 +18,8 @@ run clan_chronicle bash verify/py/clan_chronicle_compare.sh 1 $S $N "$P"
 run clan_saga bash verify/py/clan_saga_compare.sh 1 $S $N "$P"
 run clan_alife bash verify/py/clan_alife_compare.sh 1 $S $N "$P"
 T2R_HARNESS=clan_journal_harness T2R_MOD=clan_journal run clan_journal bash verify/py/clan_alife_compare.sh 11 $((10+S)) $N "$P"
+run clan_cl6 bash verify/py/clan_cl6_compare.sh 1 $S $N "$P"
+T2R_REAL_STATUS=1 run clan_chronicle_real bash verify/py/clan_chronicle_compare.sh 1 $S $N "$P"
 run k1 bash verify/py/k1_compare.sh 1 $S $N
 run k3 bash verify/py/k3_compare.sh 1 $S $N
 mkdir -p ~/rsverify/daemon/k4 && rm -rf ~/rsverify/daemon/k4/verify && cp -r verify ~/rsverify/daemon/k4/ && cp t2r-daemon ~/rsverify/daemon/k4/t2r-daemon.new && mv ~/rsverify/daemon/k4/t2r-daemon.new ~/rsverify/daemon/k4/t2r-daemon
