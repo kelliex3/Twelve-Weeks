@@ -106,6 +106,23 @@ pub fn clan_tk(token: &str, mid: &str) -> (String, String) {
     (token.to_string(), mid.to_string())
 }
 
+// ---------------------------------------------------------------- items K3 calls
+/// `CLAN_MATCH.get(token)`: the mid of its last started match
+pub fn clan_match_get(token: &str) -> Option<String> {
+    CLAN_MATCH.lock().get(token).cloned()
+}
+
+/// `with _clanlock: CLAN_PENDING.setdefault(token, (mid, 0, 0, {}))` (daemon.py:3100 clan_closed_book)
+pub fn clan_pending_setdefault(token: &str, mid: &str) {
+    let _g = CLANLOCK.lock();
+    CLAN_PENDING.lock().entry(token.to_string()).or_insert_with(|| (mid.to_string(), 0, 0, IndexMap::new()));
+}
+
+/// `CLAN_DUE[token] = t`
+pub fn clan_due_set(token: &str, t: f64) {
+    CLAN_DUE.lock().insert(token.to_string(), t);
+}
+
 // ---------------------------------------------------------------- timers (threading.Timer / Thread of the module; a selftest queues them)
 pub static TEST_TIMERS_ON: AtomicBool = AtomicBool::new(false);
 static TIMER_SEQ: AtomicU64 = AtomicU64::new(0);

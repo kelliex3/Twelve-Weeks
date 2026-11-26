@@ -218,23 +218,6 @@ pub const S_ORPHAN: i64 = 3;
 /// `ac_server_event(token, mid, kind, w, evidence)`
 pub fn ac_server_event(token: &str, mid: Option<&str>, kind: i64, w: f64, evidence: &str) {}
 
-// ---------------------------------------------------------------- K3 sess / maps
-/// `MAPS[map_index(players)][0]` is `map_display(map_index(players))` (double: the sum of the token bytes mod 7)
-pub fn map_index(players: &[String]) -> i64 {
-    players.iter().map(|p| p.bytes().map(|b| b as i64).sum::<i64>()).sum::<i64>() % 7
-}
-pub fn map_display(idx: i64) -> String {
-    format!("Map{}", idx)
-}
-/// `flow_extra_secs()` (double)
-pub fn flow_extra_secs() -> i64 {
-    5
-}
-impl PresStub {
-    /// `PRES.touch(token, name)` (double: no-op)
-    pub fn touch(&self, token: &str, name: &str) {}
-}
-
 // ---------------------------------------------------------------- K5 batch
 /// `loaded_clear_match(mid, players)` (double: no-op)
 pub fn loaded_clear_match(mid: &str, players: &[String]) {}

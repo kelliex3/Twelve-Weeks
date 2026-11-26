@@ -611,7 +611,7 @@ pub fn make_token(name: &str) -> String {
     raw.extend_from_slice(&nb[..nb.len().min(15)]);
     raw.push(0);
     let pad = 32usize.saturating_sub(raw.len());
-    raw.extend_from_slice(&rnd::token_bytes(pad));
+    raw.extend_from_slice(&rnd::token_bytes("daemon:make_token", pad));
     raw.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

@@ -11,7 +11,7 @@ keeps the real clan_perks / clan_status / clan_ingame / achievements modules: on
   clan_alife / clan_chronicle / clan_journal / clan_arcs / clan_saga / the render_msg of clan_perks   (the fakes of clan_story_harness.py)
   clan_perks (active / loss_streak / wire_text / on_day), clan_status.wire_text, clan_ingame (build / stats_report / stats_parts / player_rank),
   achievements (settle / book_match / book_live / book_side / book_clan / wire_text / BY_ID): they log their arguments into the table dbl_notes
-  anti-cheat: AC = None (private module); map_index / MAPS / flow_extra_secs / loaded_clear_match / silence / PRIV.is_private_mid / readopt_claim / note_lang /
+  anti-cheat: AC = None (private module); loaded_clear_match / silence / PRIV.is_private_mid / readopt_claim / note_lang /
   PRES.touch / leave_running_match (the K3 / K5 / K6 / KP items): scripted doubles; threading.Timer / Thread: a queue the script fires ("timers" op).
 Time is frozen per script line ("t"); clan.rng = random.Random(seed + 1); the global random is seeded with the seed.
 """
@@ -27,6 +27,7 @@ import sys
 os.environ.setdefault("T2R_HOST_CAP", "0")
 os.environ.setdefault("T2R_DB", "/tmp/k2py/t2r.db")
 os.environ["T2R_AC"] = "0"
+os.environ["T2R_MAP"] = "to1-forest"      # map_index / flow_extra_secs / note_lang / PRES are the REAL K3 code on both sides (a fixed map: no rotation draws)
 os.environ.setdefault("T2R_TOOLS_DIR", "/tmp/k2tools")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cseed  # noqa: E402
@@ -237,14 +238,9 @@ def setup():
     d.AC = None
     d.clan.rng = random.Random(SEED + 1)
     random.seed(SEED)
-    d.map_index = lambda players=(): sum(sum(ord(ch) for ch in p) for p in players) % 7
-    d.MAPS = [("Map%d" % i, "img", "lvl") for i in range(7)]
-    d.flow_extra_secs = lambda: 5
     d.loaded_clear_match = lambda mid, players: None
     d.silence = lambda t, now=None: SILENT.get(t, 0.0)
     d.readopt_claim = lambda token, now=None: None
-    d.note_lang = lambda token, lang: None
-    d.PRES.touch = lambda token, name: None
     realpriv = d.PRIV
 
     class PrivShim:

@@ -8,7 +8,7 @@ pydir=$here/py
 tmp=${TMPDIR:-/tmp}/k2cmp; mkdir -p $tmp
 bad=0
 for s in $(seq $a $b); do
-  export T2R_PY_DIR=$pydir T2R_TEST_SEED=$s T2R_TOOLS_DIR=$tmp/tools
+  export T2R_MAP=to1-forest T2R_PY_DIR=$pydir T2R_TEST_SEED=$s T2R_TOOLS_DIR=$tmp/tools
   if [ $((s % 4)) = 0 ]; then export T2R_CLAN_NO_PENALTY=1; else unset T2R_CLAN_NO_PENALTY; fi   # (a server without clan penalties: every 4th seed)
   rm -rf $tmp/py $tmp/rs; mkdir -p $tmp/py $tmp/rs $tmp/tools
   python3 $here/verify/py/k2_harness.py gen $s $n > $tmp/in.$s

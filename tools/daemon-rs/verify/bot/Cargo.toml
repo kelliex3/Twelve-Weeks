@@ -1,0 +1,19 @@
+[package]
+name = "t2r-bot"
+version = "0.1.0"
+edition = "2021"
+description = "Differential-test client for the Twelve Weeks game daemon (speaks the client's TCP protocol, runs scripted scenarios, records transcripts)"
+
+[[bin]]
+name = "t2r-bot"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+strip = true
+
+[workspace]

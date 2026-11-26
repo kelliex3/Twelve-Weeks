@@ -19,7 +19,7 @@ pub fn now() -> f64 {
     if f != 0 {
         return f64::from_bits(f);
     }
-    let (t0, i0) = BASE.get_or_init(|| (wall(), Instant::now()));
+    let (t0, i0) = BASE.get_or_init(|| (test_epoch().unwrap_or_else(wall), Instant::now()));
     t0 + i0.elapsed().as_secs_f64()
 }
 
@@ -87,5 +87,14 @@ pub fn mono() -> f64 {
 
 /// The real wall clock (`wall_time()` in daemon.py): for values other programs compare with their own clock.
 pub fn wall_time() -> f64 {
+    if test_epoch().is_some() {
+        return now();
+    }
     wall()
+}
+
+/// `T2R_TEST_EPOCH=<unix seconds>` (test hook, verify/py/seedhook.py): the wall clock starts at that value and runs on the monotonic clock.
+fn test_epoch() -> Option<f64> {
+    static E: OnceLock<Option<f64>> = OnceLock::new();
+    *E.get_or_init(|| std::env::var("T2R_TEST_EPOCH").ok().and_then(|v| v.trim().parse::<f64>().ok()))
 }
