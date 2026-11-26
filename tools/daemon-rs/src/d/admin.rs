@@ -901,6 +901,7 @@ pub fn kick_token(tok: &str, why: &str, ktxt: &str, kind: &str, reason: &str, ke
         g.joining.shift_remove(tok);
         g.late_bonus.remove(tok);
         g.late_mult.remove(tok);
+        g.late_prog.remove(tok);
         g.seen.remove(tok);
         g.settle.remove(tok);
     }
@@ -1337,6 +1338,21 @@ fn admin_post_path(path: &str, body: &Value) -> Result<Option<Value>, String> {
             let reason = get("reason")?.cloned().filter(truthy).unwrap_or(Value::String(String::new()));
             Ok(Some(admin_kick_reason(&pid, &reason, false)))
         }
+        "/chat/say" => {
+            // 11-25 admin site: a line typed into a running match's chat "As:" <name> (Server, Kellie, ...); clients fetch it with S_ACHAT
+            let s = |k: &str| -> Result<String, String> { Ok(get(k)?.filter(|v| truthy(v)).map(pystr).unwrap_or_default()) };
+            let mid = s("mid")?;
+            let live = MM.lock.lock().matches.contains_key(&mid);
+            if !live {
+                return Ok(Some(json!({"ok": false, "error": "match not running"})));
+            }
+            let (name, text, who) = (s("name")?, s("text")?, s("who")?);
+            let (lid, err) = SOCIAL.admin_say(&mid, &name, &text, &who);
+            Ok(Some(match lid {
+                Some(id) if id != 0 => json!({"ok": true, "id": id}),
+                _ => json!({"ok": false, "error": err}),
+            }))
+        }
         "/handover" => {
             // A/B test aid (10-31, hm-peer0 fix): start a planned host handover of match `mid` (default: the only live one) to `slot` now
             let mids = HM.mids();
@@ -1583,7 +1599,9 @@ pub fn serve() -> i32 {
     let _ = std::thread::Builder::new().name("status".into()).stack_size(2 << 20).spawn(supervised(status_loop, "status"));
     let _ = std::thread::Builder::new().name("matchmaker".into()).stack_size(2 << 20).spawn(supervised(matchmaker_loop, "matchmaker"));
     CLAN_SCHED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = std::thread::Builder::new().name("voice-room".into()).stack_size(1 << 20).spawn(supervised(voice_room_loop, "voice-room"));
     let _ = std::thread::Builder::new().name("clan-scheduler".into()).stack_size(2 << 20).spawn(supervised(clan_scheduler, "clan-scheduler"));
+    let _ = std::thread::Builder::new().name("presence".into()).stack_size(1 << 20).spawn(supervised(presence_loop, "presence"));
     admin_start();
     install_exit_hooks();
     let _ = std::thread::Builder::new().name("ident-backfill".into()).stack_size(1 << 20).spawn(ident_backfill); // 11-23: identity ids for accounts recorded before ident.py

@@ -308,8 +308,10 @@ pub fn join_progress(ck: Option<(f64, f64, bool, f64)>, lv: Option<(i64, i64, f6
 /// (the enemy team empty, or the teams 2+ players apart with one side at most 1 player: 4v1, 3v1, 2v0).
 pub fn presence_tick(dt: f64) {
     let mut snap: Vec<(String, Vec<(i64, String)>)> = Vec::new();
+    let live: HashSet<String>;
     {
         let g = MM.lock.lock();
+        live = g.matches.keys().cloned().collect(); // (for the prune below: MATCH_PRES is never held while MM.lock is taken)
         let mut mids: Vec<&String> = g.started.iter().collect();
         mids.sort();
         for mid in mids {
@@ -351,7 +353,6 @@ pub fn presence_tick(dt: f64) {
         }
     }
     if mp.len() > 400 {
-        let live: HashSet<String> = MM.lock.lock().matches.keys().cloned().collect();
         let dead: Vec<String> = mp.keys().filter(|m| !live.contains(*m)).take(200).cloned().collect();
         for m in dead {
             mp.shift_remove(&m);
@@ -503,4 +504,24 @@ pub fn voice_room_tick(now: Option<f64>) -> Vec<(String, Vec<u8>)> {
 /// `str(x)` of an optional string (None prints as `None`)
 fn opt_str(o: &Option<String>) -> String {
     o.clone().unwrap_or_else(|| "None".to_string())
+}
+
+// py: daemon.py voice_room_loop (every 2 s; an error is logged, the loop goes on)
+pub fn voice_room_loop() {
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if let Err(p) = std::panic::catch_unwind(|| voice_room_tick(None)) {
+            dlog!("VOICE-ROOM ERR", super::conn::panic_text(&p));
+        }
+    }
+}
+
+// py: daemon.py presence_loop (every PRES_DT s)
+pub fn presence_loop() {
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs_f64(PRES_DT));
+        if let Err(p) = std::panic::catch_unwind(|| presence_tick(PRES_DT)) {
+            dlog!("PRESENCE", super::conn::panic_text(&p));
+        }
+    }
 }

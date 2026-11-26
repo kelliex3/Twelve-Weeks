@@ -445,6 +445,24 @@ pub fn live_export(now: Option<f64>) -> Value {
                 }
             }
             r.insert("late_mult".into(), Value::Object(lm));
+            let mut lp = Map::new();
+            for t in pl {
+                if let Some(v) = g.late_prog.get(t) {
+                    if &v.0 == mid {
+                        lp.insert(t.clone(), json!([v.0, jf(v.1), v.2]));
+                    }
+                }
+            }
+            r.insert("late_prog".into(), Value::Object(lp));
+            let mut pr = Map::new();
+            if let Some(m) = MATCH_PRES.lock().get(mid) {
+                for (t, v) in m {
+                    if pl.contains(t) {
+                        pr.insert(t.clone(), json!([jf(v[0]), jf(v[1])]));
+                    }
+                }
+            }
+            r.insert("pres".into(), Value::Object(pr));
             // (11-22 R-9ESR) the in-match team swaps; TEAM_SWAP's inner map is unordered here: written sorted by token
             let mut ts = Map::new();
             if let Some(m) = TEAM_SWAP.lock().get(mid) {
@@ -830,6 +848,27 @@ fn readopt_apply_impl(mid: &str, r: &Value, claimant: &str, now: f64) -> Result<
                     }
                 }
             }
+        }
+        if let Some(o) = r.get("late_prog").and_then(|d| d.as_object()) {
+            for (t, v) in o {
+                if let Some(a) = v.as_array() {
+                    if a.len() >= 3 {
+                        let p = pyfloat(&a[1]).ok_or("TypeError('float()')")?;
+                        let b = pyint(&a[2]).ok_or("TypeError('int()')")?;
+                        g.late_prog.insert(t.clone(), (a[0].as_str().unwrap_or("").to_string(), p, b));
+                    }
+                }
+            }
+        }
+        if let Some(o) = r.get("pres").and_then(|d| d.as_object()).filter(|o| !o.is_empty()) {
+            let mut m: IndexMap<String, [f64; 2]> = IndexMap::new();
+            for (t, v) in o {
+                let a = v.as_array().ok_or("TypeError('list')")?;
+                let x = a.first().and_then(pyfloat).ok_or("TypeError('float()')")?;
+                let y = a.get(1).and_then(pyfloat).ok_or("TypeError('float()')")?;
+                m.insert(t.clone(), [x, y]);
+            }
+            MATCH_PRES.lock().insert(mid.to_string(), m);
         }
         let mut sw: HashMap<String, i64> = HashMap::new();
         if let Some(o) = r.get("team_swap").and_then(|d| d.as_object()) {
@@ -1496,6 +1535,7 @@ pub fn state_sizes() -> Value {
         put("MatchMaker.lives", g.lives.len());
         put("MatchMaker.late_bonus", g.late_bonus.len());
         put("MatchMaker.late_mult", g.late_mult.len());
+        put("MatchMaker.late_prog", g.late_prog.len());
     }
     let (hm, hb) = HM.sizes();
     put("HostMigration.matches", hm);
@@ -1614,7 +1654,7 @@ pub fn status_json() -> Value {
     let live = live_snapshot();
     let roster = roster_public(&live);
     json!({"ts": jf(clock::wall_time()), "server_version": server_version(), "players_online": PRES.count(), "queue": MM.lock.peek(|s| s.queue.len()),
-           "matches": MM.lock.peek(|s| s.matches.len()), "live": live, "roster": roster, "notices": notices_public(), "target_version": update_target()})
+           "matches": MM.lock.peek(|s| s.matches.len()), "live": live, "roster": roster, "notices": notices_public(), "target_version": update_target(), "map_pool": public_map_pool()})
 }
 
 fn write_status_file() {
