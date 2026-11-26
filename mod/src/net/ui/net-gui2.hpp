@@ -42,6 +42,12 @@ namespace net::gui2 {
 
     bool ScoreboardShowing();
 
+    // Read-only mirror of the eight scoreboard name texts this module writes
+    // (slot = team * 4 + row). The lead-dev name rim reads it; no second text
+    // hook is installed. "" when no name has been written for that slot.
+    const char* ScoreboardRowName(int slot);
+    bool        ScoreboardNamesUp();   // ESC / end-of-match scoreboard is up
+
     void BeginMatchOver(int winnerAbs = -1);
 
     void ResetMultiplayer();

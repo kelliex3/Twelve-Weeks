@@ -1,21 +1,25 @@
-// Native port of main's tools/ext/namerim.c (nrim_tick / nrim_apply).
-// See name-rim.hpp for the honest gates (no scoreboard note, no clan 0xE1 reader).
+// Native port of build-191 tools/ext/namerim.c (nrim_tick / nrim_apply).
+// Lobby rows come from the read-only search / lobby mirrors; scoreboard rows
+// from net-gui2's read-only name mirror. See name-rim.hpp for the honest gates.
 
 #include "name-rim.hpp"
+#include "name-rim-core.hpp"
 
-#include <winsock2.h>
 #include <windows.h>
 
 #include "log.hpp"          // TO1_LOG must precede engine/script.hpp
+#include "loader/boot.hpp"
 #include "engine/flag.hpp"
 #include "engine/frame.hpp"
 #include "engine/lobby.hpp"
 #include "engine/widget.hpp"
+#include "net/online/clan-state.hpp"
+#include "net/online/net-session.hpp"
+#include "net/ui/net-gui2.hpp"
 #include "rank-badge.hpp"
 #include "search-rows.hpp"
 #include "friends-state.hpp"
 
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -23,105 +27,73 @@ namespace net::name_rim {
 
     namespace {
 
-        constexpr int   kRimN = 8;
-        constexpr float kRimR = 1.0f;                 // ext rank_badge_widgets.RIM_R
-        constexpr float kDx[kRimN] = { 1.0f, 0.7071f, 0.0f, -0.7071f,
-                                      -1.0f, -0.7071f, 0.0f, 0.7071f };
-        constexpr float kDy[kRimN] = { 0.0f, 0.7071f, 1.0f, 0.7071f,
-                                      0.0f, -0.7071f, -1.0f, -0.7071f };
+        // The pure rules keep their own nested namespace; the native owner stays
+        // at net::name_rim like its boot/reset call sites.
+        namespace core = ::net::social::name_rim::core;
 
-        int       g_ownRole = 0;
-        uint64_t  g_next = 0;
+        using core::RimState;
 
-        struct RimRow {
-            uint64_t gen = 0;
-            uint64_t nameW = 0;
-            int      on = -1;
-            char     txt[64]{};
-            float    px = -1e9f, py = -1e9f, sx = -1e9f, sy = -1e9f;
-        };
-        RimRow g_rows[8];
+        RimState g_lobby[core::kRows];
+        RimState g_score[core::kRows];
+        uint64_t g_next = 0;
+        int      g_roleOverride = 0;    // test / producer seam; clan state wins at 0
 
         bool Off()
         {
             static int off = -1;
             static uint64_t chk = 0;
-            if (off < 0 || GetTickCount64() - chk > 1000) {
-                chk = GetTickCount64();
+            if (off < 0 || ::GetTickCount64() - chk > 1000) {
+                chk = ::GetTickCount64();
                 off = engine::flag::Absent("t2r-no-namerim.txt") ? 0 : 1;
             }
             return off != 0;
         }
 
-        // ext nrim_strip: the name without <font ...> / <scale> markup (the rim's
-        // pink tint is its own colour).
-        void Strip(char* out, size_t cap, const char* text)
-        {
-            size_t k = 0;
-            for (const char* p = text ? text : ""; *p && k + 1 < cap; p++) {
-                if (*p == '<') {
-                    const char* e = std::strchr(p, '>');
-                    if (e) { p = e; continue; }
-                }
-                out[k++] = *p;
-            }
-            out[k] = 0;
-        }
-
-        // ext nrim_apply: write / hide the 8 clones (once per new text or new page
-        // instance), then follow the name's pivot and scale.
-        void Apply(RimRow* s, uint64_t nameW, uint64_t gen,
-            const char* rimFmt, const char* show)
+        // ext nrim_apply: write / hide the eight rim clones once per new text or
+        // new page instance, then follow the name's pivot and scale.
+        void Apply(RimState* s, uint64_t nameW, uint64_t gen,
+                   const char* rimFmt, const char* show)
         {
             char stripped[64];
-            Strip(stripped, sizeof stripped, show);
+            core::Strip(stripped, sizeof stripped, show);
             const bool on = stripped[0] != 0 && nameW != 0;
-            if (s->gen != gen || s->nameW != nameW) {
-                *s = RimRow{};
-                s->gen = gen;
-                s->nameW = nameW;
-                s->on = -1;
-            }
-            if (on == (s->on != 0) && (!on || !std::strcmp(s->txt, stripped))) {
-                if (!on)
-                    return;
-            } else {
-                for (int i = 0; i < kRimN; i++) {
+            if (s->gen != gen || s->nameW != nameW)
+                core::ResetState(*s, gen, nameW);
+            if (core::NeedRewrite(*s, on, stripped)) {
+                for (int i = 0; i < core::kRimN; ++i) {
                     char p[160];
                     std::snprintf(p, sizeof p, rimFmt, i);
-                    if (on)
-                        engine::widget::SetText(engine::widget::Page(p), stripped);
-                    engine::widget::Visible(engine::widget::Page(p), on);
+                    const uint64_t w = engine::widget::Page(p);
+                    if (!w) continue;
+                    if (on) engine::widget::SetText(w, stripped);
+                    engine::widget::Visible(w, on);
                 }
                 s->on = on ? 1 : 0;
                 std::snprintf(s->txt, sizeof s->txt, "%s", stripped);
                 s->px = s->py = s->sx = s->sy = -1e9f;
-                if (!on)
-                    return;
+                if (!on) return;
             }
             float x = 0.0f, y = 0.0f, sx = 1.0f, sy = 1.0f;
-            if (!engine::widget::PivotGet(nameW, &x, &y))
-                return;
-            engine::widget::ScaleGet(nameW, &sx, &sy);
-            if (x == s->px && y == s->py && sx == s->sx && sy == s->sy)
-                return;
+            if (!engine::widget::PivotGet(nameW, &x, &y)) return;
+            if (!engine::widget::ScaleGet(nameW, &sx, &sy)) { sx = 1.0f; sy = 1.0f; }
+            if (x == s->px && y == s->py && sx == s->sx && sy == s->sy) return;
             s->px = x; s->py = y; s->sx = sx; s->sy = sy;
-            for (int i = 0; i < kRimN; i++) {
+            for (int i = 0; i < core::kRimN; ++i) {
                 char p[160];
                 std::snprintf(p, sizeof p, rimFmt, i);
                 const uint64_t w = engine::widget::Page(p);
-                if (!w)
-                    continue;
-                engine::widget::Pivot(w, x + kDx[i] * kRimR, y + kDy[i] * kRimR);
+                if (!w) continue;
+                float ox = 0.0f, oy = 0.0f;
+                core::Place(x, y, sx, sy, i, ox, oy);
+                engine::widget::Pivot(w, ox, oy);
                 engine::widget::Scale(w, sx, sy);
             }
         }
 
-        // The shown name of a lobby row: the search mirror first (SEARCHING), then
-        // the read-only roster order (MATCH FOUND). Row 0 is always us.
-        const char* RowName(int r, char* buf, size_t cap, bool* me)
+        // The shown name of a lobby row: the search mirror first (SEARCHING),
+        // then the read-only roster order (MATCH FOUND). Row 0 is always us.
+        const char* RowName(int r, char* buf, size_t cap)
         {
-            *me = r == 0;
             const char* s = net::social::search_rows::Name(r);
             if (s && s[0]) {
                 std::snprintf(buf, cap, "%s", s);
@@ -143,47 +115,66 @@ namespace net::name_rim {
 
     void SetOwnRole(int role)
     {
-        g_ownRole = role >= 0 && role <= social::kRankMaxRole ? role : 0;
+        g_roleOverride = role >= 0 && role <= social::kRankMaxRole ? role : 0;
     }
 
     void Tick(uint64_t now)
     {
-        if (now < g_next)
-            return;
-        g_next = now + 150;
-
-        if (engine::lobby::InMatch())
-            return;                 // the menu rows are gone; a new page starts fresh
+        if (boot::ExtLoaded() || !core::ShouldTick(now, g_next)) return;
+        g_next = now + core::kTickMs;
 
         const bool off = Off();
         const uint64_t gen = engine::widget::TopPage();
-        for (int r = 0; r < 8; r++) {
-            char name[48];
-            bool me = false;
-            const char* shown = RowName(r, name, sizeof name, &me);
-            char np[96];
-            std::snprintf(np, sizeof np,
-                "anim-group.lobbyPanel.lobbyList.Player%d.nameLabel", r);
-            const uint64_t nw = engine::widget::Page(np);
-            int ro = 0;
-            if (!me && shown && shown[0] && !social::RankPlaceholder(shown))
-                ro = ::net::rank_badge::RoleOf(shown);
-            else if (me)
-                ro = g_ownRole;
-            char fmt[96];
-            std::snprintf(fmt, sizeof fmt,
-                "anim-group.lobbyPanel.lobbyList.Player%d.nmRim%%d", r);
-            Apply(&g_rows[r], nw, gen, fmt, !off && ro == 4 ? shown : nullptr);
+        const int ownRole = g_roleOverride ? g_roleOverride : ::net::clan::OwnRole();
+        const char* local = ::net::session::LocalName();
+
+        // Lobby rows (MP menu / find match). In a match the page is gone; a new
+        // page instance starts over (new handles, Apply's gen check).
+        if (!engine::lobby::InMatch()) {
+            for (int r = 0; r < core::kRows; ++r) {
+                char name[48];
+                const char* shown = RowName(r, name, sizeof name);
+                const bool me = r == 0;
+                char np[96], fmt[96];
+                core::LobbyNamePath(np, sizeof np, r);
+                core::LobbyRimPath(fmt, sizeof fmt, r);
+                const uint64_t nw = engine::widget::Page(np);
+                int ro = 0;
+                if (me) ro = ownRole;
+                else if (shown && shown[0] && !social::RankPlaceholder(shown))
+                    ro = ::net::rank_badge::RoleOf(shown);
+                const bool show = core::ShouldShow(off, ro, shown);
+                Apply(&g_lobby[r], nw, gen, fmt, show ? shown : nullptr);
+            }
         }
-        // Scoreboard rims (ext's SS[k] / g_rkb_sbw / g_rkb_sbn) are intentionally
-        // absent: the mod has no scoreboard settext note, so there is no name to
-        // look up and no widget to follow -- writing nothing is the honest gate.
+
+        // Scoreboards (ESC page + end of match): names mirrored read-only by
+        // net-gui2. Slot k is team(k/4) row(k%4), the ext's SS[k] layout.
+        if (::net::gui2::ScoreboardNamesUp()) {
+            for (int k = 0; k < core::kRows; ++k) {
+                const char* nm = ::net::gui2::ScoreboardRowName(k);
+                if (!nm || !nm[0]) continue;
+                char fmt[96];
+                core::ScoreboardRimPath(fmt, sizeof fmt, k);
+                int ro = 0;
+                if (!core::IsScoreboardPlaceholder(nm)) {
+                    if (core::IsMe(nm, local)) ro = ownRole;
+                    else ro = ::net::rank_badge::RoleOf(nm);
+                }
+                const bool show = core::ShouldShow(off, ro, nm);
+                char np[96];
+                std::snprintf(np, sizeof np,
+                              "anim-group.scoreboard.team%d_row%d_name", k / 4, k % 4);
+                Apply(&g_score[k], engine::widget::Page(np), gen, fmt,
+                      show ? nm : nullptr);
+            }
+        }
     }
 
     void Reset()
     {
-        for (RimRow& r : g_rows)
-            r = RimRow{};
+        for (RimState& r : g_lobby) r = RimState{};
+        for (RimState& r : g_score) r = RimState{};
         g_next = 0;
     }
 

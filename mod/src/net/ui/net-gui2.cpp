@@ -1188,11 +1188,23 @@ namespace net::gui2 {
 
     static constexpr int kScoreboardRows = 4;
 
+    // Read-only mirror of the scoreboard names this module writes (ext's
+    // g_rkb_sbw / g_rkb_sbn note). The rim owner reads it instead of installing
+    // a second settext hook: engine::widget's single observer cannot see these
+    // DC-driven writes. Slot = team * 4 + row, matching team%d_row%d_nmRim%d.
+    char s_scoreName[8][48]{};
+
     static void sbSet(int team, int row, const char* field, const char* text)
     {
         char leaf[80];
         snprintf(leaf, sizeof(leaf), "anim-group.scoreboard.team%d_row%d_%s", team, row, field);
         setTxt(node(leaf), text);
+        if (!std::strcmp(field, "name") && team >= 0 && team < 2
+            && row >= 0 && row < kScoreboardRows) {
+            const int slot = team * kScoreboardRows + row;
+            snprintf(s_scoreName[slot], sizeof s_scoreName[slot], "%s",
+                     text ? text : "");
+        }
     }
 
     static constexpr const char* kMnkInputSvg = "pc/menu/keyboard-mouse.svg";
@@ -1567,8 +1579,20 @@ namespace net::gui2 {
         }
     }
 
+    const char* ScoreboardRowName(int slot)
+    {
+        if (slot < 0 || slot >= 8) return "";
+        return s_scoreName[slot];
+    }
+
+    bool ScoreboardNamesUp()
+    {
+        return ScoreboardShowing() || ScoreboardIsTop();
+    }
+
     void ResetMultiplayer()
     {
+        for (auto& row : s_scoreName) row[0] = 0;
         net::matchmaking::Cancel();
         net::connect::Reset();
         g_searching = false;

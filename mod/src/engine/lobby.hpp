@@ -39,6 +39,16 @@ namespace engine::lobby {
     // the object / field is not readable.
     int      MatchPhase();
 
+    // LobbyObj +0x1b8 (int): the match flow code. 100..129 = loadout,
+    // 130..159 = booster, 160..199 = map vote, 200+ = loading when phase == 2
+    // and the match is not live (g_mh_load forces 200). -1 when unreadable.
+    int      FlowCode();
+
+    // LobbyObj +0x18 (u8): the winning map written when the vote decides. The
+    // ext wrote it unguarded; native writes are VirtualQuery-checked and are a
+    // no-op unless the value differs. Returns false when not writable.
+    bool     SetWinningMap(int map);
+
     // ext T2R_SYM(kPartyStatus) -- the raw int the ext reads for the lobby / party
     // rows (3 = searching / match found, 4 = in a match). -1 if not readable.
     int      PartyStatus();

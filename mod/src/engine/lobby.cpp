@@ -67,6 +67,31 @@ namespace engine::lobby {
             ? static_cast<int>(*reinterpret_cast<const volatile int*>(p)) : -1;
     }
 
+    int FlowCode()
+    {
+        const uint8_t* lo = Object();
+        if (!lo)
+            return -1;
+        const uintptr_t p = reinterpret_cast<uintptr_t>(lo) + 0x1B8;
+        return engine::ptr::Readable(p, sizeof(int))
+            ? static_cast<int>(*reinterpret_cast<const volatile int*>(p)) : -1;
+    }
+
+    bool SetWinningMap(int map)
+    {
+        uint8_t* lo = Object();
+        if (!lo || map < 0 || map > 255)
+            return false;
+        const uintptr_t p = reinterpret_cast<uintptr_t>(lo) + 0x18;
+        if (!engine::ptr::Writable(p, 1))
+            return false;
+        volatile uint8_t* byte = reinterpret_cast<volatile uint8_t*>(p);
+        if (*byte == static_cast<uint8_t>(map))
+            return true;
+        *byte = static_cast<uint8_t>(map);
+        return true;
+    }
+
     int PartyStatus()
     {
         const uintptr_t p = Base() + kRvaPartyStatus;

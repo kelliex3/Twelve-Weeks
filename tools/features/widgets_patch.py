@@ -442,7 +442,7 @@ def patch_widgets(pak_path):
               f"2013 match HUD: top bar cut, timer over the radar, lives under the figures ({matchflow_widgets.remake_score_banner(tmp)} widgets), "
               f"MP menu trimmed ({matchflow_widgets.trim_main_menu(tmp)} entries hidden), "
               f"disclaimer + version label hidden ({matchflow_widgets.hide_notice_and_version(tmp)} widgets), "
-              f"TWELVE WEEKS names ({matchflow_widgets.rename_brand(tmp)} texts), "
+              f"TWELVE WEEKS names ({matchflow_widgets.rename_factions2(tmp)} texts),"
               f"find-match CREDITS hidden ({matchflow_widgets.hide_findmatch_credits(tmp)}), "
               f"2013 LOADING in the engine's loading.widget ({matchflow_widgets.add_loading_screen(tmp)} widgets)")
         import gearup13_widgets
@@ -514,6 +514,7 @@ def patch_widgets(pak_path):
             print(f"gui2-widgets: gear up pages restyled (B2 three columns): {loadout_r2_widgets.apply(tmp)} widgets added / moved")
         import rank_badge_widgets
         print(f"gui2-widgets: rank badge (symbol + weeks) before the names: {rank_badge_widgets.add_lobby_rows(tmp)} lobby row widgets, {rank_badge_widgets.add_scoreboards(tmp)} scoreboard rows (pause menu + end page)")
+        print(f"gui2-widgets: lead dev name rims (8 pink copies under each lobby / scoreboard name, t2r-ext namerim.c): {rank_badge_widgets.add_name_rims(tmp)} widgets")
         import loc_widgets
         print(f"gui2-widgets: {loc_widgets.apply(tmp)} static labels moved to text ciphers (translated with the game's language, tools/loc)")
         out = pak_path + ".new"

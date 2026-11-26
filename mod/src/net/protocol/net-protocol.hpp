@@ -271,6 +271,18 @@ enum class NetDaemonOp : uint8_t {
     kClanStateReply = 0xE1,   // "fac=1 st=1 day=3 ..." (parsed by clan-state.hpp)
     kClanReport     = 0xE2,   // [64B token][u32 seq][u32 parts][u8 flags][u8 n][n x (u8 label,u16 count)]
     kClanChooseSide = 0xE4,   // [64B token][u8 side+1][u8 caps=0x01] -> kClanStateReply
+    // Build-191 map vote (tools/daemon.py T2R_MAP_VOTE / tools/ext/mfnr.c).
+    // Both requests answer with the same 0xEB state text; the option byte is
+    // written only by 0xEC. Names pinned to the ext bytes for cutover.
+    kMapVoteRead    = 0xEA,   // [64B token] -> kMapVoteReply
+    kMapVoteReply   = 0xEB,   // "st=1 n=3 m0=... v0=... my=-1 w=-1 pc=2 ..."
+    kMapVoteSend    = 0xEC,   // [64B token][u8 option] -> kMapVoteReply
+    // 2013 one-use boosters / daily missions (tools/ext/t2r-ext.c, clan.py).
+    // Same daemon socket; names pinned to the ext bytes. Both requests answer
+    // with the same 0xE9 meta text; 0xEE is the state-changing booster pick.
+    kMetaRead       = 0xE8,   // [64B token] -> kMetaReply
+    kMetaReply      = 0xE9,   // "v=1 bc1=2 ... bp=3 ba=0 bn=4 mi=1 mp=2 ... mf=8"
+    kBoosterPick    = 0xEE,   // [64B token][u8 booster id] -> kMetaReply
     // Achievements client half (tools/ext/achieve.c). Same ext bytes, added as
     // names only -- no existing opcode is moved during cutover.
     kAchReport      = 0xA9,   // [64B token][u32 seq][u8 n][n x (u8 label,u16 count)] -> table

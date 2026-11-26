@@ -25,6 +25,8 @@
 #include "net/ui/launch-notice.hpp"
 #include "net/ui/kill-feed-icons.hpp"
 #include "net/ui/prompt-anim.hpp"
+#include "net/ui/nrui.hpp"
+#include "net/ui/mfnr.hpp"
 #include "net/ui/sbteam.hpp"
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
@@ -273,6 +275,8 @@ namespace boot {
 		net::ui::customize::Tick(now);   // CUSTOMIZE page owner (shared profile, atomic save + NEVT_CUSTOM_LOOK)
 		net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
 		net::ui::customize::compose::Tick(now); // 0x59 outfit cache + composed look2 registry (yields to ext)
+		net::ui::mfnr::Tick(now); // match flow: map vote / boosters / engine LOADING screen
+		net::ui::nrui::Tick(now); // shared No Return frame glides (after page writers)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
 		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
@@ -334,6 +338,10 @@ namespace boot {
 		// The stage's compaction hook is deferred until early ticks have let
 		// ExtLoaded() settle; storing the module here keeps that first tick cheap.
 		net::ui::customize::stage::Install(gameModule);
+
+		// The match-flow LOADING hook uses the same settled-tick install; the
+		// module is only stored here so it cannot detour an ext-loaded prologue.
+		net::ui::mfnr::Install(gameModule);
 
 		if (!engine::InitDebugDraw(gameModule)) {
 			TO1_LOG("[boot] FATAL: debug draw init failed.\n");

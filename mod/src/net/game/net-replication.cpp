@@ -48,6 +48,8 @@
 #include "net/ui/customize-compose.hpp"
 #include "net/ui/customize-stage.hpp"
 #include "net/ui/death-ui.hpp"
+#include "net/ui/nrui.hpp"
+#include "net/ui/mfnr.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -2201,6 +2203,8 @@ namespace net::replication {
         net::ui::customize::challenges::Reset();
         net::ui::customize::compose::Reset();
         net::ui::customize::stage::Reset();
+        net::ui::nrui::Reset();        // shared frame glides / cached layouts
+        net::ui::mfnr::Reset();        // MAP VOTE page / 0xEA poll state
         net::ui::death_ui::Reset();
         net::requeue::Reset();
         net::direct::Reset();

@@ -136,3 +136,52 @@ def add_scoreboards(wdir):
             n += 1
         _save(path, w)
     return n
+
+
+# The lead dev's name outline on the menu names (the name keeps its colour, only a hot pink #ff3d8b outline; ranks changed colour but the menu names did not - the first rim was only
+# on the in-match overhead tags). gui2 text has no outline colour, so each name gets RIM_N hidden clones in pink at
+# the 8 compass offsets * RIM_R, the same parent, depth just below the name. t2r-ext namerim.c fills / shows them for a role 4 row and keeps them on the name's
+# place and scale (sbteam.c moves and shrinks scoreboard names).
+RIM_ARGB = 0xFFFF537D                 # Discord Creator pink #ff537d (was #ff3d8b)
+RIM_R = 1.0                  # = namerim.c NRIM_R (2.0 was too thick; the ext re-places the rims with its own value)
+RIM_N = 8
+RIM_DX = (1, 0.7071, 0, -0.7071, -1, -0.7071, 0, 0.7071)
+RIM_DY = (0, 0.7071, 1, 0.7071, 0, -0.7071, -1, -0.7071)
+
+
+def _rims(items, nm, pre):
+    """RIM_N pink clones of the text item `nm`, named pre + "nmRim<i>", offset by (RIM_DX, RIM_DY) * RIM_R, depth just under it."""
+    out = []
+    for i in range(RIM_N):
+        r = copy.deepcopy(nm)
+        for k in ("cipherId", "animation", "effect"):
+            r.pop(k, None)
+        r["animation"] = {"keyframes": {}}
+        r.update({"guid": t2guid.guid(), "name": "%snmRim%d" % (pre, i), "text": "", "visible": 0, "focusable": 0,
+                  "depth": float(nm.get("depth", 2.0)) - 0.05, "color.a": 255, "tint.start": RIM_ARGB, "tint.end": RIM_ARGB, "tint.blend": 0.0, "inheritTint": 0,
+                  "pivotAs.x": float(nm.get("pivotAs.x", 0.0)) + RIM_DX[i] * RIM_R, "pivotAs.y": float(nm.get("pivotAs.y", 0.0)) + RIM_DY[i] * RIM_R})
+        out.append(r)
+    items.extend(out)
+    return out
+
+
+def add_name_rims(wdir):
+    """The lead dev's pink rim widgets under the names of the lobby rows (lobby-row / find-match-row nameLabel -> nmRim0..7) and both scoreboards
+    (team<t>_row<r>_name -> team<t>_row<r>_nmRim0..7). Call AFTER add_lobby_rows / add_scoreboards (the names' final places). Returns the widget count."""
+    import re
+    n = 0
+    for page in ("lobby-row", "find-match-row"):
+        path, w = _load(wdir, page)
+        items = w["items"]
+        items[:] = [i for i in items if not re.match(r"nmRim\d$", i["name"])]
+        nm = next(i for i in items if i["name"] == "nameLabel")
+        n += len(_rims(items, nm, ""))
+        _save(path, w)
+    for page in ("pause-menu", "scoreboard"):
+        path, w = _load(wdir, page)
+        items = w["items"]
+        items[:] = [i for i in items if not re.match(r"team\d_row\d_nmRim\d$", i["name"])]
+        for nm in [i for i in items if re.match(r"team\d_row\d_name$", i["name"])]:
+            n += len(_rims(items, nm, nm["name"][:-len("name")]))
+        _save(path, w)
+    return n
