@@ -299,6 +299,13 @@ pub fn db_guard() -> String {
         if std::fs::rename(path, &bad).is_err() {
             return "CORRUPT and no usable backup".into();
         }
+        // WAL: the damaged file's -wal / -shm go with it (a stale -wal would be replayed onto the restored copy)
+        for sfx in ["-wal", "-shm"] {
+            let side = format!("{}{}", path, sfx);
+            if std::path::Path::new(&side).exists() {
+                let _ = std::fs::rename(&side, format!("{}{}", bad, sfx));
+            }
+        }
         let rest = format!("{}.restore", path);
         if std::fs::copy(&CFG.bak_path, &rest).is_ok() {
             if let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(&rest) {
@@ -317,6 +324,10 @@ fn backup_copy(src: &Connection, tmp: &str) -> rusqlite::Result<()> {
     let b = rusqlite::backup::Backup::new(src, &mut dst)?;
     // one step (-1): a WAL reader keeps its snapshot for the whole copy, writers go on committing to the WAL
     b.step(-1)?;
+    drop(b);
+    // a copy of a WAL file is a WAL file again: the backup is kept as a plain rollback-journal file (like Python's), so that opening it
+    // (db_ok, a restore) needs no -wal / -shm next to it
+    let _: String = dst.query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))?;
     Ok(())
 }
 
