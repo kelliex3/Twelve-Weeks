@@ -223,6 +223,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         return 3;
     }
     ext::doubles(true);
+    ext::real_status_on(std::env::var("T2R_REAL_STATUS").is_ok()); // the real clan_status instead of its double (the Python harness reads the same variable)
     let dbp = std::env::var("T2R_CL_DB").unwrap_or_else(|_| "/tmp/clan_chron_rs.db".into());
     for p in [dbp.clone(), format!("{}-journal", dbp)] {
         let _ = std::fs::remove_file(p);
@@ -277,5 +278,6 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     }
     let _ = writeln!(out, "{}", py::dumps_compact(&json!({"i": -1, "final": Value::Object(fin)})));
     ext::doubles(false);
+    ext::real_status_on(false);
     0
 }

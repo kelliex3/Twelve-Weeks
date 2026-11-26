@@ -148,7 +148,10 @@ pub mod chronicle {
 
     // py: clan_chronicle.py:187 enabled
     pub fn enabled() -> bool {
-        fake() && FAKE_CHRON.load(Ordering::SeqCst)
+        if fake() {
+            return FAKE_CHRON.load(Ordering::SeqCst);
+        }
+        crate::clan::clan_chronicle::enabled()
     }
 
     // py: clan_chronicle.py:492 day_rows
@@ -168,8 +171,7 @@ pub mod chronicle {
             let _ = params;
             return Some(format!("CH[{}|{}]", lid, lang));
         }
-        let _ = (lid, params, lang);
-        unimplemented!("clan_chronicle::render_msg")
+        crate::clan::clan_chronicle::render_msg(lid, params, lang)
     }
 }
 
@@ -233,8 +235,8 @@ pub mod journal {
     }
 }
 
-macro_rules! render_only {
-    ($m:ident, $py:expr, $tag:expr) => {
+macro_rules! render_real {
+    ($m:ident, $py:expr, $tag:expr, $real:path) => {
         #[doc = $py]
         pub mod $m {
             use super::*;
@@ -244,13 +246,12 @@ macro_rules! render_only {
                     let _ = params;
                     return Some(format!("{}[{}|{}]", $tag, lid, lang));
                 }
-                let _ = (lid, params, lang);
-                unimplemented!(concat!($py, " render_msg"))
+                $real(lid, params, lang)
             }
         }
     };
 }
 
-render_only!(arcs, "py: clan_arcs.py:521 render_msg", "ARC");
-render_only!(perks, "py: clan_perks.py:221 render_msg", "PK");
-render_only!(saga, "py: clan_saga.py:929 render_msg", "SG");
+render_real!(arcs, "py: clan_arcs.py:521 render_msg", "ARC", crate::clan::clan_arcs::render_msg);
+render_real!(perks, "py: clan_perks.py:221 render_msg", "PK", crate::clan::clan_perks::render_msg);
+render_real!(saga, "py: clan_saga.py:929 render_msg", "SG", crate::clan::clan_saga::render_msg);

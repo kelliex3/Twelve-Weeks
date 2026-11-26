@@ -81,23 +81,24 @@ def install_doubles():
     loot.public = lambda finds, lang="en": [{"k": f["k"], "lang": lang} for f in finds or []]
     sys.modules["clan_loot"] = loot
 
-    status = types.ModuleType("clan_status")
-    status.HEALTHY = 0
-    status.NAMES = ["healthy", "hungry", "sad", "sick", "dead", "injured", "recovered", "new", "depressed", "shock"]
-    status.EXPR = {0: "neutral", 1: "hungry", 2: "sad", 3: "sick", 4: "dead", 5: "sick", 6: "neutral", 7: "neutral", 8: "depressed", 9: "shock"}
-    status.code_of = lambda st, p: [0, 1, 2, 3, 5, 8, 9][(p["i"] * 5 + st.get("day", 0)) % 7]
+    if not os.environ.get("T2R_REAL_STATUS"):          # T2R_REAL_STATUS=1: the REAL clan_status on both sides (Rust: selftest clan_chronicle reads the same variable)
+        status = types.ModuleType("clan_status")
+        status.HEALTHY = 0
+        status.NAMES = ["healthy", "hungry", "sad", "sick", "dead", "injured", "recovered", "new", "depressed", "shock"]
+        status.EXPR = {0: "neutral", 1: "hungry", 2: "sad", 3: "sick", 4: "dead", 5: "sick", 6: "neutral", 7: "neutral", 8: "depressed", 9: "shock"}
+        status.code_of = lambda st, p: [0, 1, 2, 3, 5, 8, 9][(p["i"] * 5 + st.get("day", 0)) % 7]
 
-    def observe(st, rows=None):
-        cs = st["ch"]
-        cs["obs"] = cs.get("obs", 0) + len(rows)
-    status.observe = observe
+        def observe(st, rows=None):
+            cs = st["ch"]
+            cs["obs"] = cs.get("obs", 0) + len(rows)
+        status.observe = observe
 
-    def spublic(st, fk, lang="en"):
-        if st.get("day", 0) % 2:
-            return {}
-        return {"events": [{"k": len(st["people"]), "lang": lang, "f": fk}]}
-    status.public = spublic
-    sys.modules["clan_status"] = status
+        def spublic(st, fk, lang="en"):
+            if st.get("day", 0) % 2:
+                return {}
+            return {"events": [{"k": len(st["people"]), "lang": lang, "f": fk}]}
+        status.public = spublic
+        sys.modules["clan_status"] = status
 
     def spare_sick(rng, st, day):
         rng.random()
