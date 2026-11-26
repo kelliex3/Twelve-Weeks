@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::LazyLock;
 
-pub use super::ext_k2::{achievements, clan_ingame, clan_perks, clan_status};
+pub use crate::clan::{achievements, clan_ingame, clan_perks, clan_status};
 
 type DbR<T> = db::DbResult<T>;
 
@@ -407,7 +407,7 @@ pub fn ach_trim<K: std::hash::Hash + Eq, V>(d: &mut IndexMap<K, V>) {
 pub fn ach_log(token: &str, got: &[String]) {
     if !got.is_empty() {
         let t = tag(token);
-        let parts: Vec<String> = got.iter().map(|a| format!("{} ({})", a, achievements::by_id(a).map(|x| x.title).unwrap_or(""))).collect();
+        let parts: Vec<String> = got.iter().map(|a| format!("{} ({})", a, achievements::by_id(a).map(|x| x.title.as_str()).unwrap_or(""))).collect();
         dlog!("ACH unlocked", t, parts.join(", "));
         evt!("ach", t, py::list_str(got));
     }

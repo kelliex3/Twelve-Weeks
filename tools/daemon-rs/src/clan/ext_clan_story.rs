@@ -16,8 +16,9 @@ pub fn set_test_real(on: bool) {
     REAL_AJ.store(on, Ordering::SeqCst);
 }
 
+/// The real ports: always in production (no fakes), and in the alife / journal selftests.
 fn real() -> bool {
-    REAL_AJ.load(Ordering::SeqCst)
+    REAL_AJ.load(Ordering::SeqCst) || !fake()
 }
 
 /// Test only: the stand-ins answer with the deterministic fakes of the harness.
@@ -161,8 +162,7 @@ pub mod chronicle {
             let day = vi(st, "day");
             return Ok(vec![fake_row("chron", format!("CH day {}", day), st, "ch/fake+x", day)]);
         }
-        let _ = (st, newc, r);
-        unimplemented!("clan_chronicle::day_rows")
+        crate::clan::clan_chronicle::day_rows(st, newc, r, None, None, None)
     }
 
     // py: clan_chronicle.py:318 render_msg
