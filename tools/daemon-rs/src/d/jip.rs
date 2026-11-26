@@ -715,7 +715,7 @@ pub fn jip_start(token: &str, mid: &str, slot: i64, players: &[String]) -> bool 
         return false;
     }
     let (t, m) = (token.to_string(), mid.to_string());
-    let _ = std::thread::Builder::new().name("jip-countdown".into()).stack_size(256 * 1024).spawn(move || jip_countdown(&t, &m));
+    spawn_t("jip-countdown", move || jip_countdown(&t, &m));
     true
 }
 

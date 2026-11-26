@@ -30,7 +30,7 @@ pub fn silence(token: &str, now: f64) -> f64 {
     0.0
 }
 pub fn readopt_claim(token: &str) {
-    unimplemented!()
+    stub_note("readopt_claim", token.to_string())
 }
 pub fn afk_report(token: &str, idle_s: i64, flags: u8) {
     unimplemented!()

@@ -31,13 +31,13 @@ pub static CLAN_LAST_DEPART: LazyLock<Mutex<HashMap<String, (f64, String)>>> = L
 pub static CLAN_LOST_EXCUSES: LazyLock<Mutex<HashMap<String, Vec<f64>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// `clan_match_ended(players, mid)` (daemon.py:2343)
 pub fn clan_match_ended(players: &[String], mid: &str) {
-    unimplemented!()
+    stub_note("clan_match_ended", format!("{} {}", crate::py::list_str(players), mid))
 }
 
 // ---- K6 loop
 /// `live_save(now=None)` (daemon.py:9741)
 pub fn live_save(now: Option<f64>) {
-    unimplemented!()
+    stub_note("live_save", String::new())
 }
 /// `mid in RESTORED_T` (daemon.py:9895)
 pub fn restored_t_has(mid: &str) -> bool {
