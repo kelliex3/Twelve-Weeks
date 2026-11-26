@@ -1454,7 +1454,7 @@ pub fn admin_handle(rfile: &mut dyn BufRead, secret: &str, date_full: &str) -> V
                 buf.truncate(got);
                 let txt: &[u8] = if buf.is_empty() { b"{}" } else { &buf };
                 let txt = txt.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(txt);
-                let body: Value = serde_json::from_slice(txt).map_err(|e| format!("JSONDecodeError({})", e))?;
+                let body: Value = serde_json::from_slice(txt).map_err(|e| py_json_err(txt, &e))?;
                 match admin_post_path(&path, &body)? {
                     Some(v) => Ok(json_resp(200, &v, date)),
                     None => Ok(json_resp(404, &json!({"ok": false}), date)),
@@ -1470,6 +1470,17 @@ pub fn admin_handle(rfile: &mut dyn BufRead, secret: &str, date_full: &str) -> V
         }
         _ => send_error_resp(501, Some(&format!("Unsupported method ({})", rep(&command))), None, command == "HEAD", date),
     }
+}
+
+/// the text of Python's `repr(json.JSONDecodeError)` for the common case (a body that does not start with a JSON value); serde's own text otherwise
+fn py_json_err(txt: &[u8], e: &serde_json::Error) -> String {
+    let t = String::from_utf8_lossy(txt);
+    let ws = t.chars().take_while(|c| py::is_py_space(*c)).count();
+    let m = e.to_string();
+    if (m.starts_with("expected value") || m.starts_with("expected ident")) && e.line() == 1 && e.column() <= ws + 6 {
+        return format!("JSONDecodeError('Expecting value: line 1 column {} (char {})')", ws + 1, ws);
+    }
+    format!("JSONDecodeError({})", m)
 }
 
 fn admin_conn(mut s: TcpStream, secret: &str) {

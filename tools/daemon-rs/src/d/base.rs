@@ -1464,10 +1464,12 @@ pub fn record_result(players: &[String], winner: i64, skip: &HashSet<String>, mi
     } else {
         // the players' own stats reports come after the host's result (elo_perf)
         let (p, s, m) = (players.to_vec(), skip.clone(), mid.map(|m| m.to_string()));
-        let _ = std::thread::Builder::new().name("elo-timer".into()).stack_size(256 * 1024).spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs_f64(ELO_PERF_WAIT_S));
+        py_timer(
+            ELO_PERF_WAIT_S,
+            Box::new(move || {
             elo_update(&p, winner, &s, m.as_deref());
-        });
+            }),
+        );
     }
     db::with_write(|c| {
         for (i, t) in players.iter().enumerate() {

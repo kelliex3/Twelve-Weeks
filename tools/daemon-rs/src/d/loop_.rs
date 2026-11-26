@@ -98,7 +98,7 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
         if let Some(why) = why {
             MM.drop_mid(&mid);
             HM.end(&mid);
-            loaded_clear_match(&mid, &players);
+            k_loaded_clear_match(&mid, &players);
             for p in &players {
                 CD_GOT.lock().remove(p);
                 _SILENT.lock().remove(p);
@@ -111,7 +111,7 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
         if ended {
             continue;
         }
-        if launched && CLAN_REPORTED_END.lock().get(&mid).is_some_and(|d| !d.is_empty()) && match_end_via_reports(&mid, Some(now)) {
+        if launched && CLAN_REPORTED_END.lock().get(&mid).is_some_and(|d| !d.is_empty()) && k_match_end_via_reports(&mid, Some(now)) {
             // no host result, every player saw the end
             done.push((mid.clone(), "end-reports".into()));
             continue;
@@ -151,7 +151,7 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
                     // it was the one the others waited for: start them now
                     let rest: Vec<String> = active.iter().filter(|q| *q != p && (lock_loaded().contains(*q) || *p == players[0])).cloned().collect();
                     if let Some(r0) = rest.first() {
-                        maybe_game_start(r0)?;
+                        k_maybe_game_start(r0)?;
                     }
                 }
                 done.push((mid.clone(), format!("session-lost:{}", p)));
@@ -184,13 +184,13 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
         }
         if *JIP {
             // join in progress: a loaded joiner waits for the others' roster refresh (jip_acked), a stuck one is removed
-            if !jip_requeue_if_empty(&mid).is_empty() {
+            if !k_jip_requeue_if_empty(&mid).is_empty() {
                 done.push((mid.clone(), "jip-empty".into()));
                 continue;
             }
             for j in MM.jip_joiners(&mid) {
                 if lock_loaded().contains(&j) {
-                    if !maybe_game_start(&j)? && MM.jip_age(&j) > countdown_seconds() + *LOAD_TIMEOUT + *JIP_ACK_MAX + 30.0 {
+                    if !k_maybe_game_start(&j)? && MM.jip_age(&j) > countdown_seconds() + *LOAD_TIMEOUT + *JIP_ACK_MAX + 30.0 {
                         // loaded, but its GAME-START still did not go out long after the roster ack limit: send it back to the menu
                         dlog!("jip: joiner", tag(&j), format!("loaded but never started after {} s - sent back to the menu", py::fixed(MM.jip_age(&j), 0)));
                         evt!("jip-timeout", mid, tag(&j), format!("loaded but not started after {} s", py::fixed(MM.jip_age(&j), 0)));
@@ -236,7 +236,7 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
             // nobody loaded at all: call it off, everyone back to the menu with a reason
             MM.drop_mid(&mid);
             HM.end(&mid);
-            loaded_clear_match(&mid, &players);
+            k_loaded_clear_match(&mid, &players);
             for p in &players {
                 CD_GOT.lock().remove(p);
                 _SILENT.lock().remove(p);
@@ -256,7 +256,7 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
                 // R-75SX 10-27: the host never loaded, the one loaded player got a GAME-START alone: call it off
                 MM.drop_mid(&mid);
                 HM.end(&mid);
-                loaded_clear_match(&mid, &players);
+                k_loaded_clear_match(&mid, &players);
                 let names: Vec<String> = missing
                     .iter()
                     .map(|p| {
@@ -317,13 +317,13 @@ pub fn reap_matches(now: Option<f64>) -> db::DbResult<Vec<(String, String)>> {
                         still.iter().filter(|p| l.contains(*p)).cloned().collect()
                     };
                     if let Some(l0) = loaded.first() {
-                        maybe_game_start(l0)?;
+                        k_maybe_game_start(l0)?;
                     }
                     done.push((mid.clone(), "load-timeout".into()));
                 }
             } else if mid2.is_some() && missing.is_empty() {
                 if let Some(s0) = still.first() {
-                    maybe_game_start(s0)?;
+                    k_maybe_game_start(s0)?;
                 }
             }
         }
@@ -874,7 +874,7 @@ fn readopt_apply_impl(mid: &str, r: &Value, claimant: &str, now: f64) -> Result<
         let jl: Vec<String> = joining_loaded.iter().cloned().collect();
         dlog!("LIVE-STATE: match", mid, "join in progress resumed for", tags(&jt), format!("(loaded: {})", tags(&jl)));
         for t in &jl {
-            if let Err(ex) = maybe_game_start(t) {
+            if let Err(ex) = k_maybe_game_start(t) {
                 dlog!("LIVE-STATE joiner start failed", tag(t), ex); // GAME-START once the others' rosters list it (jip_acked) - else the reaper retries
             }
         }
@@ -1286,7 +1286,7 @@ pub fn gc_state(now: Option<f64>, ttl: Option<f64>) -> BTreeMap<String, i64> {
         }};
     }
     {
-        let n = feed_seen_prune(&|t: &str| !keep.contains(t));
+        let n = prune_keys(&FEED_SEEN, |t: &String| !keep.contains(t));
         if n != 0 {
             out.insert("FEED_SEEN".into(), n as i64);
         }
@@ -1483,9 +1483,33 @@ pub fn state_sizes() -> Value {
     let (hm, hb) = HM.sizes();
     put("HostMigration.matches", hm);
     put("HostMigration.by_token", hb);
+    // the owners' tables (type name . attribute, as the Python names them)
+    put("AddrLimiter.hits", NEW_TOKENS.hits_len());
+    put("FEED_SEEN", FEED_SEEN.lock().len());
+    let (gh, gw) = GL.sizes();
+    put("GunLimits.held", gh);
+    put("GunLimits.want", gw);
+    let (rr, rl, rb) = REPICK.sizes();
+    put("HostRepick.recs", rr);
+    put("HostRepick.last_text", rl);
+    put("HostRepick.base", rb);
+    let (im, ib) = INT.sizes();
+    put("Interrogation.matches", im);
+    put("Interrogation.by_token", ib);
+    put("Notices.texts", NOTICES.texts_len());
+    put("Parties.of", PARTIES.of_len());
+    put("Parties.inv", PARTIES.inv_len());
+    let (pt, ps) = PERF.sizes();
+    put("PerfScores.by_token", pt);
+    put("PerfScores.by_steam", ps);
+    for n in ["RELAY", "RELAY_STATS", "RELAY_TS", "RELAY_TYPES", "UDP_STATS"] {
+        put(n, 0); // (the UDP relay is a separate service: its tables are empty here)
+    }
+    put("_tcp_per_ip", tcp_per_ip_len());
     out.insert("threads".into(), json!(thread_count()));
     out.insert("tcp_live".into(), json!(tcp_live()));
-    out.insert("_caps".into(), json!({"Presence.udp_seen": Presence::UDP_SEEN_MAX, "PEERS": PEERS_MAX, "_POOL_LOGGED": 500, "log_queue": 50000, "PING": *PING_MAX}));
+    out.insert("_caps".into(), json!({"Presence.udp_seen": Presence::UDP_SEEN_MAX, "PEERS": PEERS_MAX, "UdpRelay.KA": 512, "UdpRelay.GP": 512, "UdpRelay.buckets": 4096, "UdpRelay.seen": 2000,
+                                  "RELAY": 4096, "RELAY_TS": 4096, "AddrLimiter.hits": 4096, "_POOL_LOGGED": 500, "log_queue": 50000, "PING": *PING_MAX}));
     out.insert("log_queue".into(), json!(0));
     Value::Object(out)
 }

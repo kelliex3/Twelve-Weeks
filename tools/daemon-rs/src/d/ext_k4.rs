@@ -24,23 +24,3 @@ pub struct World {
 pub static WORLD: LazyLock<Mutex<World>> = LazyLock::new(|| Mutex::new(World::default()));
 /// (selftest) get_name / token_steamid answer from WORLD while this is set
 pub static WORLD_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-// ---- K1 / K2: clan bookkeeping that clan_rejoin_after_booking touches
-pub static CLAN_DONE: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CLAN_CREDITED: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-pub static CLAN_EXCUSED: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-pub static CLAN_QUITTERS: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-pub static CLAN_EXCUSE_WHY: LazyLock<Mutex<HashMap<(String, String), String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CLAN_LEFT_AT: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CLAN_REJOINED: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CLAN_MOVED: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static CLAN_REBOOK: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-/// daemon.py:1545 CLAN_TEAM: mid -> {token: team}
-pub static CLAN_TEAM: LazyLock<Mutex<HashMap<String, HashMap<String, i64>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub fn clan_key(c: &rusqlite::Connection, token: &str) -> String {
-    unimplemented!()
-}
-/// `clan.snap_update(c, key, mid, rejoined=True)`
-pub fn clan_snap_rejoined(c: &rusqlite::Connection, key: &str, mid: &str) -> Result<(), String> {
-    unimplemented!()
-}

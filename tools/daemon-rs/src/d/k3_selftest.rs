@@ -549,7 +549,7 @@ fn call(f: &str, a: &[Value]) -> Value {
         "lost" => json!(note_session_lost(&s(0), &conn(&s(1)))),
         "reattach" => {
             let c = conn(&s(0));
-            let mut st = ConnSt { token: opt_s(1), name: s(2), authed: false, session: false, is_bridge: false };
+            let mut st = ConnSt { token: opt_s(1), name: s(2), ..ConnSt::new() };
             let r = session_reattach(&c, addr_of(3).unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()), &mut st);
             match r {
                 Ok(Some(o)) => json!([true, st.session, st.authed, true, o.sent_name, o.started]),

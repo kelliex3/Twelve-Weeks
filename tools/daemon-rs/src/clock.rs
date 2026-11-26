@@ -78,6 +78,10 @@ static MONO0: OnceLock<Instant> = OnceLock::new();
 
 /// `time.monotonic()` (seconds since an arbitrary start).
 pub fn mono() -> f64 {
+    let f = FROZEN.load(std::sync::atomic::Ordering::Relaxed);
+    if f != 0 {
+        return f64::from_bits(f); // (selftest: the Python harness maps time.monotonic to the same frozen time)
+    }
     MONO0.get_or_init(Instant::now).elapsed().as_secs_f64() + 1000.0
 }
 

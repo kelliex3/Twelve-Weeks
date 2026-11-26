@@ -66,6 +66,12 @@ fn tok_gone(token: &str, active: &HashSet<String>) -> bool {
 }
 
 impl GunLimits {
+    /// (len(held), len(want)): the admin /sizes counts
+    pub fn sizes(&self) -> (usize, usize) {
+        let g = self.inner.lock();
+        (g.held.len(), g.want.len())
+    }
+
     pub fn new() -> GunLimits {
         GunLimits::with(default_limits(), sys_now(), CLAIM_TTL)
     }

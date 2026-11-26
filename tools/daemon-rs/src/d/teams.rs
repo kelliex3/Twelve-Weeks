@@ -1126,9 +1126,17 @@ impl SocialHost for SocialHostImpl {
     }
     fn with_db(&self, f: &mut dyn FnMut(&rusqlite::Connection) -> rusqlite::Result<()>) -> rusqlite::Result<()> {
         let c = dbc()?;
-        c.execute_batch("BEGIN")?;
+        // (Python: sqlite3 begins the transaction at the first write; a deferred BEGIN here took a read lock first and the upgrade failed at once with "database is locked" when another thread wrote: IMMEDIATE waits for the lock)
+        c.execute_batch("BEGIN IMMEDIATE")?;
         match f(&c) {
-            Ok(()) => c.execute_batch("COMMIT"),
+            // (social.py commits its own writes with `c.commit()`: nothing left to commit then)
+            Ok(()) => {
+                if c.is_autocommit() {
+                    Ok(())
+                } else {
+                    c.execute_batch("COMMIT")
+                }
+            }
             Err(e) => {
                 let _ = c.execute_batch("ROLLBACK");
                 Err(e)

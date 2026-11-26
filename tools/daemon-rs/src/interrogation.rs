@@ -206,6 +206,12 @@ pub struct Interrogation {
 }
 
 impl Interrogation {
+    /// (len(matches), len(by_token)): the admin /sizes counts
+    pub fn sizes(&self) -> (usize, usize) {
+        let g = self.inner.lock();
+        (g.matches.len(), g.by_token.len())
+    }
+
     /// `Interrogation(log=log, now=time.time)`: env T2R_MODE, T2R_INT_NEED, T2R_INT_KILLS_PER_INFO, T2R_INT_LOCATE_SECS; the lockbox table is
     /// read from `interrogation_lockboxes.json` in the tools directory (see gen_modes::tools_dir).
     pub fn new() -> Interrogation {
