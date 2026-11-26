@@ -12,8 +12,8 @@ every run (and on the Rust daemon, which draws from the same CPython-exact strea
 
 T2R_TEST_EPOCH=<unix seconds> additionally pins time.time() to that value at start (then monotonic).
 T2R_TEST_SEED_STREAMS=1 gives every calling function its own stream instead (see the comment below).
-An UNSEEDED random.Random() instance (clan.rng, Interrogation.rng: they draw from os.urandom otherwise) is seeded with the seed
-itself, so each of them replays the same sequence on every run (and a Rust port seeds its unseeded generators the same way).
+An UNSEEDED random.Random() instance (clan.rng, Interrogation.rng: they draw from os.urandom otherwise) is seeded with seed + 1
+(as the per-module harnesses do), so each of them replays the same sequence on every run (and a Rust port seeds its unseeded generators the same way).
 Seeded instances (random.Random(x)) are untouched. PYTHONHASHSEED is pinned to 0 (set iteration order of str keys).
 """
 import os, sys, runpy
@@ -94,9 +94,9 @@ if _seed:
         setattr(random, _n, _g(_n))
 
     class _SeededRandom(_Base):
-        """random.Random() with no argument = the fixed test seed (a seeded instance keeps its own seed)."""
+        """random.Random() with no argument = Random(seed + 1) (= rnd::unseeded() of the Rust daemon; a seeded instance keeps its own seed)."""
         def __init__(self, x=None):
-            super().__init__(_seed if x is None else x)
+            super().__init__(_seed + 1 if x is None else x)
 
     random.Random = _SeededRandom
 

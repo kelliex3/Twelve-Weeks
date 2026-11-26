@@ -440,7 +440,7 @@ pub fn map_pool(players: &[String], support: Option<&[String]>) -> Vec<i64> {
 }
 
 /// daemon.py:3766 _rotation: rotation starts at a random map each server run
-pub static ROTATION: LazyLock<Mutex<i64>> = LazyLock::new(|| Mutex::new(rnd::randbelow(MAPLIST.maps.len() as u64) as i64));
+pub static ROTATION: LazyLock<Mutex<i64>> = LazyLock::new(|| Mutex::new(rnd::randbelow("daemon:<module>", MAPLIST.maps.len() as u64) as i64));
 
 // py: daemon.py:3768 map_index: T2R_MAP = "rotate" (default), "random" or one level name
 pub fn map_index(players: &[String]) -> i64 {
@@ -460,7 +460,7 @@ pub fn map_index(players: &[String]) -> i64 {
         let mut r = ROTATION.lock();
         let ch: Vec<i64> = pool.iter().copied().filter(|i| *i != *r).collect();
         let choices = if ch.is_empty() { pool.clone() } else { ch };
-        idx = if choices.is_empty() { 0 } else { choices[rnd::randbelow(choices.len() as u64) as usize] };
+        idx = if choices.is_empty() { 0 } else { choices[rnd::randbelow("daemon:map_index", choices.len() as u64) as usize] };
         *r = idx;
     } else {
         idx = maps
@@ -572,7 +572,7 @@ pub fn vote_options(n: usize, players: &[String]) -> Vec<i64> {
     // user 10-13: one slot goes to a favoured (ported) map when the pool has one (not the last winner)
     let fav: Vec<i64> = cand.iter().copied().filter(|i| vote_weight(&level(*i)) > 1 && shown.get(i).copied().unwrap_or(0.0) < 1.5).collect();
     if !fav.is_empty() && n > 0 {
-        let pick = fav[rnd::randbelow(fav.len() as u64) as usize];
+        let pick = fav[rnd::randbelow("daemon:vote_options", fav.len() as u64) as usize];
         out.push(pick);
         if let Some(p) = cand.iter().position(|c| *c == pick) {
             cand.remove(p);
@@ -588,7 +588,7 @@ pub fn vote_options(n: usize, players: &[String]) -> Vec<i64> {
                 tickets.push(*i);
             }
         }
-        let pick = tickets[rnd::randbelow(tickets.len() as u64) as usize];
+        let pick = tickets[rnd::randbelow("daemon:vote_options", tickets.len() as u64) as usize];
         out.push(pick);
         if let Some(p) = cand.iter().position(|c| *c == pick) {
             cand.remove(p);
@@ -599,7 +599,7 @@ pub fn vote_options(n: usize, players: &[String]) -> Vec<i64> {
         let p1: Vec<i64> = pool.iter().copied().filter(|i| level(*i).contains(map_packs::P1_MARK)).collect();
         if !p1.is_empty() && !out.iter().any(|i| p1.contains(i)) {
             let l = out.len();
-            out[l - 1] = p1[rnd::randbelow(p1.len() as u64) as usize];
+            out[l - 1] = p1[rnd::randbelow("daemon:vote_options", p1.len() as u64) as usize];
         }
     }
     let mut s = VOTE_SHOWN.lock();
@@ -663,7 +663,7 @@ pub fn vote_close(players: &[String]) -> Option<i64> {
         let c = vote_tally(v);
         let mx = c.iter().copied().max().unwrap_or(0);
         let best: Vec<usize> = c.iter().enumerate().filter(|(_, n)| **n == mx).map(|(k, _)| k).collect();
-        v.winner = v.opts[best[rnd::randbelow(best.len() as u64) as usize]];
+        v.winner = v.opts[best[rnd::randbelow("daemon:vote_close", best.len() as u64) as usize]];
         let w = v.winner;
         MATCH_MAP.lock().insert(key, w);
         {

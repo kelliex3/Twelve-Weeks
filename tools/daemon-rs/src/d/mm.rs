@@ -289,7 +289,7 @@ impl MMState {
             let host = bo.iter().find(|h| big.contains(h)).cloned();
             order_slots(&t0, &t1, host.as_deref())
         };
-        let mid = rnd::token_hex(4);
+        let mid = rnd::token_hex("daemon:_form_private", 4);
         let mut qt = IndexMap::new();
         for t in &players {
             qt.insert(t.clone(), self.queue.get(t).copied().unwrap_or(0.0));
@@ -876,7 +876,7 @@ impl MMState {
                 players.pop();
             }
             let players = team_order(&players);
-            let mid = rnd::token_hex(4);
+            let mid = rnd::token_hex("daemon:_form_pick", 4);
             let mut qt = IndexMap::new();
             for t in &players {
                 qt.insert(t.clone(), self.queue.get(t).copied().unwrap_or(0.0));

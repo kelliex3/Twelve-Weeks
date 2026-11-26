@@ -65,3 +65,10 @@ A module is done when the outputs are identical on at least 10 seeds x 2,000 cal
 musl libm is not glibc libm: `log10` differed by 1 ulp in the Elo seed (K1 ported glibc's as `glibc_log10`). Python on the server uses
 glibc. Any transcendental (`math.log`, `log10`, `exp`, `pow`, trig) whose result is stored, printed or compared must use a glibc-exact port
 (or be proven identical over the inputs by the differential test). `sqrt`, `+ - * /`, `floor`, `round` are exact in both.
+
+## Randomness: every draw names its Python call site
+`crate::rnd::*` takes a key first: `rnd::randbelow("daemon:vote_options", n)`, `rnd::token_hex("lobbybook:_new", 4)`.
+key = "<module>:<function>" of the Python function that calls `secrets.*` / `random.*` ("daemon" = daemon.py, "<module>" = module-level code).
+With `T2R_TEST_SEED_STREAMS=1` (the wire-level bot test, verify/bot/env.sh + verify/py/seedhook.py) each key has its own stream
+`random.Random("<seed>/<key>")`. An unseeded Python `random.Random()` instance = `rnd::unseeded()` (= Random(seed + 1) when pinned).
+`T2R_TEST_EPOCH=<unix s>`: `clock::now()` / `wall_time()` start at that value.

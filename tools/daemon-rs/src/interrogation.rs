@@ -209,7 +209,7 @@ impl Interrogation {
     /// `Interrogation(log=log, now=time.time)`: env T2R_MODE, T2R_INT_NEED, T2R_INT_KILLS_PER_INFO, T2R_INT_LOCATE_SECS; the lockbox table is
     /// read from `interrogation_lockboxes.json` in the tools directory (see gen_modes::tools_dir).
     pub fn new() -> Interrogation {
-        Interrogation::with(Params::default(), sys_now(), PyRandom::from_entropy(), None)
+        Interrogation::with(Params::default(), sys_now(), crate::rnd::unseeded(), None)
     }
 
     /// The general constructor. `lockboxes` None = `load_lockboxes()`.
