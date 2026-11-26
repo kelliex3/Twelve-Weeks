@@ -15,6 +15,13 @@ mod modeq;
 mod names;
 mod notices;
 mod net;
+#[cfg(feature = "private")]
+#[path = "../private/mod.rs"]
+mod private;
+#[cfg(not(feature = "private"))]
+mod privstub;
+#[cfg(not(feature = "private"))]
+use privstub as private;
 mod py;
 mod pyfmt;
 mod rankbadge;

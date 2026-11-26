@@ -18,9 +18,6 @@ pub fn rec(s: String) {
 /// scripted answer of the `maybe_game_start` double
 pub static MGS_ANSWER: AtomicBool = AtomicBool::new(false);
 
-// ---- KP private hooks (neutral)
-pub fn ac_tick() {}
-pub fn ident_backfill() {}
 
 /// (selftest k6) the K6 functions are real while the scripted K4 world answers the K3 / K1 lookups
 pub static K6_ON: AtomicBool = AtomicBool::new(false);

@@ -39,28 +39,6 @@ fn ob(v: Option<bool>) -> &'static str {
 
 // CL6 (clan_perks, clan_status, clan_ingame, achievements): the real modules (crate::clan), see clan.rs.
 
-// ---------------------------------------------------------------- KP: anti-cheat (private; this build has none: AC = None)
-pub struct AcStub;
-impl AcStub {
-    pub fn rate_ok(&self, token: &str) -> bool {
-        true
-    }
-    pub fn first_time(&self, token: &str, mid: &str, parts: i64, counts: &IndexMap<i64, i64>) -> bool {
-        false
-    }
-    /// -> (parts, counts, issues = [(kind, weight, evidence)])
-    pub fn check_report(&self, token: &str, mid: &str, parts: i64, counts: IndexMap<i64, i64>, flags: i64) -> (i64, IndexMap<i64, i64>, Vec<(i64, f64, String)>) {
-        (parts, counts, Vec::new())
-    }
-    pub fn note_report(&self, token: &str, mid: &str, parts: i64, counts: &IndexMap<i64, i64>) -> Vec<(i64, f64, String)> {
-        Vec::new()
-    }
-    pub fn match_started(&self, mid: &str, slots: &[String], players: &[String], names: &HashMap<String, String>, sids: &HashMap<String, u64>) {}
-    pub fn match_ended(&self, mid: &str) {}
-}
-pub static AC: Option<AcStub> = None;
-/// `anticheat.S_ORPHAN`
-pub const S_ORPHAN: i64 = 3;
 
 // ---------------------------------------------------------------- test hooks (selftest k2 only; empty in production)
 /// token -> seconds of silence (`silence(token, now)` of K6 reads the presence table)

@@ -126,71 +126,86 @@ pub mod k2 {
     }
 }
 
-// ---- KP private hooks (the real ones live in private/*.rs; src/privstub.rs has the neutral public versions)
+// ---- KP private hooks: crate::private (private/ in the private build, src/privstub.rs in the public one). The K5 selftest swaps in the stand-ins of
+// verify/py/k5_harness.py (it patches the module globals, so every caller gets them); K5_FAKE_K2 switches both.
+fn fake_kp() -> bool {
+    K5_FAKE_K2.load(Ordering::Relaxed)
+}
 /// `is_banned(token, name=None, ip=None)` (daemon.py:1262)
 pub fn is_banned(token: &str, name: Option<&str>, ip: Option<&str>) -> bool {
-    let w = STUBS.lock();
-    w.banned.contains(token) || ip.is_some_and(|i| w.banned_ips.contains(i))
+    if fake_kp() {
+        let w = STUBS.lock();
+        return w.banned.contains(token) || ip.is_some_and(|i| w.banned_ips.contains(i));
+    }
+    crate::private::is_banned(token, name, ip)
 }
 /// `ip_banned(ip)` (daemon.py:1246): the bans.txt entry (as text) that covers the address, else None
 pub fn ip_banned(ip: &str) -> Option<String> {
-    if STUBS.lock().banned_ips.contains(ip) {
-        Some("10.0.0.0/8".to_string())
-    } else {
-        None
+    if fake_kp() {
+        return if STUBS.lock().banned_ips.contains(ip) { Some("10.0.0.0/8".to_string()) } else { None };
     }
+    crate::private::ip_banned(ip)
 }
 /// `ident_note(token, steamid=0, hwids=(), ip=None)` (daemon.py:1165)
-pub fn ident_note(token: &str, steamid: u64, ip: Option<&str>) {
-    stub_note("ident_note", format!("{} {} {}", token, steamid, ip.unwrap_or("None")));
+pub fn ident_note(token: &str, steamid: u64, ip: Option<&str>) -> Option<String> {
+    if fake_kp() {
+        stub_note("ident_note", format!("{} {} {}", token, steamid, ip.unwrap_or("None")));
+        return None;
+    }
+    crate::private::ident_note(token, steamid, ip)
 }
 /// `ident_pid(token, steamid=0)` (daemon.py:1237)
 pub fn ident_pid(token: &str) -> Option<String> {
-    if STUBS.lock().banned.contains(token) {
-        Some(format!("PID-{}", py::cut(token, 4)))
-    } else {
-        None
+    if fake_kp() {
+        return if STUBS.lock().banned.contains(token) { Some(format!("PID-{}", py::cut(token, 4))) } else { None };
     }
+    crate::private::ident_pid(token)
 }
 /// `install_refusal(token, ip, wait_s=0.0)` (daemon.py:3025); boot = the boot-handshake call (wait_s = attest.WAIT_S)
 pub fn install_refusal(token: &str, ip: Option<&str>, boot: bool) -> Option<(String, Vec<u8>)> {
-    if STUBS.lock().install.contains(token) {
-        Some((format!("stub install{}", if boot { " boot" } else { "" }), b"IR".to_vec()))
-    } else {
-        None
+    if fake_kp() {
+        return if STUBS.lock().install.contains(token) { Some((format!("stub install{}", if boot { " boot" } else { "" }), b"IR".to_vec())) } else { None };
     }
+    crate::private::install_refusal(token, ip, boot)
 }
 /// `hwid_op(pl, ip)` (daemon.py:1115): the reply
 pub fn hwid_op(pl: &[u8], ip: Option<&str>) -> Vec<u8> {
-    let mut v = b"HW".to_vec();
-    v.extend_from_slice(crate::util::sl(pl, 0, 2));
-    v.extend_from_slice(ip.unwrap_or("").as_bytes());
-    v
+    if fake_kp() {
+        let mut v = b"HW".to_vec();
+        v.extend_from_slice(crate::util::sl(pl, 0, 2));
+        v.extend_from_slice(ip.unwrap_or("").as_bytes());
+        return v;
+    }
+    crate::private::hwid_op(pl, ip)
 }
 /// `attest_op(pl, addr)` (daemon.py:3059): the reply
 pub fn attest_op(pl: &[u8], addr: &Addr) -> Vec<u8> {
-    let mut v = b"AT".to_vec();
-    v.extend_from_slice(crate::util::sl(pl, 0, 2));
-    v.extend_from_slice(ip_of(addr).as_bytes());
-    v
+    if fake_kp() {
+        let mut v = b"AT".to_vec();
+        v.extend_from_slice(crate::util::sl(pl, 0, 2));
+        v.extend_from_slice(ip_of(addr).as_bytes());
+        return v;
+    }
+    crate::private::attest_op(pl, addr)
 }
-/// the four anti-cheat ops (daemon.py:2128-2170 ac_events_op / ac_demo_op / ac_report_op / ac_recent_op, dispatched by op): the reply, None = nothing
+/// the four anti-cheat ops (0xCC / 0xCE / 0xD4 / 0xD6): the reply, None = nothing
 pub fn ac_op(op: u8, pl: &[u8]) -> Option<Vec<u8>> {
-    if pl.len() % 2 == 0 {
-        None
-    } else {
-        Some(vec![b'A', b'C', op, pl[0]])
+    if fake_kp() {
+        return if pl.len() % 2 == 0 { None } else { Some(vec![b'A', b'C', op, pl[0]]) };
     }
+    crate::private::ac_op(op, pl)
 }
-/// `AC.note_ip(token, ip)` of the login (daemon.py:8890): Some((kind, weight, evidence)) = a shared token; None when the anti-cheat is off / nothing found
+/// `AC.note_ip(token, ip)` of the login (daemon.py:8890): Some((kind, weight, evidence)) = a shared token
 pub fn ac_note_login_ip(token: &str, ip: &str) -> Option<(i64, f64, String)> {
-    if STUBS.lock().ac_ip.contains(token) {
-        Some((7, 0.5, "stub evidence".to_string()))
-    } else {
-        None
+    if fake_kp() {
+        return if STUBS.lock().ac_ip.contains(token) { Some((7, 0.5, "stub evidence".to_string())) } else { None };
     }
+    crate::private::ac_note_login_ip(token, ip)
 }
 /// `ac_server_event(token, mid, kind, w, evidence)` (daemon.py:2111)
-pub fn ac_server_event(token: &str, mid: Option<&str>, kind: i64, w: f64, evidence: &str) {
-    stub_note("ac_server_event", format!("{} {} {} {} {}", token, mid.unwrap_or("None"), kind, py::f(w), evidence));
+pub fn ac_server_event(token: &str, mid: impl MidArg, kind: i64, w: f64, evidence: &str) {
+    if fake_kp() {
+        return stub_note("ac_server_event", format!("{} {} {} {} {}", token, mid.mid().unwrap_or("None"), kind, py::f(w), evidence));
+    }
+    crate::private::ac_server_event(token, mid, kind, w, evidence)
 }

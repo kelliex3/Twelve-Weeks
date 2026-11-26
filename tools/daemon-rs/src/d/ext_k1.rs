@@ -7,5 +7,3 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-// ---- KP private: daemon.py:1038 HWID_HEX (the width of a hardware id entry in bans.txt)
-pub const HWID_HEX: usize = 24;
