@@ -373,6 +373,17 @@ impl Interrogation {
         r.intel[t] + if self.kpi > 0 { py::floordiv(r.kills[t], self.kpi) } else { 0 }
     }
 
+    // py: interrogation.py:159 lead
+    /// The higher intel progress of the two teams of an Interrogation match (None: not an Interrogation match / not recorded / ended).
+    pub fn lead(&self, mid: &str) -> Option<i64> {
+        let g = self.inner.lock();
+        let r = g.matches.get(mid)?;
+        if r.ended.is_some() {
+            return None;
+        }
+        Some(self.progress(r, 0).max(self.progress(r, 1)))
+    }
+
     // py: interrogation.py:165 intel_full
     fn intel_full(&self, r: &mut Rec, team: i64) -> bool {
         if self.progress(r, team) < self.need {
@@ -724,6 +735,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
                 json!(e.map(|v| py::dumps(&v)))
             }
             "has" => json!([x.has_match(js(c, "mid")), x.by_token_get(js(c, "token"))]),
+            "lead" => json!(x.lead(js(c, "mid"))),
             _ => Value::Null,
         };
         crate::c_util::emit(out, i, r, state(x));

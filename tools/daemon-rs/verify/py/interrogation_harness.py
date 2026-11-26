@@ -58,6 +58,8 @@ def gen(r, n):
             c.update(op="parse", pl=(pl + tail)[:ln])
         elif x < 0.155:
             c.update(op="has", mid=r.choice(sorted(live)), token=r.choice(toks))
+        elif x < 0.17:
+            c.update(op="lead", mid=r.choice(sorted(live) + ["zz-none"]))
         else:
             mid = r.choice(sorted(live))
             pl, slots = live[mid]
@@ -149,6 +151,8 @@ def run():
             r = json.dumps(rj) if rj else None
         elif op == "has":
             r = [c["mid"] in it.matches, it.by_token.get(c["token"])]
+        elif op == "lead":
+            r = it.lead(c["mid"])
         emit(i, r, state(it))
 
 
