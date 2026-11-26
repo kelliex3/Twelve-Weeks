@@ -24,6 +24,7 @@ run wslink_loop bash -c "python3 verify/py/wslink_loop_test.py py $P > $TMPDIR/w
 run k1 bash verify/py/k1_compare.sh 1 $S $N
 T2R_K2_DOUBLES=0 run k2 bash verify/py/k2_compare.sh 1 $S $N
 run k3 bash verify/py/k3_compare.sh 1 $S $N
+run k6 bash verify/py/k6_compare.sh 1 $S $N
 run k5 bash verify/py/k5_compare.sh 1 $S $N
 mkdir -p ~/rsverify/daemon/k4 && rm -rf ~/rsverify/daemon/k4/verify && cp -r verify ~/rsverify/daemon/k4/ && cp t2r-daemon ~/rsverify/daemon/k4/t2r-daemon.new && mv ~/rsverify/daemon/k4/t2r-daemon.new ~/rsverify/daemon/k4/t2r-daemon
 run k4 bash verify/py/k4_compare.sh 1 $S $N

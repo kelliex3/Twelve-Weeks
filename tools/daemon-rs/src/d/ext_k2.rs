@@ -62,18 +62,6 @@ pub static AC: Option<AcStub> = None;
 /// `anticheat.S_ORPHAN`
 pub const S_ORPHAN: i64 = 3;
 
-// ---------------------------------------------------------------- K6 loop
-pub static OFFLINE_GRACE: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_OFFLINE_GRACE", 60.0));
-/// daemon.py:9943 RESTORED_T: mid -> time the match was brought back after a daemon restart
-pub static RESTORED_T: LazyLock<Mutex<HashMap<String, f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-pub static RESTORE_EXCUSE_S: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_RESTORE_EXCUSE_S", 600.0));
-#[allow(unused_imports)]
-use HashSet as _HS;
-#[allow(unused_imports)]
-use AtomicBool as _AB;
-#[allow(unused_imports)]
-use clock as _clk;
-
 // ---------------------------------------------------------------- test hooks (selftest k2 only; empty in production)
 /// token -> seconds of silence (`silence(token, now)` of K6 reads the presence table)
 pub static SILENCE: LazyLock<Mutex<HashMap<String, f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));

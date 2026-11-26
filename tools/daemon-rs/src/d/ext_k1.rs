@@ -9,14 +9,3 @@ use std::sync::LazyLock;
 
 // ---- KP private: daemon.py:1038 HWID_HEX (the width of a hardware id entry in bans.txt)
 pub const HWID_HEX: usize = 24;
-
-
-// ---- K6 loop
-/// `live_save(now=None)` (daemon.py:9741)
-pub fn live_save(now: Option<f64>) {
-    stub_note("live_save", String::new())
-}
-/// `mid in RESTORED_T` (daemon.py:9895)
-pub fn restored_t_has(mid: &str) -> bool {
-    false
-}

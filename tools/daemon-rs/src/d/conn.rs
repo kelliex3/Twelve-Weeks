@@ -493,6 +493,10 @@ pub struct AddrLimiter {
 }
 
 impl AddrLimiter {
+    /// `len(self.hits)` (the admin /sizes count)
+    pub fn hits_len(&self) -> usize {
+        self.hits.lock().len()
+    }
     pub fn new(n: usize, window: f64) -> AddrLimiter {
         AddrLimiter { n, window, hits: Mutex::new(HashMap::new()) }
     }
@@ -790,6 +794,11 @@ struct Live {
 }
 static TCP_LIVE: LazyLock<Mutex<Live>> = LazyLock::new(|| Mutex::new(Live { n: 0, per_ip: HashMap::new() }));
 pub static TCP_REFUSED: AtomicU64 = AtomicU64::new(0);
+
+/// `len(_tcp_per_ip)` (the admin /sizes count)
+pub fn tcp_per_ip_len() -> usize {
+    TCP_LIVE.lock().per_ip.len()
+}
 
 /// py: _tcp_live[0] (live TCP connections, the STATUS line `tcp=`)
 pub fn tcp_live() -> i64 {

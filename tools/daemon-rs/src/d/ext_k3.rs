@@ -10,7 +10,3 @@ use std::sync::LazyLock;
 pub fn priv_pick_map(mid: &str, players: &[String]) -> (i64, Vec<i64>) {
     (map_index(players), Vec::new())
 }
-
-// ---- K6 loop
-/// `loss_note(token, parse_loss(pl))` (daemon.py:10600 / 10629): the loss record of an op 0xCA payload; never raises
-pub fn loss_note_from_pl(token: &str, pl: &[u8]) {}

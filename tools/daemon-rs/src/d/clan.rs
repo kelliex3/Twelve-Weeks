@@ -84,7 +84,7 @@ pub static CLAN_REBOOK: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::n
 pub static CLAN_DONE: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// daemon.py:~2020 CLAN_DUE: token -> time its pending report is finalised when no match end arrived
 pub static CLAN_DUE: LazyLock<Mutex<IndexMap<String, f64>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
-static CLAN_SCHED: AtomicBool = AtomicBool::new(false);
+pub static CLAN_SCHED: AtomicBool = AtomicBool::new(false);
 /// daemon.py:2297 CLAN_LAST_MATCH: token -> last mid it was in
 pub static CLAN_LAST_MATCH: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// daemon.py:2298 PRIV_LAST_MID: token -> mid of its last private match

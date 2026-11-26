@@ -1485,3 +1485,13 @@ pub fn record_result(players: &[String], winner: i64, skip: &HashSet<String>, mi
         Ok(())
     })
 }
+
+/// py: daemon.py:10155 gc_state: `_prune_keys(cache, lambda t: cache[t][0] < mono)` for `_name_cache` and `_steam_cache` (K6 gc)
+pub fn name_caches_gc() -> usize {
+    let mono = mono();
+    let mut s = NS.lock();
+    let before = s.name_cache.len() + s.steam_cache.len();
+    s.name_cache.retain(|_, e| !(e.exp < mono));
+    s.steam_cache.retain(|_, e| !(e.exp < mono));
+    before - s.name_cache.len() - s.steam_cache.len()
+}

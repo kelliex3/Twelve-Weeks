@@ -126,17 +126,6 @@ pub mod k2 {
     }
 }
 
-// ---- K6 loop
-pub static _SILENT: LazyLock<Mutex<HashMap<String, f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-/// `loss_hold_note(token, now=None)` (daemon.py:10818): the note a new search is refused with while the player's loss hold runs
-pub fn loss_hold_note(token: &str, now: Option<f64>) -> Option<Vec<u8>> {
-    if STUBS.lock().loss_hold.contains(token) {
-        Some(b"LH".to_vec())
-    } else {
-        None
-    }
-}
-
 // ---- KP private hooks (the real ones live in private/*.rs; src/privstub.rs has the neutral public versions)
 /// `is_banned(token, name=None, ip=None)` (daemon.py:1262)
 pub fn is_banned(token: &str, name: Option<&str>, ip: Option<&str>) -> bool {
