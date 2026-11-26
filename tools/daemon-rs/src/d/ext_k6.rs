@@ -28,6 +28,11 @@ pub static K6_ON: AtomicBool = AtomicBool::new(false);
 pub fn world_only() -> bool {
     WORLD_ON.load(Ordering::Relaxed) && !K6_ON.load(Ordering::Relaxed)
 }
+/// (selftest k2 / k5) the stand-ins their Python harnesses patch over silence / readopt_claim / live_save / loss_hold_note: 2 = K2, 5 = K5, 0 = real
+pub static HARNESS_STANDIN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub fn standin() -> u8 {
+    HARNESS_STANDIN.load(Ordering::Relaxed)
+}
 /// (selftest k3) the Python K3 harness replaces `_ping_gate` by `pair_ping(a, b)`: the Rust side keeps the same stand-in there
 pub static STANDIN: AtomicBool = AtomicBool::new(false);
 

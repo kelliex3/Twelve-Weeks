@@ -33,6 +33,11 @@ fn conn_send(c: &Conn, data: &[u8]) {
 
 // py: daemon.py:9512 silence
 pub fn silence(token: &str, now: f64) -> f64 {
+    match standin() {
+        2 => return SILENCE.lock().get(token).copied().unwrap_or(0.0), // (selftest k2: `lambda t, now=None: SILENT.get(t, 0.0)`)
+        5 => return 0.0,                                                // (selftest k5: `lambda t, now=None: 0.0`)
+        _ => {}
+    }
     if world_only() {
         return 0.0; // (selftest k4 / k1: the scripted world has no presence)
     }
@@ -514,6 +519,10 @@ pub fn live_save(now: Option<f64>) {
 
 /// `live_save` with its True / False result
 pub fn live_save_ok(now: Option<f64>) -> bool {
+    if standin() == 5 {
+        stub_note("live_save", String::new()); // (selftest k5 stand-in)
+        return true;
+    }
     if !*LIVE_ON {
         return false;
     }
@@ -695,6 +704,14 @@ pub fn readopt_claim(token: &str) {
 
 /// py: daemon.py:9856 readopt_claim(token, now=None): the mid of the match brought back, or None
 pub fn readopt_claim_at(token: &str, now: Option<f64>) -> Option<String> {
+    match standin() {
+        2 => return None, // (selftest k2: `lambda token, now=None: None`)
+        5 => {
+            stub_note("readopt_claim", token.to_string()); // (selftest k5 stand-in)
+            return None;
+        }
+        _ => {}
+    }
     if token.is_empty() {
         return None;
     }

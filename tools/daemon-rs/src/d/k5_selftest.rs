@@ -384,6 +384,7 @@ pub fn selftest(input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
     TEST_TIMERS_ON.store(true, Ordering::Relaxed);
     STUB_LOG.store(true, Ordering::Relaxed);
     K5_FAKE_K2.store(true, Ordering::Relaxed);
+    HARNESS_STANDIN.store(5, Ordering::Relaxed);
     set_server_version("sv-test");
     clear_all();
     let mut n = 0usize;

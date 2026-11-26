@@ -753,6 +753,10 @@ pub fn loss_host_handover(mid: &str, act: &[String], med: &[(String, (f64, usize
 
 // py: daemon.py:10826 loss_hold_note (the note a new search is refused with while the player's loss hold runs, else None)
 pub fn loss_hold_note(token: &str, now: Option<f64>) -> Option<Vec<u8>> {
+    if standin() == 5 {
+        // (selftest k5: `b"LH" if token in STUB["loss_hold"] else None`)
+        return if STUBS.lock().loss_hold.contains(token) { Some(b"LH".to_vec()) } else { None };
+    }
     if *LOSS_GATE < 2 || *LOSS_HOLD_S <= 0.0 || LOSS_HOLD.lock().is_empty() {
         return None;
     }
