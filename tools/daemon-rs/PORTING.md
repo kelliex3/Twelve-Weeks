@@ -63,5 +63,5 @@ A module is done when the outputs are identical on at least 10 seeds x 2,000 cal
 
 ## Float math (libm)
 musl libm is not glibc libm: `log10` differed by 1 ulp in the Elo seed (K1 ported glibc's as `glibc_log10`). Python on the server uses
-glibc. Any `math.log/log10/exp/pow/sqrt-free transcendental` whose result is stored, printed or compared must use a glibc-exact port
+glibc. Any transcendental (`math.log`, `log10`, `exp`, `pow`, trig) whose result is stored, printed or compared must use a glibc-exact port
 (or be proven identical over the inputs by the differential test). `sqrt`, `+ - * /`, `floor`, `round` are exact in both.
