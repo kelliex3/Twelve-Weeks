@@ -35,6 +35,7 @@ pub fn run(module: &str, input: &mut dyn BufRead, out: &mut dyn Write) -> i32 {
         "clan_chronicle" | "clan_arcs" => crate::clan::selftest_chronicle::selftest(input, out),
         "clan_saga" | "clan_loot" => crate::clan::selftest_saga::selftest(input, out),
         "clan_perks" | "clan_status" | "clan_ingame" | "achievements" | "clan_cl6" => crate::clan::selftest_cl6::selftest(input, out),
+        "clan_golden" => crate::clan::selftest_golden::selftest(input, out),
         "clan_base" => crate::clan::selftest_base::selftest(input, out),
         "clan_story" => crate::clan::selftest_story::selftest(input, out),
         "k1" => crate::d::k1_selftest::selftest(input, out),
