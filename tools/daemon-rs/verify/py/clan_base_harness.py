@@ -184,7 +184,7 @@ def gen(r, n):
             if r.random() < .15:
                 parts += r.randint(0, 3000)
             emit("apply", tid=tid, mid=mid, parts=parts, left=r.random() < .12, counts=c, mult=r.choice([1.0, 1.0, 1.0, 1.0, 1.2, 1.5, 1.6, 1.7, 2.0, 3.0, 0.5, 1]),
-                 forgive=r.random() < .1, bottles=r.choice([0, 0, 0, 1, 3, 8, 20, 200]))
+                 forgive=r.random() < .1, bottles=r.choice([0, 0, 0, 1, 3, 8, 20, 200]), protect=r.random() < .25)
             if r.random() < .5:
                 emit("snap", w="update", tid=tid, mid=mid, kw={"rejoined": r.random() < .5, "stint": {"parts": parts, "counts": c or {}, "mult": 1.0}})
             if r.random() < .15:
@@ -209,7 +209,7 @@ def gen(r, n):
                                                   {"status": 1, "day": 82, "healthy": r.randint(1, 30), "meta": ""}, {"status": 1, "day": r.choice([80, 81, 82, 29, 30, 31, 14, 15, 16]), "healthy": r.randint(3, 40), "hungry": r.randint(0, 4), "sick": r.randint(0, 5), "meta": ""}]))
         elif x < .59:
             emit("resolve", tid=tid, parts=r.choice([0, 100, 400, 1500, 4000]), left=r.random() < .2, downs=r.choice([0, 0, 3, 10]), counts=counts(),
-                 mult=r.choice([1.0, 1.0, 2.0, 1.5]), forgive=r.random() < .1, bottles=r.choice([0, 0, 4]))
+                 mult=r.choice([1.0, 1.0, 2.0, 1.5]), forgive=r.random() < .1, bottles=r.choice([0, 0, 4]), protect=r.random() < .25)
         elif x < .64:
             nm = r.choice(["needed", "supplies_of", "week_day", "event_today", "event_window", "attack_story", "event_name", "token_id", "mission_goals", "attack_tier",
                            "tier_reward", "threshold_booster", "rank_days", "f32", "rnd", "roll", "new_events", "match_tag", "needed", "event_today", "supplies_of"])
@@ -371,11 +371,11 @@ def run():
         if k == "choose":
             return list(clan.choose_side(c, o["tid"], o["f"]))
         if k == "apply":
-            r = clan.apply_match(c, o["tid"], o["mid"], o["parts"], o["left"], counts_of(o["counts"]) if o["counts"] is not None else None, o["mult"], o["forgive"], o["bottles"])
+            r = clan.apply_match(c, o["tid"], o["mid"], o["parts"], o["left"], counts_of(o["counts"]) if o["counts"] is not None else None, o["mult"], o["forgive"], o["bottles"], o.get("protect", False))
             return list(r)
         if k == "resolve":
             cl = clan.load(c, o["tid"])
-            return list(clan.resolve_day(cl, o["parts"], o["left"], o["downs"], counts_of(o["counts"]), o["mult"], o["forgive"], o["bottles"]))
+            return list(clan.resolve_day(cl, o["parts"], o["left"], o["downs"], counts_of(o["counts"]), o["mult"], o["forgive"], o["bottles"], o.get("protect", False)))
         if k == "mchoose":
             mid = o["mid"]
             if o.get("pool_idx") is not None:

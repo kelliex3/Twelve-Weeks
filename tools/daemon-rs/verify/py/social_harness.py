@@ -42,13 +42,17 @@ def load_social():
 
 social = load_social()
 OUT = sys.stdout
-W = {"game": [], "mm": {}, "sid": {}, "names": {}, "alive": [], "logs": [], "lobby": {}, "match": {}}
+W = {"game": [], "mm": {}, "sid": {}, "names": {}, "alive": [], "logs": [], "lobby": {}, "match": {}, "badpeers": []}
 DIR = os.path.join(os.environ.get("T2R_VERIFY_DIR") or tempfile.gettempdir(), "social_py")
 import shutil
 shutil.rmtree(DIR, ignore_errors=True)
 os.makedirs(DIR, exist_ok=True)
 DB = os.path.join(DIR, "t.db")
 MUTES = os.path.join(DIR, "mutes.txt")
+VBANS = os.path.join(DIR, "voicebans.txt")
+AUTOMOD = os.path.join(DIR, "automod.json")
+BADAUTOMOD = os.path.join(DIR, "nodir", "automod.json")
+SLURS = os.path.join(DIR, "slurs.txt")
 
 
 @contextlib.contextmanager
@@ -113,6 +117,16 @@ def dumps(x):
     return json.dumps(x, separators=(",", ":"))
 
 
+def peers(tok):
+    """The tokens of the token's match, in the order of the world's match table (a token in "badpeers": the lookup raises)."""
+    if tok in W["badpeers"]:
+        raise RuntimeError("peers")
+    m = W["match"].get(tok)
+    if not m:
+        return []
+    return [t for t, mm in W["match"].items() if mm == m]
+
+
 def main():
     parties = social.Parties(max_size=int(os.environ.get("T2R_SOCIAL_MAX", "4")), now=lambda: T[0], lookup=lookup)
     S = None
@@ -129,6 +143,9 @@ def main():
             S.lobby_of = lambda tok: W["lobby"].get(tok) or None
             S.match_of = lambda tok: W["match"].get(tok) or None
             S.mute_path = MUTES
+            S.automod_path = AUTOMOD
+            S.vban_path = VBANS
+            S.match_peers = peers
         res = run(S, parties, v)
         OUT.write("R " + dumps(res) + "\n")
         logs, W["logs"] = W["logs"], []
@@ -161,6 +178,8 @@ def run(S, P, v):
         for k in ("mm", "sid", "names", "lobby", "match"):
             if k in v:
                 W[k] = dict(v[k])
+        if "badpeers" in v:
+            W["badpeers"] = list(v["badpeers"])
         return None
     if op == "sql":
         sql = v["sql"]
@@ -185,6 +204,45 @@ def run(S, P, v):
         except OSError:
             pass
         return None
+    if op == "vbans":
+        with open(VBANS, "w", encoding="utf-8", newline="") as f:
+            f.write(v["text"])
+        if v.get("mt") is not None:
+            os.utime(VBANS, (v["mt"], v["mt"]))
+        return None
+    if op == "novbans":
+        try:
+            os.remove(VBANS)
+        except OSError:
+            pass
+        return None
+    if op == "automod_seed":
+        with open(AUTOMOD, "w", encoding="utf-8", newline="") as f:
+            f.write(v["text"])
+        return None
+    if op == "automod_file":
+        try:
+            with open(AUTOMOD, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return None
+    if op == "paths":
+        S.automod_path = {"ok": AUTOMOD, "bad": BADAUTOMOD, "none": None}[v["automod"]]
+        S.vban_path = None if v.get("vban") == "none" else VBANS
+        return None
+    if op == "slur_extra":
+        with open(SLURS, "w", encoding="utf-8", newline="") as f:
+            f.write(v["text"])
+        return social.slurs.load_extra(SLURS)
+    if op == "admin_say":
+        lid, err = S.admin_say(st("mid"), st("name"), st("text"), st("who"))
+        return [lid, err]
+    if op == "vban_left":
+        return S.vban_left(st("me"))
+    if op == "vban_why":
+        return S.vban_why(st("me"))
+    if op == "mute_why":
+        return S.mute_why(st("me"))
     if op == "handle":
         try:
             return social.reply_json(S.handle(st("token"), ints("lang"), ints("sub"), st("arg"))).decode("utf-8")

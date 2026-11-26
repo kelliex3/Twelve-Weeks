@@ -41,6 +41,9 @@ pub const S_MLOG: i64 = 17;
 pub const S_LSAY: i64 = 18;
 pub const S_LCHAT: i64 = 19;
 pub const S_MUTE: i64 = 20;
+pub const S_VSPAM: i64 = 21;
+/// 21 = S_VSPAM, the mic spam strike: own number so the branches merge
+pub const S_ACHAT: i64 = 22;
 /// `SUB_NAMES[sub]`
 pub fn sub_name(sub: i64) -> Option<&'static str> {
     Some(match sub {
@@ -64,10 +67,27 @@ pub fn sub_name(sub: i64) -> Option<&'static str> {
         18 => "lsay",
         19 => "lchat",
         20 => "mute",
+        21 => "vspam",
+        22 => "achat",
         _ => return None,
     })
 }
 pub const LCHAT_IDLE_S: f64 = 900.0;
+/// admin match lines are dropped this long after the newest one of their match
+pub const ACHAT_KEEP_S: f64 = 7200.0;
+/// the "As:" name of an admin line (the ext's chat name limit)
+pub const ADMIN_NAME_LEN: usize = 24;
+/// slur / mic spam strikes count this long
+pub const SLUR_WINDOW_S: f64 = (30 * 86400) as f64;
+/// a mic spam listener report counts when this many different players of the match reported the same talker within VSPAM_PAIR_S
+pub const VSPAM_WITNESS: usize = 2;
+pub const VSPAM_PAIR_S: f64 = 120.0;
+/// voice ban seconds by strike (10 min, 1 h, 24 h)
+pub const VSPAM_BAN_S: [i64; 3] = [600, 3600, 86400];
+/// names in "vbanned"
+pub const VBAN_SHOW: usize = 12;
+/// slur mute seconds by strike (24 h, 7 days, 30 days)
+pub const SLUR_MUTE_S: [i64; 3] = [86400, 7 * 86400, 30 * 86400];
 /// `WRITE_SUBS`
 pub const WRITE_SUBS: [i64; 12] = [S_ADD, S_ACCEPT, S_REMOVE, S_INVITE, S_JOIN, S_DECLINE, S_LEAVE, S_KICK, S_PROMOTE, S_READY, S_MSG, S_PSAY];
 pub fn is_write_sub(sub: i64) -> bool {
@@ -194,7 +214,10 @@ pub fn ingame_text(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s
     } else {
-        let cut: String = s.chars().take(n.saturating_sub(3)).collect();
+        let len = s.chars().count() as i64;
+        let k = n as i64 - 3; // s[:n - 3]: a negative end counts from the back
+        let keep = if k >= 0 { k } else { (len + k).max(0) };
+        let cut: String = s.chars().take(keep as usize).collect();
         format!("{}...", rstrip(&cut))
     }
 }
@@ -223,6 +246,12 @@ fn token_id_of(token: &str) -> String {
 
 /// SHA-1 (hashlib.sha1) of `data`: the first 4 digest bytes.
 fn sha1_head(data: &[u8]) -> [u8; 4] {
+    let d = sha1(data);
+    [d[0], d[1], d[2], d[3]]
+}
+
+/// SHA-1 (hashlib.sha1) of `data`.
+pub fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
     let mut msg = data.to_vec();
     msg.push(0x80);
@@ -259,7 +288,11 @@ fn sha1_head(data: &[u8]) -> [u8; 4] {
         h[3] = h[3].wrapping_add(d);
         h[4] = h[4].wrapping_add(e);
     }
-    h[0].to_be_bytes()
+    let mut out = [0u8; 20];
+    for (i, x) in h.iter().enumerate() {
+        out[4 * i..4 * i + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
 }
 
 /// `int(hashlib.sha1(str(key).encode()).hexdigest()[:7], 16)`
@@ -1095,6 +1128,14 @@ struct Note {
     until: f64,
 }
 
+#[derive(Clone)]
+struct ALine {
+    id: i64,
+    name: String,
+    t: String,
+    ts: f64,
+}
+
 struct ClogRow {
     ts: f64,
     kind: String,
@@ -1132,6 +1173,14 @@ struct St {
     mgc_at: f64,
     mutes: HashMap<String, (f64, String)>,
     mute_chk: (f64, Option<f64>),
+    vbans: HashMap<String, (f64, String)>,
+    vban_chk: (f64, Option<f64>),
+    /// (match room, talker account) -> {reporter account: time} (S_VSPAM listener reports)
+    vrep: HashMap<(String, String), IndexMap<String, f64>>,
+    /// account -> {"s": [strike times], "until": mute end, "why": reason, "name": last name} (loaded once)
+    automod: Option<Map<String, Value>>,
+    /// match id -> [lines an admin typed into that match's chat] (memory only)
+    achat: HashMap<String, Vec<ALine>>,
     clog: Vec<ClogRow>,
     clog_at: f64,
     clog_gc: f64,
@@ -1163,7 +1212,16 @@ pub struct Social {
     pub match_of: Option<LobbyOf>,
     /// set by the daemon: mutes.txt next to the database (None = nobody is muted)
     pub mute_path: Option<PathBuf>,
+    /// set by the daemon: automod.json next to the database (None = strikes kept in memory only)
+    pub automod_path: Option<PathBuf>,
+    /// set by the daemon: voicebans.txt next to the database (None = nobody is voice-banned by hand)
+    pub vban_path: Option<PathBuf>,
+    /// set by the daemon: token -> the tokens of its current match (S_MUTE's "vbanned", S_VSPAM); None = the lookup raised
+    pub match_peers: Option<PeersOf>,
 }
+
+/// token -> the tokens of its current match (None = the Python lookup raised)
+pub type PeersOf = Box<dyn Fn(&str) -> Option<Vec<String>> + Send + Sync>;
 
 type Res<T> = rusqlite::Result<T>;
 
@@ -1189,6 +1247,11 @@ impl Social {
                 mgc_at: 0.0,
                 mutes: HashMap::new(),
                 mute_chk: (0.0, None),
+                vbans: HashMap::new(),
+                vban_chk: (0.0, None),
+                vrep: HashMap::new(),
+                automod: None,
+                achat: HashMap::new(),
                 clog: Vec::new(),
                 clog_at: 0.0,
                 clog_gc: 0.0,
@@ -1204,6 +1267,9 @@ impl Social {
             lobby_of: None,
             match_of: None,
             mute_path: None,
+            automod_path: None,
+            vban_path: None,
+            match_peers: None,
         }
     }
 
@@ -1364,67 +1430,275 @@ impl Social {
         Ok(())
     }
 
-    // --- chat moderation (mutes.txt + chat_log)
-    // py: social.py:683 Social._mutes_now
-    /// The mute entry of an account from mutes.txt, re-read when its write time changes (checked at most every MUTE_RELOAD_S).
-    fn mute_entry(&self, who: &str) -> Option<(f64, String)> {
-        let path = self.mute_path.as_ref()?;
+    // --- chat moderation (mutes.txt + voicebans.txt + automod.json + chat_log)
+    // py: social.py:649 Social._read_acct_file
+    /// mutes.txt / voicebans.txt -> {account: (until, reason)} (None = the file could not be read: the caller keeps the old table).
+    fn read_acct_file(path: &std::path::Path) -> Option<HashMap<String, (f64, String)>> {
+        let b = std::fs::read(path).ok()?;
+        let text = String::from_utf8_lossy(&b).into_owned();
+        let mut out: HashMap<String, (f64, String)> = HashMap::new();
+        for line in universal_lines(&text) {
+            let (head, why) = match line.find('#') {
+                Some(p) => (&line[..p], &line[p + 1..]),
+                None => (line, ""),
+            };
+            let parts = split_ws(head);
+            if parts.is_empty() {
+                continue;
+            }
+            let mut key = parts[0].to_string();
+            if is_digits(&key) && key.len() == 17 {
+                key = format!("s:{}", key);
+            }
+            let until = match parts.get(1) {
+                Some(x) => py_float(x).unwrap_or(0.0),
+                None => 0.0,
+            };
+            out.insert(key, (until, strip(why).to_string()));
+        }
+        Some(out)
+    }
+
+    /// `_mutes_now().get(who)` / `_vbans_now().get(who)`: the file re-read when its write time changes (checked at most every MUTE_RELOAD_S).
+    fn acct_entry(&self, vban: bool, who: &str) -> Option<(f64, String)> {
+        let path = if vban { self.vban_path.as_ref() } else { self.mute_path.as_ref() }?;
         let now = self.h.now();
-        let (at, mt) = self.st.lock().mute_chk;
+        let (at, mt) = {
+            let s = self.st.lock();
+            if vban {
+                s.vban_chk
+            } else {
+                s.mute_chk
+            }
+        };
         if !(now - at < MUTE_RELOAD_S && at != 0.0) {
             let m: Option<f64> = std::fs::metadata(path).ok().and_then(|md| md.modified().ok()).map(|t| match t.duration_since(std::time::UNIX_EPOCH) {
                 Ok(d) => d.as_secs() as f64 + d.subsec_nanos() as f64 * 1e-9,
                 Err(e) => -(e.duration().as_secs() as f64 + e.duration().subsec_nanos() as f64 * 1e-9),
             });
             if m != mt || at == 0.0 {
-                let mut out: HashMap<String, (f64, String)> = HashMap::new();
-                let mut failed = false;
-                if m.is_some() {
-                    match std::fs::read(path) {
-                        Ok(b) => {
-                            let text = String::from_utf8_lossy(&b).into_owned();
-                            for line in universal_lines(&text) {
-                                let (head, why) = match line.find('#') {
-                                    Some(p) => (&line[..p], &line[p + 1..]),
-                                    None => (line, ""),
-                                };
-                                let parts = split_ws(head);
-                                if parts.is_empty() {
-                                    continue;
-                                }
-                                let mut key = parts[0].to_string();
-                                if is_digits(&key) && key.len() == 17 {
-                                    key = format!("s:{}", key);
-                                }
-                                let until = match parts.get(1) {
-                                    Some(x) => py_float(x).unwrap_or(0.0),
-                                    None => 0.0,
-                                };
-                                out.insert(key, (until, strip(why).to_string()));
-                            }
-                        }
-                        Err(_) => failed = true,
+                let read = if m.is_some() { Self::read_acct_file(path) } else { Some(HashMap::new()) };
+                let mut s = self.st.lock();
+                if let Some(t) = read {
+                    if vban {
+                        s.vbans = t;
+                    } else {
+                        s.mutes = t;
                     }
                 }
-                let mut s = self.st.lock();
-                if !failed {
-                    s.mutes = out;
-                }
             }
-            self.st.lock().mute_chk = (now, m);
+            let mut s = self.st.lock();
+            if vban {
+                s.vban_chk = (now, m);
+            } else {
+                s.mute_chk = (now, m);
+            }
         }
-        self.st.lock().mutes.get(who).cloned()
+        let s = self.st.lock();
+        (if vban { &s.vbans } else { &s.mutes }).get(who).cloned()
     }
 
-    // py: social.py:720 Social.mute_left
-    /// 0 = not muted, -1 = muted for good, else whole seconds left.
-    pub fn mute_left(&self, me: &str) -> i64 {
-        let Some(e) = self.mute_entry(me) else { return 0 };
-        let until = e.0;
-        if until <= 0.0 {
+    fn mute_entry(&self, who: &str) -> Option<(f64, String)> {
+        self.acct_entry(false, who)
+    }
+
+    // py: social.py:690 Social._vbans_now
+    fn vban_entry(&self, who: &str) -> Option<(f64, String)> {
+        self.acct_entry(true, who)
+    }
+
+    // py: social.py:705 Social.vban_left
+    /// 0 = may talk, -1 = voice-banned for good, else whole seconds left (voicebans.txt or an automatic mic spam ban, the longer one).
+    pub fn vban_left(&self, me: &str) -> i64 {
+        let x = self.auto_entry(me);
+        let now = self.h.now();
+        let a = match &x {
+            Some(e) => (fget(e, "vuntil") - now).trunc() as i64,
+            None => 0,
+        };
+        let a = if a > 0 { a } else { 0 };
+        let Some(e) = self.vban_entry(me) else { return a };
+        if e.0 <= 0.0 {
             return -1;
         }
-        let left = (until - self.h.now()).trunc() as i64;
+        let left = (e.0 - self.h.now()).trunc() as i64;
+        std::cmp::max(if left > 0 { left } else { 0 }, a)
+    }
+
+    // py: social.py:718 Social.vban_why
+    pub fn vban_why(&self, me: &str) -> String {
+        if let Some(e) = self.vban_entry(me) {
+            if e.0 <= 0.0 || e.0 > self.h.now() {
+                return e.1;
+            }
+        }
+        let x = self.auto_entry(me);
+        match x {
+            Some(e) if self.vban_left(me) != 0 => sget(&e, "vwhy"),
+            _ => String::new(),
+        }
+    }
+
+    // py: social.py:724 Social._vbanned_in_match
+    /// Names of the voice-banned players in the token's match (never the asker).
+    fn vbanned_in_match(&self, token: &str) -> Vec<String> {
+        let Some(f) = self.match_peers.as_ref() else { return Vec::new() };
+        let peers = match f(token) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for t in &peers {
+            if t == token {
+                continue;
+            }
+            if self.vban_left(&self.acct(t)) != 0 {
+                let n = self.h.name(t);
+                out.push(if n.is_empty() { token_name_fallback(t) } else { n });
+                if out.len() >= VBAN_SHOW {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    // py: social.py:742 Social._vspam
+    /// S_VSPAM: a mic spam strike (see VSPAM_*); returns the reply.
+    fn vspam(&self, token: &str, me: &str, arg: &str) -> Value {
+        let what: String = crate::py::cut(strip(arg), 40).to_string();
+        let now = self.h.now();
+        if what.is_empty() {
+            return json!({"ok": 0, "err": "bad"});
+        }
+        if self.limited(me, RateTab::Log, MSG_PER_MIN) {
+            return json!({"ok": 0, "err": "rate"});
+        }
+        let nm = |t: &str| {
+            let n = self.h.name(t);
+            if n.is_empty() {
+                token_name_fallback(t)
+            } else {
+                n
+            }
+        };
+        if what == "self" {
+            self.vstrike(me, &nm(token), "own detector");
+            return json!({"ok": 1, "err": ""});
+        }
+        let room: Option<String>;
+        let peers: Vec<String>;
+        {
+            let r = self.match_of.as_ref().and_then(|f| f(token));
+            let p = match self.match_peers.as_ref() {
+                Some(f) => f(token),
+                None => Some(Vec::new()),
+            };
+            match p {
+                Some(p) => {
+                    room = r;
+                    peers = p;
+                }
+                None => {
+                    room = None;
+                    peers = Vec::new();
+                }
+            }
+        }
+        let tgt = peers.iter().find(|t| t.as_str() != token && nm(t) == what).cloned();
+        let room = room.filter(|r| !r.is_empty());
+        let (Some(room), Some(tgt)) = (room, tgt) else { return json!({"ok": 0, "err": "nobody"}) };
+        let ta = self.acct(&tgt);
+        let (n, hit);
+        {
+            let mut s = self.st.lock();
+            s.vrep.retain(|_, v| !(v.is_empty() || now - v.values().cloned().fold(f64::NEG_INFINITY, f64::max) > VSPAM_PAIR_S));
+            let r = s.vrep.entry((room, ta.clone())).or_default();
+            r.insert(me.to_string(), now);
+            n = r.values().filter(|t| now - **t <= VSPAM_PAIR_S).count();
+            hit = n >= VSPAM_WITNESS;
+            if hit {
+                r.clear();
+            }
+        }
+        self.log(&["VSPAM report", me, "on", &ta, &what, &format!("{} of {}", n, VSPAM_WITNESS)]);
+        if hit {
+            self.vstrike(&ta, &what, &format!("{} players heard it", n));
+        }
+        json!({"ok": 1, "err": ""})
+    }
+
+    // py: social.py:777 Social._vstrike
+    fn vstrike(&self, acct: &str, name: &str, how: &str) {
+        let now = self.h.now();
+        let (n, dur);
+        {
+            let mut s = self.st.lock();
+            let d = self.auto_load(&mut s);
+            let ent = d.entry(acct.to_string()).or_insert_with(|| json!({"s": [], "until": 0, "why": "", "name": name}));
+            if !ent.is_object() {
+                *ent = json!({});
+            }
+            let e = ent.as_object_mut().expect("entry object");
+            let mut v: Vec<Value> = e.get("v").and_then(|x| x.as_array()).map(|a| a.iter().filter(|t| now - num(t) < SLUR_WINDOW_S).cloned().collect()).unwrap_or_default();
+            v.push(json!(now));
+            n = v.len();
+            e.insert("v".into(), Value::Array(v));
+            dur = VSPAM_BAN_S[std::cmp::min(n, VSPAM_BAN_S.len()) - 1];
+            let cur = fget(e, "vuntil");
+            let to = now + dur as f64;
+            e.insert("vuntil".into(), json!(if to > cur { to } else { cur }));
+            e.insert("vwhy".into(), json!(format!("mic spam (automatic, strike {} in 30 days)", n)));
+            e.insert("name".into(), json!(name));
+            self.auto_save(&s);
+        }
+        self.log(&["VSPAM ban", acct, name, how, &format!("strike {}", n), &format!("voice off {} min", dur / 60)]);
+    }
+
+    /// `self._auto()` with the state lock held: loads automod.json on first use.
+    fn auto_load<'a>(&self, s: &'a mut St) -> &'a mut Map<String, Value> {
+        if s.automod.is_none() {
+            let mut m: Map<String, Value> = Map::new();
+            if let Some(p) = &self.automod_path {
+                if let Ok(b) = std::fs::read(p) {
+                    if let Ok(Value::Object(d)) = serde_json::from_slice::<Value>(&b) {
+                        m = d.into_iter().filter(|(_, v)| v.is_object()).collect();
+                    }
+                }
+            }
+            s.automod = Some(m);
+        }
+        s.automod.as_mut().expect("automod loaded")
+    }
+
+    /// `self._auto().get(me)` when it is a non-empty entry (Python truthiness).
+    fn auto_entry(&self, me: &str) -> Option<Map<String, Value>> {
+        let mut s = self.st.lock();
+        let d = self.auto_load(&mut s);
+        d.get(me).and_then(|v| v.as_object()).filter(|o| !o.is_empty()).cloned()
+    }
+
+    // py: social.py:803 Social._auto_save
+    fn auto_save(&self, s: &St) {
+        let Some(path) = &self.automod_path else { return };
+        let mut tmp = path.clone().into_os_string();
+        tmp.push(".tmp");
+        let tmp = PathBuf::from(tmp);
+        let mut text = String::new();
+        match &s.automod {
+            Some(m) => dump_indent1_sorted(&Value::Object(m.clone()), 0, &mut text),
+            None => text.push_str("null"),
+        }
+        let r = std::fs::write(&tmp, text.as_bytes()).and_then(|_| std::fs::rename(&tmp, path));
+        if let Err(ex) = r {
+            self.log(&["SOCIAL automod write error", &crate::pyfmt::os_error_repr(&ex)]);
+        }
+    }
+
+    // py: social.py:814 Social._auto_left
+    fn auto_left(&self, me: &str) -> i64 {
+        let Some(e) = self.auto_entry(me) else { return 0 };
+        let left = (fget(&e, "until") - self.h.now()).trunc() as i64;
         if left > 0 {
             left
         } else {
@@ -1432,8 +1706,76 @@ impl Social {
         }
     }
 
+    // py: social.py:820 Social.mute_left
+    /// 0 = not muted, -1 = muted for good, else whole seconds left (mutes.txt or an automatic slur mute, the longer one).
+    pub fn mute_left(&self, me: &str) -> i64 {
+        let a = self.auto_left(me);
+        let Some(e) = self.mute_entry(me) else { return a };
+        let until = e.0;
+        if until <= 0.0 {
+            return -1;
+        }
+        let left = (until - self.h.now()).trunc() as i64;
+        let left = if left > 0 { left } else { 0 };
+        std::cmp::max(left, a)
+    }
+
+    // py: social.py:835 Social.mute_why
+    /// The reason of the mute that lasts longer (mutes.txt or the automatic one).
+    pub fn mute_why(&self, me: &str) -> String {
+        let e = self.mute_entry(me);
+        let a = self.auto_left(me);
+        if let Some(e) = e {
+            let left = if e.0 <= 0.0 { -1 } else { (e.0 - self.h.now()).trunc() as i64 };
+            if left < 0 || left >= a {
+                return if left != 0 { e.1 } else { String::new() };
+            }
+        }
+        match self.auto_entry(me) {
+            Some(x) if a != 0 => sget(&x, "why"),
+            _ => String::new(),
+        }
+    }
+
+    // py: social.py:846 Social._slur
+    /// A slur in `body`: a strike + the automatic mute; returns the matched pattern ("" = clean, nothing done).
+    fn slur(&self, me: &str, name: &str, kind: &str, body: &str) -> String {
+        let hit = crate::slurs::find(body);
+        if hit.is_empty() {
+            return hit;
+        }
+        let now = self.h.now();
+        let (n, dur);
+        {
+            let mut s = self.st.lock();
+            let d = self.auto_load(&mut s);
+            let ent = d.entry(me.to_string()).or_insert_with(|| json!({"s": [], "until": 0, "why": "", "name": name}));
+            if !ent.is_object() {
+                *ent = json!({});
+            }
+            let e = ent.as_object_mut().expect("entry object");
+            let mut v: Vec<Value> = e.get("s").and_then(|x| x.as_array()).map(|a| a.iter().filter(|t| now - num(t) < SLUR_WINDOW_S).cloned().collect()).unwrap_or_default();
+            v.push(json!(now));
+            n = v.len();
+            e.insert("s".into(), Value::Array(v));
+            dur = SLUR_MUTE_S[std::cmp::min(n, SLUR_MUTE_S.len()) - 1];
+            let cur = fget(e, "until");
+            let to = now + dur as f64;
+            e.insert("until".into(), json!(if to > cur { to } else { cur }));
+            e.insert("why".into(), json!(format!("slur in chat (automatic, strike {} in 30 days)", n)));
+            e.insert("name".into(), json!(name));
+            self.auto_save(&s);
+        }
+        let mut parts: Vec<String> = vec!["SLUR".into(), kind.into(), me.into(), name.into(), format!("strike {}", n), format!("muted {} h", dur / 3600), format!("pattern {}", hit)];
+        if n >= SLUR_MUTE_S.len() {
+            parts.push("BAN REVIEW".into());
+        }
+        self.h.log(&parts);
+        hit
+    }
+
     // py: social.py:730 Social._log_line
-    fn log_line(&self, kind: &str, room: &str, me: &str, name: &str, body: &str, muted: bool) {
+    fn log_line(&self, kind: &str, room: &str, me: &str, name: &str, body: &str, muted: i64) {
         let now = self.h.now();
         self.st.lock().clog.push(ClogRow {
             ts: now,
@@ -1442,7 +1784,7 @@ impl Social {
             acct: me.to_string(),
             name: name.to_string(),
             body: body.to_string(),
-            muted: if muted { 1 } else { 0 },
+            muted,
         });
     }
 
@@ -1860,7 +2202,7 @@ impl Social {
     /// One launcher request -> the reply dict (always a fresh state plus ok / err). `None` = Python would have raised an exception that is
     /// not a `sqlite3.Error` (the daemon then logs "SOCIAL ERR" and sends no reply).
     pub fn handle(&self, token: &str, lang: i64, sub: i64, arg: &str) -> Option<Value> {
-        if matches!(sub, S_PCHAT | S_MLOG | S_LSAY | S_LCHAT | S_MUTE) {
+        if matches!(sub, S_PCHAT | S_MLOG | S_LSAY | S_LCHAT | S_MUTE | S_VSPAM | S_ACHAT) {
             let res = self.quick(token, sub, arg);
             self.clog_flush(None, false);
             return Some(res);
@@ -1903,6 +2245,8 @@ impl Social {
                 err = self.p.set_ready(token, strip(arg) != "0").map(|s| s.to_string());
             } else if (sub == S_MSG || sub == S_PSAY) && self.mute_left(&me) != 0 {
                 err = Some("muted".to_string());
+            } else if sub == S_MSG && self.msg_slurred(token, &me, arg) {
+                err = Some("blocked".to_string()); // (friend messages are never logged: the SLUR log line has no text)
             } else if sub == S_MSG {
                 let (key, text) = match arg.find('\n') {
                     Some(p) => (&arg[..p], &arg[p + 1..]),
@@ -1975,6 +2319,10 @@ impl Social {
         }
         let n = self.h.name(token);
         let name = if n.is_empty() { token_name_fallback(token) } else { n };
+        if !self.slur(me, &name, "party", &body).is_empty() {
+            self.log_line("party", &pid, me, &name, &body, 2);
+            return Some("blocked");
+        }
         let now = self.h.now();
         {
             let mut s = self.st.lock();
@@ -1987,7 +2335,7 @@ impl Social {
                 lst.drain(..cut);
             }
         }
-        self.log_line("party", &pid, me, &name, &body, false);
+        self.log_line("party", &pid, me, &name, &body, 0);
         None
     }
 
@@ -2008,6 +2356,68 @@ impl Social {
         let after: Vec<&Line> = lst.iter().filter(|x| x.id > since).collect();
         let lines = &after[after.len().saturating_sub(PCHAT_SHOW)..];
         json!({"lines": Self::lines_json(lines, me, now), "last": lst.last().map(|x| x.id).unwrap_or(since)})
+    }
+
+    /// The slur check of a friend message (the text after the first newline of the argument).
+    fn msg_slurred(&self, token: &str, me: &str, arg: &str) -> bool {
+        let n = self.h.name(token);
+        let name = if n.is_empty() { token_name_fallback(token) } else { n };
+        let text = match arg.find('\n') {
+            Some(p) => &arg[p + 1..],
+            None => "",
+        };
+        !self.slur(me, &name, "message", &Self::clean_text(text)).is_empty()
+    }
+
+    // py: social.py:1212 Social.admin_say
+    /// An admin site line for match `mid` ("As:" Server / another admin), kept in memory; every client of that match fetches it with S_ACHAT.
+    /// Returns (line id, None) or (None, error code). `who` = the admin site login, for the log only.
+    pub fn admin_say(&self, mid: &str, name: &str, text: &str, who: &str) -> (Option<i64>, Option<&'static str>) {
+        let name: String = crate::py::cut(&ctrl_words(name).replace(['<', '>', '|'], ""), ADMIN_NAME_LEN).to_string();
+        let body = Self::clean_text(text);
+        let mid = strip(mid).to_string();
+        if mid.is_empty() {
+            return (None, Some("no match"));
+        }
+        if name.is_empty() {
+            return (None, Some("no name"));
+        }
+        if body.is_empty() {
+            return (None, Some("empty text"));
+        }
+        let now = self.h.now();
+        let lid;
+        {
+            let mut s = self.st.lock();
+            s.pseq += 1;
+            lid = s.pseq;
+            let lst = s.achat.entry(mid.clone()).or_default();
+            lst.push(ALine { id: lid, name: name.clone(), t: body.clone(), ts: now });
+            if lst.len() > PCHAT_KEEP {
+                let cut = lst.len() - PCHAT_KEEP;
+                lst.drain(..cut);
+            }
+            s.achat.retain(|_, v| !(v.is_empty() || now - v[v.len() - 1].ts > ACHAT_KEEP_S));
+        }
+        let who40: String = crate::py::cut(who, 40).to_string();
+        self.log_line("match", &mid, &format!("admin:{}", if who40.is_empty() { "site" } else { &who40 }), &name, &body, 0);
+        self.log(&["CHAT", "admin", &mid, &repr_str(&name), &repr_str(&body), "by", if who.is_empty() { "?" } else { who }]);
+        (Some(lid), None)
+    }
+
+    // py: social.py:1236 Social._achat_view
+    /// {"lines": admin lines of the token's match newer than `since` (oldest first), "last": highest id}; not in a match = nothing.
+    fn achat_view(&self, token: &str, since: i64) -> Value {
+        let mid = self.match_of.as_ref().and_then(|f| f(token)).filter(|m| !m.is_empty());
+        let Some(mid) = mid else { return json!({"lines": [], "last": since}) };
+        let now = self.h.now();
+        let lst: Vec<ALine> = self.st.lock().achat.get(&mid).cloned().unwrap_or_default();
+        let after: Vec<&ALine> = lst.iter().filter(|x| x.id > since).collect();
+        let lines = &after[after.len().saturating_sub(PCHAT_SHOW)..];
+        json!({
+            "lines": lines.iter().map(|x| json!({"id": x.id, "name": x.name, "t": x.t, "age": std::cmp::max(0, (now - x.ts).trunc() as i64)})).collect::<Vec<_>>(),
+            "last": lst.last().map(|x| x.id).unwrap_or(since),
+        })
     }
 
     // py: social.py:1063 Social._lobby_chat
@@ -2046,7 +2456,11 @@ impl Social {
             }
             let n = self.h.name(token);
             let name = if n.is_empty() { token_name_fallback(token) } else { n };
-            self.log_line("lobby", &lk.to_string(), me, &name, &body, false);
+            if !self.slur(me, &name, "lobby", &body).is_empty() {
+                self.log_line("lobby", &lk.to_string(), me, &name, &body, 2);
+                return json!({"ok": 0, "err": "blocked", "lk": lk});
+            }
+            self.log_line("lobby", &lk.to_string(), me, &name, &body, 0);
             let mut s = self.st.lock();
             s.pseq += 1;
             let id = s.pseq;
@@ -2079,12 +2493,13 @@ impl Social {
     // py: social.py:1105 Social._quick1
     fn quick1(&self, token: &str, me: &str, sub: i64, arg: &str) -> Value {
         if sub == S_MUTE {
-            let e = self.mute_entry(me);
-            let why = match e {
-                Some((_, why)) if self.mute_left(me) != 0 => why.chars().take(120).collect::<String>(),
-                _ => String::new(),
-            };
-            return json!({"ok": 1, "err": "", "why": why});
+            let why = if self.mute_left(me) != 0 { self.mute_why(me).chars().take(120).collect::<String>() } else { String::new() };
+            let vb = self.vban_left(me);
+            let vwhy = if vb != 0 { self.vban_why(me).chars().take(120).collect::<String>() } else { String::new() };
+            return json!({"ok": 1, "err": "", "why": why, "vban": vb, "vwhy": vwhy, "vbanned": self.vbanned_in_match(token)});
+        }
+        if sub == S_VSPAM {
+            return self.vspam(token, me, arg);
         }
         if sub == S_PCHAT {
             let s = strip(arg);
@@ -2093,6 +2508,11 @@ impl Social {
         }
         if sub == S_LSAY || sub == S_LCHAT {
             return self.lobby_chat(token, me, sub, arg);
+        }
+        if sub == S_ACHAT {
+            let s = strip(arg);
+            let since = if is_digits(s) && s.len() < 15 { s.parse().unwrap_or(0) } else { 0 };
+            return json!({"ok": 1, "err": "", "achat": self.achat_view(token, since)});
         }
         let (chan, text) = match arg.find('\n') {
             Some(p) => (&arg[..p], &arg[p + 1..]),
@@ -2108,7 +2528,10 @@ impl Social {
         }
         let n = self.h.name(token);
         let name = if n.is_empty() { token_name_fallback(token) } else { n };
-        let muted = self.mute_left(me) != 0;
+        let mut muted: i64 = if self.mute_left(me) != 0 { 1 } else { 0 };
+        if !self.slur(me, &name, if chan == "m" { "match" } else { "team" }, &body).is_empty() {
+            muted = 2; // (the line already went out peer to peer; from now on the account is muted)
+        }
         let now = self.h.now();
         {
             let mut s = self.st.lock();
@@ -2119,14 +2542,16 @@ impl Social {
         }
         let kind = if chan == "m" { "match" } else { "team" };
         let rb = repr_str(&body);
-        if muted {
+        if muted == 1 {
             self.log(&["CHAT", kind, me, &name, &rb, "(muted)"]);
+        } else if muted != 0 {
+            self.log(&["CHAT", kind, me, &name, &rb, "(slur)"]);
         } else {
             self.log(&["CHAT", kind, me, &name, &rb]);
         }
         let room = self.match_of.as_ref().and_then(|f| f(token)).unwrap_or_default();
         self.log_line(kind, &room, me, &name, &body, muted);
-        if muted {
+        if muted != 0 {
             json!({"ok": 0, "err": "muted"})
         } else {
             json!({"ok": 1, "err": ""})
@@ -2592,7 +3017,7 @@ impl Social {
 }
 
 /// Lines of a text file read in text mode (universal newlines: \n, \r\n, \r).
-fn universal_lines(s: &str) -> Vec<&str> {
+pub(crate) fn universal_lines(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let b = s.as_bytes();
     let mut start = 0usize;
@@ -2614,4 +3039,64 @@ fn universal_lines(s: &str) -> Vec<&str> {
         out.push(&s[start..]);
     }
     out
+}
+
+/// `float(e.get(key, 0))` of an automod entry (0.0 when it is not a number).
+fn fget(e: &Map<String, Value>, key: &str) -> f64 {
+    e.get(key).map(num).unwrap_or(0.0)
+}
+
+fn num(v: &Value) -> f64 {
+    match v {
+        Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        Value::Bool(b) => *b as i64 as f64,
+        Value::String(s) => py_float(s).unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// `x.get(key, "")` of an automod entry as text.
+fn sget(e: &Map<String, Value>, key: &str) -> String {
+    match e.get(key) {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => crate::py::dumps(v),
+        None => String::new(),
+    }
+}
+
+/// `json.dump(v, f, indent=1, sort_keys=True)`
+fn dump_indent1_sorted(v: &Value, level: usize, out: &mut String) {
+    match v {
+        Value::Object(m) if !m.is_empty() => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            out.push_str("{\n");
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(",\n");
+                }
+                out.push_str(&" ".repeat(level + 1));
+                crate::py::pyjson::write_str(out, k, true);
+                out.push_str(": ");
+                dump_indent1_sorted(&m[*k], level + 1, out);
+            }
+            out.push('\n');
+            out.push_str(&" ".repeat(level));
+            out.push('}');
+        }
+        Value::Array(a) if !a.is_empty() => {
+            out.push_str("[\n");
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(",\n");
+                }
+                out.push_str(&" ".repeat(level + 1));
+                dump_indent1_sorted(x, level + 1, out);
+            }
+            out.push('\n');
+            out.push_str(&" ".repeat(level));
+            out.push(']');
+        }
+        _ => crate::py::pyjson::write(out, v, crate::py::pyjson::DEFAULT),
+    }
 }

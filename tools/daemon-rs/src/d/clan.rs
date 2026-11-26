@@ -1004,7 +1004,7 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
         let before = Some(cl::load(c, &clan_key_r(c, token)?)?);
         let key = clan_key_r(c, token)?;
         let bottles = if left { 0 } else { counts.get(&33).copied().unwrap_or(0).clamp(0, 200).max(0) };
-        let (st, mut r) = cl::apply_match(c, &key, mid, parts, left, Some(&cmap), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles)?; // label 33 = supply bottles picked up
+        let (st, mut r) = cl::apply_match(c, &key, mid, parts, left, Some(&cmap), if !left { mult } else { 1.0 }, (mult > 1.0 && !left) || forgive_excused, bottles, false)?; // label 33 = supply bottles picked up; TEMPORARY: protect (daemon.py CLAN_FAIR) is wired with the dispatcher pass
         CLAN_REBOOK.lock().remove(&clan_tk(token, mid));
         let k2 = clan_key_r(c, token)?;
         // this booking's raw numbers, for a later stint of the same match
