@@ -2,7 +2,8 @@
 # Memory fix: replace the live Rust TCP daemon binary (bin/t2r-daemon-tcp) with the same daemon built for glibc (x86_64-linux-gnu,
 # dynamically linked to the system libc) instead of static musl: musl's malloc kept freed memory mapped (heap flat, RSS climbing).
 # glibc malloc with at most 2 arenas (T2R_MALLOC_ARENAS) and malloc_trim(0) once a minute (T2R_MALLOC_TRIM=0 turns it off),
-# plus the MEM / MEM-KINDS / SIZES log lines of the diagnostic build. Staged in ~/t2r-live/staging/daemonrsleak/.
+# plus the MEM / MEM-KINDS / SIZES log lines of the diagnostic build, a MEM-JUMP line (memwatch thread: +48 MB in 2 s, per op), and the
+# ping table eviction fix (op 0xF6 at the 16384 cap: one evictor, one pass, no table copies; the copies were the RSS jumps). Staged in ~/t2r-live/staging/daemonrsleak/.
 # Run ONLY with the user's go. Rollback: bash ~/t2r-live/staging/daemonrsleak/go_back.sh (one command).
 # - guards: the live binary and run-daemon.sh must be what this build replaces (staged md5 values), the staged binary must be intact,
 #   t2r-relay active, no server-relay match in the daemon.log tail (FORCE=1 overrides that last one)

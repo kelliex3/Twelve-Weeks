@@ -76,16 +76,43 @@ pub fn drop_pings(token: &str) {
 }
 
 // py: daemon.py:4348 _ping_evict: drop n entries of the full PING table: pairs with a player who is not online first, then the least recently reported
+static PING_EVICTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Drop the `n` pairs Python's sort picks (offline pairs first, then the least recently reported; ties in insertion order).
+/// One evictor at a time: reports that find the table full while another thread evicts go in over the cap (by a few) instead of each
+/// copying the whole table (11-26: dozens of helper threads at once held ~10 MB copies each and RSS jumped by hundreds of MB).
+/// One pass over the table under its lock (PING_AT before PING, as the state GC takes them), no per-key shift_remove.
 fn ping_evict(online: &HashSet<String>, n: usize) {
-    let keys: Vec<(String, String)> = PING.lock().keys().cloned().collect();
-    let at = PING_AT.lock().clone();
-    let mut order: Vec<((bool, f64), (String, String))> =
-        keys.into_iter().map(|k| (((online.contains(&k.0) && online.contains(&k.1)), at.get(&k).copied().unwrap_or(0.0)), k)).collect();
-    order.sort_by(|a, b| a.0 .0.cmp(&b.0 .0).then(a.0 .1.partial_cmp(&b.0 .1).unwrap_or(std::cmp::Ordering::Equal)));
-    for (_, k) in order.into_iter().take(n) {
-        PING.lock().shift_remove(&k);
-        PING_AT.lock().remove(&k);
+    use std::sync::atomic::Ordering as O;
+    if PING_EVICTING.swap(true, O::AcqRel) {
+        return;
     }
+    {
+        let mut at = PING_AT.lock();
+        let mut p = PING.lock();
+        let mut order: Vec<(bool, f64, usize)> = p.keys().enumerate().map(|(i, k)| (online.contains(&k.0) && online.contains(&k.1), at.get(k).copied().unwrap_or(0.0), i)).collect();
+        let n = n.min(order.len());
+        if n > 0 {
+            let cmp = |a: &(bool, f64, usize), b: &(bool, f64, usize)| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)).then(a.2.cmp(&b.2));
+            if n < order.len() {
+                order.select_nth_unstable_by(n - 1, cmp);
+            }
+            let mut drop = vec![false; p.len()];
+            for x in &order[..n] {
+                drop[x.2] = true;
+            }
+            let mut i = 0usize;
+            p.retain(|k, _| {
+                let d = drop[i];
+                i += 1;
+                if d {
+                    at.remove(k);
+                }
+                !d
+            });
+        }
+    }
+    PING_EVICTING.store(false, O::Release);
 }
 
 pub static PING_MESH: LazyLock<bool> = LazyLock::new(|| crate::env_str("T2R_PING_MESH", "1") != "0");

@@ -15,10 +15,10 @@ pub static LIVE: AtomicI64 = AtomicI64::new(0);
 
 /// Net bytes per kind of work (allocated minus freed on threads doing it): 0..=255 = the op of the TCP batch being handled, then the
 /// named threads. A kind whose total keeps climbing holds what it allocated.
-const KINDS: [&str; 13] = ["tcp-idle", "status", "matchmaker", "voice-room", "clan-scheduler", "presence", "admin", "log", "clan-timer", "sendq", "named", "main", "?"];
+const KINDS: [&str; 14] = ["tcp-idle", "status", "matchmaker", "voice-room", "clan-scheduler", "presence", "admin", "log", "clan-timer", "sendq", "named", "main", "?", "memwatch"];
 pub const K_TCP: u16 = 256;
 const K_UNKNOWN: u16 = 256 + 12;
-static NET: [AtomicI64; 256 + 13] = [const { AtomicI64::new(0) }; 256 + 13];
+static NET: [AtomicI64; 256 + 14] = [const { AtomicI64::new(0) }; 256 + 14];
 
 thread_local! {
     static KIND: Cell<u16> = const { Cell::new(K_UNKNOWN) };
@@ -33,7 +33,7 @@ fn charge(n: i64) {
 
 /// The kind the current thread's allocations count to (an op 0..=255 or K_TCP).
 pub fn set_kind(k: u16) {
-    let _ = KIND.try_with(|c| c.set(k.min(K_UNKNOWN)));
+    let _ = KIND.try_with(|c| c.set(k.min(256 + 13)));
 }
 
 /// Kind of a named thread (its name as std::thread::Builder::name got it).
@@ -49,6 +49,7 @@ pub fn set_kind_name(name: &str) {
         "clan-timer" => 8,
         "sendq" => 9,
         "main" => 11,
+        "memwatch" => 13,
         _ => 10,
     };
     set_kind(256 + i);
@@ -113,6 +114,53 @@ pub fn trim() -> &'static str {
     }
     #[allow(unreachable_code)]
     ""
+}
+
+fn statm_rss_mb() -> i64 {
+    let s = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    s.split_whitespace().nth(1).and_then(|n| n.parse::<i64>().ok()).unwrap_or(0) * 4096 / 1048576
+}
+
+/// "memwatch" thread: every 200 ms the heap, SQLite and RSS against their lowest value of the last 2 s; a rise of T2R_MEMWATCH_MB
+/// (default 48) or more logs "MEM-JUMP" (also on stderr, so it is there when the kernel kills the process right after) with the
+/// kinds that grew in those 2 s. At most one line per 2 s.
+pub fn watch() {
+    set_kind_name("memwatch");
+    let lim: i64 = std::env::var("T2R_MEMWATCH_MB").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(48);
+    if lim <= 0 {
+        return;
+    }
+    const W: usize = 10;
+    let mb = |b: i64| b / 1048576;
+    let snap = || -> Vec<i64> { NET.iter().map(|a| a.load(Ordering::Relaxed)).collect() };
+    let mut ring: std::collections::VecDeque<(i64, i64, i64, Vec<i64>)> = std::collections::VecDeque::with_capacity(W + 1);
+    let mut quiet = 0usize;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let heap = LIVE.load(Ordering::Relaxed);
+        let sq = unsafe { rusqlite::ffi::sqlite3_memory_used() };
+        let rss = statm_rss_mb();
+        let now = snap();
+        if quiet > 0 {
+            quiet -= 1;
+        } else if let Some(i) = (0..ring.len()).min_by_key(|&i| ring[i].2) {
+            let (h0, q0, r0, ref k0) = ring[i];
+            let (hmin, qmin) = (ring.iter().map(|x| x.0).min().unwrap_or(h0), ring.iter().map(|x| x.1).min().unwrap_or(q0));
+            if rss - r0 >= lim || mb(heap - hmin) >= lim || mb(sq - qmin) >= lim {
+                let mut d: Vec<(usize, i64)> = now.iter().zip(k0.iter()).enumerate().map(|(k, (a, b))| (k, a - b)).filter(|x| x.1.abs() >= 1048576).collect();
+                d.sort_by_key(|x| -x.1.abs());
+                let kinds = d.iter().take(8).map(|(k, n)| format!("{} {:+.1}", kind_name(*k), *n as f64 / 1048576.0)).collect::<Vec<_>>().join(", ");
+                let line = format!("heap {}->{} MB sqlite {}->{} MB rss {}->{} MB in 2 s; grew: {}", mb(hmin), mb(heap), mb(qmin), mb(sq), r0, rss, kinds);
+                eprintln!("MEM-JUMP {}", line);
+                crate::dlog!("MEM-JUMP", line);
+                quiet = W;
+            }
+        }
+        ring.push_back((heap, sq, rss, now));
+        if ring.len() > W {
+            ring.pop_front();
+        }
+    }
 }
 
 fn status_kb(s: &str, key: &str) -> i64 {

@@ -1597,6 +1597,7 @@ pub fn serve() -> i32 {
         dlog!("UDP off (T2R_UDP=0): the relay runs in t2r-daemon");
     }
     let _ = std::thread::Builder::new().name("status".into()).stack_size(2 << 20).spawn(supervised(status_loop, "status"));
+    let _ = std::thread::Builder::new().name("memwatch".into()).stack_size(256 << 10).spawn(crate::heap::watch);
     let _ = std::thread::Builder::new().name("matchmaker".into()).stack_size(2 << 20).spawn(supervised(matchmaker_loop, "matchmaker"));
     CLAN_SCHED.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = std::thread::Builder::new().name("voice-room".into()).stack_size(1 << 20).spawn(supervised(voice_room_loop, "voice-room"));
