@@ -4,6 +4,7 @@
 //!   t2r-bot normlog <daemon.log> [path-prefix ...]   (prints the log with the scheduling noise removed)
 mod admin;
 mod bot;
+mod load;
 mod norm;
 mod proto;
 mod rec;
@@ -62,6 +63,9 @@ fn main() {
                 std::process::exit(1);
             }
             println!("wrote {}", out);
+        }
+        Some("load") => {
+            load::run(&args);
         }
         _ => {
             eprintln!("usage: t2r-bot list | run <scenario> --port N --admin-port N --workdir DIR --out FILE | normlog FILE");

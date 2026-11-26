@@ -25,6 +25,8 @@ struct Inner {
 #[derive(Default)]
 pub struct Rec {
     inner: Mutex<Inner>,
+    /// load mode: record nothing (an hour of frames would not fit in memory)
+    pub off: std::sync::atomic::AtomicBool,
 }
 
 /// Gap buckets: 0 < 0.5 s, 1 < 1.7 s (1 s steps, 1.5 s polls), 2 < 3.5 s (the 2 s pause), 3 < 12 s, 4 more.
@@ -40,10 +42,16 @@ pub fn bucket(ms: u128) -> u8 {
 
 impl Rec {
     pub fn script(&self, line: impl Into<String>) {
+        if self.off.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         self.inner.lock().unwrap().script.push(line.into());
     }
 
     pub fn frame(&self, bot: &str, stream: &str, dir: &str, op: u8, payload: &[u8]) {
+        if self.off.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let mut g = self.inner.lock().unwrap();
         let s = g.streams.entry((bot.to_string(), stream.to_string())).or_default();
         let now = Instant::now();
@@ -73,6 +81,9 @@ impl Rec {
     }
 
     pub fn note(&self, bot: &str, stream: &str, text: &str) {
+        if self.off.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         let mut g = self.inner.lock().unwrap();
         let s = g.streams.entry((bot.to_string(), stream.to_string())).or_default();
         s.lines.push(format!("-- {}", text));
