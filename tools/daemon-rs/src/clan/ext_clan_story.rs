@@ -123,7 +123,10 @@ pub mod chronicle {
 
     // py: clan_chronicle.py:187 enabled
     pub fn enabled() -> bool {
-        fake() && FAKE_CHRON.load(Ordering::SeqCst)
+        if fake() {
+            return FAKE_CHRON.load(Ordering::SeqCst);
+        }
+        crate::clan::clan_chronicle::enabled() // (the chronicle is ported: its real switch outside the clan_story selftest)
     }
 
     // py: clan_chronicle.py:492 day_rows

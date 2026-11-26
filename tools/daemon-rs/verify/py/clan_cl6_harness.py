@@ -105,7 +105,7 @@ def make_world(r, seed):
         fac = r.choice([clan.WLF, clan.SERAPHITES])
         clan.choose_side(db, tid, fac)
         CS.on_new_run(db, tid, fac)
-        mode = r.choice(["starve", "feast", "mixed", "mixed", "mixed"])
+        mode = "feast" if ci == 0 else r.choice(["starve", "feast", "feast", "mixed", "mixed"])
         days = r.randint(6, 34)
         for d in range(days):
             ld = clan.load(db, tid)
@@ -113,7 +113,7 @@ def make_world(r, seed):
                 break
             size = ld["healthy"] + ld["hungry"] + ld["sick"]
             need = clan.needed(size)
-            fm = {"starve": [0, 0, .2, .5], "feast": [1.2, 2, 3, 6], "mixed": [0, .3, .7, 1, 1.1, 1.5, 2.5]}[mode]
+            fm = {"starve": [0, 0, .2, .5], "feast": [1.2, 2, 3, 6], "mixed": [0.5, .8, 1, 1.1, 1.3, 1.5, 2.5]}[mode]
             parts = int(need * 50 * r.choice(fm) * r.choice([0.8, 1, 1.2]))
             counts = {1: r.choice([0, 0, 2, 5, 9, 12, 20, 40])} if r.random() < 0.6 else {}
             for lab in (2, 3, 4):
@@ -127,12 +127,14 @@ def make_world(r, seed):
             if rr is None:
                 continue
             t[0] += r.choice([0, 3, 61, 900, 4000, 90000])
+            rr["match"] = {"map": r.choice(MAPS), "kills": r.choice([0, 1, 2, 3, 5, 8, 12, 20]), "deaths": r.choice([None, 0, 1, 3, 9]), "downs": r.choice([None, 0, 2, 7]),
+                           "execs": r.randint(0, 5), "revives": r.randint(0, 3), "win": r.choice([True, False, None]), "mid": mid}
             CS.on_day(db, tid, new, rr)
             db.commit()
             mids.append((tid, mid, d))
         clans.append({"tid": tid, "fac": fac})
     # some clans end: dead or won (end screens, section 7)
-    for cd in clans:
+    for cd in clans[1:]:
         x = r.random()
         if x < 0.25:
             db.execute("UPDATE clans SET status=? WHERE token_id=?", (2, cd["tid"]))
@@ -239,6 +241,8 @@ def gen(seed, n):
                   "token": r.choice(toks + [None]) if r.random() < 0.9 else None})
         elif x < 0.18:
             emit({"op": "i_heads", "rows": [["%064x" % r.getrandbits(256) if r.random() < 0.6 else r.choice(toks), r.choice([0, 1, -1])] for _ in range(r.randint(0, 14))]})
+        elif x < 0.185:
+            emit({"op": "i_feed", "tid": r.choice(clans)["tid"], "lang": r.choice(["en", "pl"]), "limit": r.choice([40, 100]), "cb": r.random() < 0.6})
         elif x < 0.20:
             emit({"op": "i_rank", "token": r.choice(toks + ["zz", "%064x" % r.getrandbits(256)])})
         elif x < 0.40 and keys:
@@ -592,6 +596,9 @@ def run():
             elif op == "i_heads":
                 h = I.stats_heads([(a, b) for a, b in o["rows"]])
                 res["r"] = [{kk: h[kk] for kk in sorted(h)}, len(I.stats_head_pool())]
+            elif op == "i_feed":
+                feed = CS.read_feed(c, o["tid"], o["limit"], 0, o["lang"], callbacks=o["cb"], fold=o["cb"])
+                res["r"] = [feed, CS.story_rows(feed) if feed and "card" not in feed[0] else feed]
             elif op == "i_rank":
                 res["r"] = list(I.player_rank(c, o["token"]))
             elif op == "portrait":

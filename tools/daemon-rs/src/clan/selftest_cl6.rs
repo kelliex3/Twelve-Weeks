@@ -301,6 +301,11 @@ fn call(run: &mut Run, o: &Value) -> Res {
             }
             json!([Value::Object(m), ing::stats_head_pool().len()])
         }
+        "i_feed" => {
+            let feed = cs::read_feed(&run.c, js(o, "tid"), ji(o, "limit"), 0, &lang, jb(o, "cb"), false, jb(o, "cb"));
+            let rows = if !feed.is_empty() && feed[0].get("card").is_none() { cs::story_rows(&feed) } else { feed.clone() };
+            json!([feed, rows])
+        }
         "i_rank" => {
             let (a, b) = ing::player_rank(&run.c, js(o, "token"));
             json!([a, b])
