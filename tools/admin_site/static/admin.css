@@ -256,3 +256,32 @@ pre.txt { white-space: pre-wrap; word-break: break-word; font-family: var(--mono
 #srvsw span.on { color: #0b0c0c; background: var(--accent); }
 #srvsw span.on[data-s="test"] { background: #d9822b; }
 body.srv-test .bar { border-bottom-color: #d9822b; box-shadow: inset 0 -2px 0 #d9822b; }
+/* CHAT page */
+.btn.warn { color: #E0A040; border-color: rgba(224, 160, 64, .55); }
+.tbl.chat .chatline { white-space: pre-wrap; word-break: break-word; }
+.pill.ch-match { color: #E6E6E6; }
+.pill.ch-team { color: #48A8D8; border-color: rgba(72, 168, 216, .55); }
+.pill.ch-party { color: #6CC070; border-color: rgba(108, 192, 112, .55); }
+.pill.ch-lobby { color: #D9D86A; border-color: rgba(217, 216, 106, .55); }
+/* one MATCH page */
+.match.click { cursor: pointer; }
+.match.click:hover { border-color: var(--line2); }
+.mteams { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+.mteams .acts { text-align: right; white-space: nowrap; }
+@media (max-width: 900px) { .mteams { grid-template-columns: 1fr; } }
+.mchat { max-height: 460px; overflow-y: auto; border: 1px solid var(--line2); padding: 6px 10px; }
+.mchat .ml { padding: 3px 0; line-height: 1.6; word-break: break-word; }
+.mchat .ml .btn { margin-left: 6px; }
+/* admin lines typed into a match: purple #B070E0, the in-game colour of admin chat lines (no role or channel uses it) */
+.pill.ch-admin { color: #B070E0; border-color: rgba(176, 112, 224, .6); }
+.admin-name { color: #B070E0; }
+.msay { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.msay label { white-space: nowrap; color: var(--dim, #9a9a9a); }
+.msay #msay-as { width: 130px; margin-left: 4px; }
+.msay #msay-text { flex: 1; min-width: 200px; }
+.mteams .tr > span:first-child { white-space: normal; overflow: visible; text-overflow: clip; }
+/* player page: the match the player is in right now (opens the match page) */
+.nowmatch { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 12px 0; padding: 10px 14px; border: 1px solid rgba(155, 176, 138, .5); background: rgba(155, 176, 138, .06); cursor: pointer; }
+.nowmatch:hover { background: rgba(155, 176, 138, .12); }
+.nowmatch b { font-family: var(--ui); letter-spacing: .06em; text-transform: uppercase; }
+.nowmatch .go { margin-left: auto; font-family: var(--ui); font-size: 12px; letter-spacing: .2em; color: var(--ok); }

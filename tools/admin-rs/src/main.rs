@@ -270,6 +270,21 @@ fn main() {
         };
         let app = Arc::new(App::new(cfg, live, test));
         println!("Twelve Weeks admin site: http://{}:{}/   (db {}, read-only; LAN logins from {})", bind, port, db, users.display());
+        // timed bans: drop ended bans.txt lines once a minute (live and test site)
+        let sweep = app.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let s = sweep.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    s.live.bans_expire();
+                    if let Some(t) = &s.test {
+                        t.bans_expire();
+                    }
+                })
+                .await;
+            }
+        });
         let warm = app.clone();
         tokio::task::spawn_blocking(move || {
             warm.live.refresh_log();

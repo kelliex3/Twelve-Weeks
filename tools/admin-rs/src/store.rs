@@ -100,6 +100,42 @@ fn clean_ban(s: &str, n: usize) -> String {
     py::head(py::collapse_ws(&kept).trim(), n).to_string()
 }
 
+/// byte index of `needle` (lowercase ASCII) in `hay`, ignoring ASCII case (byte offsets stay those of `hay`)
+fn find_ci(hay: &str, needle: &str) -> Option<usize> {
+    hay.to_ascii_lowercase().find(needle)
+}
+
+/// Timed bans: the note of a bans.txt line may carry "| until: <unix time>" (before "| reason:", whose text the daemon shows to the
+/// player). 0 = no end. The admin site drops a line once its time is up (Admin::bans_expire, every minute); the daemon re-reads bans.txt.
+fn ban_until(line: &str) -> f64 {
+    let c = line.split_once('#').map(|(_, c)| c).unwrap_or("");
+    let head = match find_ci(c, "reason:") {
+        Some(i) => &c[..i],
+        None => c,
+    };
+    match find_ci(head, "until:") {
+        Some(i) => {
+            let d: String = head[i + 6..].trim_start().chars().take_while(|ch| ch.is_ascii_digit()).collect();
+            d.parse::<f64>().unwrap_or(0.0)
+        }
+        None => 0.0,
+    }
+}
+
+fn ban_live(line: &str, now: f64) -> bool {
+    let u = ban_until(line);
+    u <= 0.0 || u > now
+}
+
+/// the text after "reason:" in a bans.txt note (what the daemon shows), "" if none
+fn ban_reason(line: &str) -> String {
+    let c = line.split_once('#').map(|(_, c)| c).unwrap_or("");
+    match find_ci(c, "reason:") {
+        Some(i) => c[i + 7..].trim().to_string(),
+        None => String::new(),
+    }
+}
+
 fn valid_pid(p: &str) -> bool {
     (4..=64).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
@@ -1009,7 +1045,7 @@ impl Admin {
         let shown = rows.len().min(limit);
         let players: Vec<Value> = rows.into_iter().take(limit).map(|r| r.1).collect();
         Ok(json!({"total": pg.list.len(), "shown": shown, "hidden": hidden, "players": players,
-                  "hasKd": pg.list.iter().any(|g| g.kills != 0 || g.deaths != 0)}))
+                  "hasKd": pg.list.iter().any(|g| g.kills != 0 || g.deaths != 0), "bans": self.bans_list(&pg)}))
     }
 
     fn read_feed(c: &Connection, key: &str) -> Vec<Value> {
@@ -1684,6 +1720,25 @@ impl Admin {
             .unwrap_or_else(|e| call_fail(e, ". It exists on the daemon build with the admin op and needs a daemon restart."))
     }
 
+    /// A line typed into running match `mid`'s chat "As:" `name` (Server, an admin name, ...). The daemon keeps it for that match and every
+    /// client fetches it (social S_ACHAT); `who` = the admin site login, logged with the line.
+    pub fn chat_say(&self, mid: &str, name: &str, text: &str, who: &str) -> Value {
+        let mid = mid.trim();
+        if !(1..=32).contains(&mid.len()) || !mid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+            return json!({"ok": false, "error": "bad match id"});
+        }
+        let name: String = name.chars().filter(|c| !c.is_control() && !"<>|".contains(*c)).collect::<String>().trim().chars().take(24).collect();
+        let text = text.trim();
+        if name.is_empty() {
+            return json!({"ok": false, "error": "type a name in AS:"});
+        }
+        if text.is_empty() {
+            return json!({"ok": false, "error": "empty message"});
+        }
+        self.call("/chat/say", Some(&json!({"mid": mid, "name": name, "text": py::head(text, 200), "who": py::head(who, 40)})), 5.0)
+            .unwrap_or_else(|e| call_fail(e, ". It needs the daemon build with /chat/say (next server update)."))
+    }
+
     fn bans_path(&self) -> PathBuf {
         self.dbdir.join("bans.txt")
     }
@@ -1708,11 +1763,14 @@ impl Admin {
     }
 
     pub fn ban_state(&self, g: &Group) -> Value {
+        let now = timeutil::now();
         for line in self.bans_lines() {
-            if Self::ban_hit(&line, g.steamid, &g.alias) {
+            if Self::ban_hit(&line, g.steamid, &g.alias) && ban_live(&line, now) {
                 let c = line.split_once('#').map(|(_, c)| c).unwrap_or("");
                 let reason = c.split_once("reason:").map(|(_, r)| r.trim()).unwrap_or("");
-                return json!({"reason": reason, "line": line.trim()});
+                let until = ban_until(&line);
+                let left = if until <= 0.0 { -1 } else { (until - now) as i64 };
+                return json!({"reason": reason, "line": line.trim(), "until": until as i64, "left": left});
             }
         }
         Value::Null
@@ -1721,7 +1779,11 @@ impl Admin {
     fn banned_index(&self) -> (HashSet<String>, HashSet<String>) {
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
+        let now = timeutil::now();
         for line in self.bans_lines() {
+            if !ban_live(&line, now) {
+                continue;
+            }
             let e = Self::ban_entry(&line);
             let low = e.to_lowercase();
             if e.is_empty() || low.starts_with("hwid:") || low.starts_with("token:") {
@@ -1747,6 +1809,91 @@ impl Admin {
         write_atomic(&p, data.as_bytes()).map_err(|e| format!("OSError: {}", e))
     }
 
+    /// Drop the bans.txt lines whose time is up (timed bans); the daemon re-reads the file within 10 s. Returns how many went.
+    pub fn bans_expire(&self) -> usize {
+        let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.bans_path().exists() {
+            return 0;
+        }
+        let now = timeutil::now();
+        let lines = self.bans_lines();
+        let (keep, gone): (Vec<String>, Vec<String>) = lines.into_iter().partition(|l| Self::ban_entry(l).is_empty() || ban_live(l, now));
+        if gone.is_empty() {
+            return 0;
+        }
+        if self.bans_write(&keep).is_err() {
+            return 0;
+        }
+        for l in &gone {
+            let note = l.split_once('#').map(|(_, c)| c.trim()).unwrap_or("");
+            self.audit(&format!("BAN ENDED {} ({})", Self::ban_entry(l), py::head(note, 120)));
+        }
+        gone.len()
+    }
+
+    /// The players page BANNED list: every running ban in bans.txt, newest first: the entry, what it is, the player it names (when the
+    /// site knows them), who / when from the note, the reason and the time left (-1 = for good).
+    pub fn bans_list(&self, pg: &Groups) -> Vec<Value> {
+        let now = timeutil::now();
+        let mut by_sid: HashMap<String, &Group> = HashMap::new();
+        let mut by_name: HashMap<&str, &Group> = HashMap::new();
+        for g in &pg.list {
+            if g.steamid != 0 {
+                by_sid.insert(g.steamid.to_string(), g);
+            }
+            for a in &g.alias {
+                by_name.entry(a.as_str()).or_insert(g);
+            }
+        }
+        let mut out = Vec::new();
+        for line in self.bans_lines() {
+            let e = Self::ban_entry(&line);
+            if e.is_empty() || !ban_live(&line, now) {
+                continue;
+            }
+            let el = e.to_lowercase();
+            let kind = if py::is_digits(e) {
+                "steam"
+            } else if let Some(k) = ["pid:", "hwid:", "token:", "ip:"].iter().find(|k| el.starts_with(*k)) {
+                k.trim_end_matches(':')
+            } else {
+                "name"
+            };
+            let g = match kind {
+                "steam" => by_sid.get(e).copied(),
+                "name" => by_name.get(el.as_str()).copied(),
+                _ => None,
+            };
+            let note_all = line.split_once('#').map(|(_, c)| c.trim()).unwrap_or("");
+            let note = note_all.split(" | ").next().unwrap_or("").trim();
+            let until = ban_until(&line);
+            out.push(json!({"entry": e, "kind": kind, "pid": g.map(|g| g.id.as_str()).unwrap_or(""),
+                            "name": g.map(|g| g.display.as_str()).unwrap_or(""), "note": note, "reason": ban_reason(&line),
+                            "until": until as i64, "left": if until <= 0.0 { -1 } else { (until - now) as i64 }}));
+        }
+        out.reverse();
+        out
+    }
+
+    /// Remove one bans.txt entry (any kind: steam id, name, pid:, hwid:, token:, ip:) - the UNBAN button of the BANNED list.
+    pub fn unban_entry(&self, entry: &str, who: &str) -> Result<Value, String> {
+        let entry = entry.trim();
+        if entry.is_empty() || entry.contains('#') || entry.contains('\n') {
+            return Ok(json!({"ok": false, "error": "bad entry"}));
+        }
+        let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let lines = self.bans_lines();
+        let want = entry.to_lowercase();
+        let (gone, keep): (Vec<String>, Vec<String>) = lines.into_iter().partition(|l| Self::ban_entry(l).to_lowercase() == want);
+        if gone.is_empty() {
+            return Ok(json!({"ok": false, "error": "not on the ban list"}));
+        }
+        self.bans_write(&keep)?;
+        let who = clean_ban(who, 60);
+        self.audit(&format!("UNBAN {} by {} (ban list)", entry, if who.is_empty() { "?" } else { &who }));
+        Ok(json!({"ok": true, "entry": entry, "removed": gone.len()}))
+    }
+
     fn audit(&self, line: &str) {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.dbdir.join("admin-actions.log")) {
@@ -1754,22 +1901,39 @@ impl Admin {
         }
     }
 
-    pub fn ban(&self, pid: &str, reason: &str, who: &str) -> Result<Value, String> {
+    /// Ban a player for `minutes` (0 / missing = for good). A timed ban notes "| until: <unix time> (<UTC>)" and tells the
+    /// player when it ends (in the reason text the daemon shows).
+    pub fn ban(&self, pid: &str, minutes: &Value, reason: &str, who: &str) -> Result<Value, String> {
         let pg = self.player_groups()?;
         let Some(g) = pg.get(pid) else {
             return Ok(json!({"ok": false, "error": "no such player"}));
+        };
+        let minutes = if py::truthy(minutes) { py::to_float(minutes) } else { Some(0.0) };
+        let minutes = match minutes {
+            Some(m) if (0.0..=10.0 * 365.0 * 1440.0).contains(&m) => m,
+            _ => return Ok(json!({"ok": false, "error": "bad duration"})),
         };
         let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
         if !self.ban_state(g).is_null() {
             return Ok(json!({"ok": false, "error": "already banned"}));
         }
         let (reason, who, name) = (clean_ban(reason, 160), clean_ban(who, 60), clean_ban(&g.display, 60));
+        let now = timeutil::now();
+        let until = if minutes != 0.0 { (now + minutes * 60.0) as i64 } else { 0 };
+        let ends = if until != 0 { timeutil::utc_short(until as f64) } else { String::new() };
+        // what the player reads after the banned note: the reason, and the end of a timed ban
+        let shown = match (reason.is_empty(), until != 0) {
+            (_, false) => reason.clone(),
+            (true, true) => format!("Ban ends {}", ends),
+            (false, true) => format!("{} (ban ends {})", reason, ends),
+        };
         let tail = format!(
-            "{} - admin site {}{}{}",
+            "{} - admin site {}{}{}{}",
             name,
-            timeutil::date_str(timeutil::now()),
+            timeutil::date_str(now),
             if who.is_empty() { String::new() } else { format!(" by {}", who) },
-            if reason.is_empty() { String::new() } else { format!(" | reason: {}", reason) }
+            if until != 0 { format!(" | until: {} ({})", until, ends) } else { String::new() },
+            if shown.is_empty() { String::new() } else { format!(" | reason: {}", shown) }
         );
         let entry = if g.steamid != 0 {
             format!("{}  # {}", g.steamid, tail)
@@ -1778,11 +1942,19 @@ impl Admin {
         } else {
             return Ok(json!({"ok": false, "error": "this player has no Steam id or usable name to ban"}));
         };
-        let mut lines = self.bans_lines();
+        // (a line of this player whose time is up goes now, not at the next sweep)
+        let mut lines: Vec<String> = self.bans_lines().into_iter().filter(|l| ban_live(l, now) || !Self::ban_hit(l, g.steamid, &g.alias)).collect();
         lines.push(entry.clone());
         self.bans_write(&lines)?;
         let sid_text = if g.steamid != 0 { g.steamid.to_string() } else { "no steam id".into() };
-        self.audit(&format!("BAN {} ({}) by {}: {}", name, sid_text, if who.is_empty() { "?" } else { &who }, if reason.is_empty() { "-" } else { &reason }));
+        self.audit(&format!(
+            "BAN {} ({}) for {} by {}: {}",
+            name,
+            sid_text,
+            if minutes != 0.0 { format!("{} min", fmt_g(minutes)) } else { "good".into() },
+            if who.is_empty() { "?" } else { &who },
+            if reason.is_empty() { "-" } else { &reason }
+        ));
         drop(_guard);
         let lv = self.live_view();
         let online = self.online_rows(&lv, Some(&pg)).into_iter().find(|p| p.get("playerId").and_then(Value::as_str) == Some(pid) && p.get("pid").map(py::truthy).unwrap_or(false));
@@ -1794,7 +1966,7 @@ impl Admin {
             }
             None => Value::Null,
         };
-        Ok(json!({"ok": true, "name": name, "entry": entry, "kicked": kicked}))
+        Ok(json!({"ok": true, "name": name, "entry": entry, "kicked": kicked, "until": until}))
     }
 
     pub fn unban(&self, pid: &str, who: &str) -> Result<Value, String> {
@@ -2248,7 +2420,8 @@ impl Admin {
             let p = idx.get(&acct);
             lines.push(json!({"id": py::sqlv(r[0].clone()), "ts": py::sqlv(r[1].clone()), "kind": py::sqlv(r[2].clone()), "room": text(&r[3]),
                               "name": text(&r[5]), "text": text(&r[6]), "pid": p.map(|p| p.0.as_str()).unwrap_or(""),
-                              "player": p.map(|p| p.1.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[7]) != 0, "mutedNow": muted.has(&acct)}));
+                              "player": p.map(|p| p.1.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[7]) != 0, "mutedNow": muted.has(&acct),
+                              "admin": acct.starts_with("admin:")}));
         }
         let now = timeutil::now();
         let mut mutes: Vec<(i64, Value)> = Vec::new();
@@ -2344,7 +2517,8 @@ impl Admin {
             .map(|r| {
                 let acct = py::sql_text(&r[3]).unwrap_or_default();
                 json!({"id": py::sqlv(r[0].clone()), "ts": py::sqlv(r[1].clone()), "kind": py::sqlv(r[2].clone()), "name": text(&r[4]), "text": text(&r[5]),
-                       "pid": idx.get(&acct).map(|p| p.0.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[6]) != 0, "mutedNow": muted.has(&acct)})
+                       "pid": idx.get(&acct).map(|p| p.0.as_str()).unwrap_or(""), "sentMuted": py::sql_int(&r[6]) != 0, "mutedNow": muted.has(&acct),
+                       "admin": acct.starts_with("admin:")})
             })
             .collect();
         let mut info = Map::new();

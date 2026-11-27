@@ -2,10 +2,10 @@
 // Twelve Weeks admin: single page, polls the local API every 3 s; a view is only re-rendered when its HTML changed (no flicker).
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const TABS = ["overview", "players", "matches", "teams", "clans", "reports", "logs", "notes"];
-const TITLES = { overview: "OVERVIEW", players: "PLAYERS", matches: "MATCHES", teams: "TEAMS", clans: "CLANS", reports: "REPORTS", logs: "LOGS", notes: "PATCH NOTES" };
+const TABS = ["overview", "players", "matches", "teams", "clans", "reports", "chat", "logs", "notes"];
+const TITLES = { overview: "OVERVIEW", players: "PLAYERS", matches: "MATCHES", teams: "TEAMS", clans: "CLANS", reports: "REPORTS", chat: "CHAT", logs: "LOGS", notes: "PATCH NOTES" };
 const POLL_MS = 3000;
-const S = { route: { tab: "overview", arg: "" }, paused: false, q: "", logQ: "", logLevel: "all", logFile: "0", logQuiet: true, logFollow: true, last: {}, ov: null, timer: null, busy: false, fileView: {} };
+const S = { route: { tab: "overview", arg: "" }, paused: false, q: "", logQ: "", logLevel: "all", logFile: "0", logQuiet: true, logFollow: true, chatQ: "", chatKind: "", last: {}, ov: null, timer: null, busy: 0, ovp: null, gen: 0, fileView: {} };
 
 function dur(s) {
   if (s == null) return "-";
@@ -145,15 +145,68 @@ function viewOverview(ov, on, nt) {
 
 // ban / unban (a ban button on every player for the mods; the server writes bans.txt, the daemon refuses the player from then on)
 function banBtn(id, name, banned) { return `<button class="btn sm ${banned ? "" : "danger"}" data-${banned ? "unban" : "ban"}="${esc(id)}" data-name="${esc(name)}">${banned ? "UNBAN" : "BAN"}</button>`; }
+// timed bans, like mutes: the server notes the end on the bans.txt line and drops it when the time is up
+const BAN_DUR = [[60, "1 HOUR"], [360, "6 HOURS"], [1440, "1 DAY"], [4320, "3 DAYS"], [10080, "7 DAYS"], [43200, "30 DAYS"], [0, "FOR GOOD"]];
+function banLeft(left) { return left === -1 || left == null ? "for good" : dur(left) + " left"; }
+const BAN_KIND = { steam: "STEAM ID", name: "NAME", pid: "IDENTITY", hwid: "HARDWARE", token: "INSTALL", ip: "IP" };
+// every running ban on the PLAYERS page, newest first, with its UNBAN
+function bansTable(bans) {
+  const q = S.q.trim().toLowerCase();
+  const list = q ? bans.filter(b => [b.entry, b.name, b.note, b.reason].some(x => (x || "").toLowerCase().includes(q))) : bans;
+  let h = `<div class="sec"><h3>BANNED (${list.length}${q ? " matching" : ""})</h3>`;
+  if (!list.length) return h + `<div class="empty">${q ? "NO BAN MATCHING" : "NOBODY IS BANNED"}</div></div>`;
+  h += '<div class="tbl" style="--cols:minmax(130px,1fr) minmax(150px,200px) minmax(180px,1.6fr) 120px minmax(150px,1fr) 80px"><div class="tr th"><span>PLAYER</span><span>BANNED</span><span>REASON</span><span>TIME</span><span>BY</span><span></span></div>';
+  for (const b of list) {
+    const who = b.name || (b.kind === "name" ? b.entry : b.note.split(/[,-]/)[0].trim()) || b.entry;
+    // "<name> - admin site <date> by <admin>" -> "<admin> · <date>"; other notes as written
+    const by = (b.note.match(/\bby ([^|,]+)$/) || [])[1], day = (b.note.match(/\d{4}-\d{2}-\d{2}/) || [])[0];
+    const byText = by ? by.trim() + (day ? " · " + day : "") : b.note;
+    const reason = (b.reason || "").replace(/\s*\(ban ends [^)]*\)$/, "").replace(/^Ban ends .*$/, "");
+    h += `<div class="tr${b.pid ? " click" : ""}"${b.pid ? ` data-go="player/${esc(b.pid)}"` : ""}><span>${esc(who)}</span>` +
+      `<span class="dim" title="${esc(b.entry)}">${esc(BAN_KIND[b.kind] || b.kind)} <span class="faint">${esc(b.entry.replace(/^(pid|hwid|token|ip):/i, "").slice(0, 20))}</span></span>` +
+      `<span class="chatline">${esc(reason || "-")}</span><span class="${b.left === -1 ? "dim" : "warn"}">${esc(banLeft(b.left))}</span>` +
+      `<span class="dim" title="${esc(b.note)}">${esc(byText)}</span><span><button class="btn sm" data-unban-entry="${esc(b.entry)}" data-name="${esc(who)}">UNBAN</button></span></div>`;
+  }
+  return h + "</div></div>";
+}
+
+// chat mutes (with a duration; the server writes mutes.txt, the daemon refuses their party / lobby /
+// friend lines and the game shows YOU ARE MUTED instead of opening the chat)
+const MUTE_DUR = [[15, "15 MIN"], [60, "1 HOUR"], [360, "6 HOURS"], [1440, "1 DAY"], [10080, "7 DAYS"], [43200, "30 DAYS"], [0, "FOR GOOD"]];
+function muteLeft(left) { return left === -1 ? "for good" : dur(left) + " left"; }
+function muteBtn(id, name, muted) { return id ? `<button class="btn sm ${muted ? "" : "warn"}" data-${muted ? "unmute" : "mute"}="${esc(id)}" data-name="${esc(name)}">${muted ? "UNMUTE" : "MUTE"}</button>` : ""; }
+const CHAT_KIND = { match: "MATCH", team: "TEAM", party: "PARTY", lobby: "LOBBY" };
+function viewChat(d) {
+  let h = "";
+  if (d.mutes && d.mutes.length) {
+    h += `<div class="sec"><h3>MUTED NOW (${d.mutes.length})</h3><div class="tbl" style="--cols:minmax(140px,1fr) 160px 90px"><div class="tr th"><span>PLAYER</span><span>TIME</span><span></span></div>`;
+    for (const m of d.mutes) h += `<div class="tr${m.pid ? " click" : ""}"${m.pid ? ` data-go="player/${esc(m.pid)}"` : ""}><span>${esc(m.name)}</span><span class="dim">${esc(muteLeft(m.left))}</span><span>${muteBtn(m.pid, m.name, true)}</span></div>`;
+    h += "</div></div>";
+  }
+  h += `<div class="sec"><h3>${d.player ? "CHAT OF " + esc(d.player) : "CHAT"} <span class="faint">match, team, party and lobby lines, newest first, kept 14 days. Friend messages are private and never shown.</span></h3>`;
+  if (!d.lines.length) return h + '<div class="empty">NO CHAT LINES' + (S.chatQ || S.chatKind ? " MATCHING" : "") + "</div></div>";
+  h += '<div class="tbl chat" style="--cols:112px 64px minmax(110px,170px) minmax(200px,1fr) 80px"><div class="tr th"><span>TIME</span><span>CHANNEL</span><span>PLAYER</span><span>LINE</span><span></span></div>';
+  for (const l of d.lines) {
+    const who = l.admin ? `<b class="admin-name">${esc(l.name)}</b>` : l.pid ? `<a href="#player/${esc(l.pid)}">${esc(l.name)}</a>` : esc(l.name);
+    // a MATCH / TEAM line opens its match page
+    const mid = (l.kind === "match" || l.kind === "team") && l.room ? l.room : "";
+    h += `<div class="tr${mid ? " click" : ""}"${mid ? ` data-go="match/${esc(mid)}" title="Open match ${esc(mid)}"` : ""}><span class="dim" title="${esc(new Date(l.ts * 1000).toLocaleString())}">${esc(when(l.ts))}</span>` +
+      `<span>${l.admin ? '<span class="pill ch-admin">ADMIN</span>' : `<span class="pill ch-${esc(l.kind)}" title="${esc(l.room)}">${esc(CHAT_KIND[l.kind] || l.kind)}</span>`}</span>` +
+      `<span>${who}${l.mutedNow ? ' <span class="pill bad">MUTED</span>' : ""}</span><span class="chatline${l.sentMuted ? " faint" : ""}">${esc(l.text)}${l.sentMuted ? ' <span class="faint">(sent while muted)</span>' : ""}</span>` +
+      `<span>${l.admin ? "" : muteBtn(l.pid, l.name, l.mutedNow)}</span></div>`;
+  }
+  return h + "</div></div>";
+}
 
 function viewPlayers(on, all) {
   let h = on.source === "log" ? note("Live feed not active: names come from the log, session data is approximate. Kick and ping need the daemon build with the admin listener (daemon restart).") : "";
   h += `<div class="sec"><h3>ONLINE NOW (${on.players.length})</h3>${onlineTable(on)}</div>`;
+  if (all.bans) h += bansTable(all.bans);
   h += `<div class="sec"><h3>ALL PLAYERS (${all.shown}${S.q ? " matching" : ""})${all.hidden ? ` <span class="faint">${all.hidden} never-played installs hidden - search to find them</span>` : ""}</h3>`;
   if (!all.players.length) return h + '<div class="empty">NO PLAYER FOUND</div></div>';
   h += '<div class="tbl" style="--cols:minmax(110px,1.3fr) 158px minmax(130px,1.2fr) 64px 50px 60px 100px 70px 62px"><div class="tr th"><span>NAME</span><span>STEAM ID</span><span>CLAN</span><span>MATCHES</span><span>WINS</span><span>LOSSES</span><span>LAST SEEN</span><span>BUILD</span><span></span></div>';
   for (const p of all.players) {
-    h += `<div class="tr click" data-go="player/${esc(p.id)}"><span>${p.online ? '<span class="ok">● </span>' : ""}${esc(p.name)}${p.banned ? ' <span class="pill bad">BANNED</span>' : ""}</span><span class="dim">${p.steamid || "-"}</span>` +
+    h += `<div class="tr click" data-go="player/${esc(p.id)}"><span>${p.online ? '<span class="ok">● </span>' : ""}${esc(p.name)}${p.banned ? ' <span class="pill bad">BANNED</span>' : ""}${p.muted ? ' <span class="pill bad">MUTED</span>' : ""}</span><span class="dim">${p.steamid || "-"}</span>` +
       `<span>${p.faction ? `<span class="${facCls(p.faction)}">${esc(p.faction)}</span> <span class="dim">${p.clanStatus === "alive" ? `W${p.week} D${p.day} · ${p.size}` : esc(p.clanStatus)}</span>` : '<span class="faint">no clan</span>'}</span>` +
       `<span>${p.matches}</span><span>${p.wins}</span><span>${p.losses}</span><span class="dim">${p.online ? "now" : ago(p.lastSeen)}</span><span class="dim">${esc(p.version || "-")}</span><span>${banBtn(p.id, p.name, p.banned)}</span></div>`;
   }
@@ -200,8 +253,15 @@ function viewPlayer(p) {
   const dec = p.wins + p.losses + p.draws;
   const wr = dec ? Math.round(p.wins / dec * 100) + "%" : "-";
   let h = '<button class="back" data-go="players">&lt; PLAYERS</button>';
-  h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(p.name)}</b><span>${p.online ? statePill(p.online.state) : '<span class="faint">OFFLINE</span>'} ${p.clan ? facPill(p.clan.factionName) : ""} ${p.canKick ? `<button class="btn sm danger" data-kick="${esc(p.online.pid)}" data-name="${esc(p.name)}">FORCE KICK</button>` : ""} ${banBtn(p.id, p.name, !!p.ban)}</span></div>`;
-  if (p.ban) h += note("BANNED" + (p.ban.reason ? ": " + p.ban.reason : "") + "  (bans.txt: " + p.ban.line + ")", true);
+  h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(p.name)}</b><span>${p.online ? statePill(p.online.state) : '<span class="faint">OFFLINE</span>'} ${p.clan ? facPill(p.clan.factionName) : ""} ${p.canKick ? `<button class="btn sm danger" data-kick="${esc(p.online.pid)}" data-name="${esc(p.name)}">FORCE KICK</button>` : ""} ${muteBtn(p.id, p.name, !!p.mute)} ${banBtn(p.id, p.name, !!p.ban)} <button class="btn sm" data-go="chat/${esc(p.id)}">CHAT</button></span></div>`;
+  if (p.mute) h += note("MUTED " + muteLeft(p.mute.left) + (p.mute.reason ? ": " + p.mute.reason : ""), true);
+  if (p.ban) h += note("BANNED " + banLeft(p.ban.left) + (p.ban.reason ? ": " + p.ban.reason : "") + "  (bans.txt: " + p.ban.line + ")", true);
+  const nowMid = p.online && p.online.match ? String(p.online.match) : "";   // the daemon's live row names the match the player is in
+  if (nowMid) {
+    const hm = p.history.find(m => m.id === nowMid);
+    h += `<div class="nowmatch click" data-go="match/${esc(nowMid)}" title="Open match ${esc(nowMid)}"><span class="pill match">IN MATCH NOW</span>` +
+      `<b>${esc(hm && hm.map ? hm.map : "map not chosen yet")}</b><span class="dim">${hm && hm.players ? hm.players + " players · " : ""}${hm && hm.when ? "started " + esc(ago(hm.when)) + " · " : ""}ID ${esc(nowMid)}</span><span class="go">OPEN MATCH &gt;</span></div>`;
+  }
   h += '<div class="facts" style="margin:0">' + fact("MATCHES", p.matches) + fact("WINS", p.wins, wr + " win rate", "") + fact("LOSSES", p.losses) + fact("DRAWS", p.draws) +
     (p.avgParts != null ? fact("AVG PARTS", p.avgParts, "per match") : "") + (p.kills || p.deaths ? fact("K / D", p.kills + " / " + p.deaths) : "") + "</div></div>";
   h += '<div class="cols2"><div class="sec"><h3>ACCOUNT</h3><div class="kvs">' +
@@ -225,7 +285,7 @@ function viewPlayer(p) {
     h += '<div class="tbl" style="--cols:130px 1fr 90px 90px 1fr"><div class="tr th"><span>WHEN</span><span>MAP</span><span>RESULT</span><span>LENGTH</span><span>NOTE</span></div>';
     for (const m of p.history) {
       const r = { W: '<span class="ok">WIN</span>', L: '<span class="bad">LOSS</span>', D: "DRAW" }[m.result] || '<span class="faint">-</span>';
-      h += `<div class="tr"><span class="dim">${esc(when(m.when))}</span><span>${esc(m.map || "?")} <span class="faint">${m.players} players</span></span><span>${r}</span><span class="dim">${m.secs ? dur(m.secs) : "-"}</span><span class="warn">${m.left ? "left early / timed out" : m.state !== "ended" ? "no result" : ""}</span></div>`;
+      h += `<div class="tr click" data-go="match/${esc(m.id)}" title="Open match ${esc(m.id)}"><span class="dim">${esc(when(m.when))}</span><span>${esc(m.map || "?")} <span class="faint">${m.players} players</span></span><span>${r}</span><span class="dim">${m.secs ? dur(m.secs) : "-"}</span><span class="warn">${m.left ? "left early / timed out" : m.state !== "ended" ? "no result" : ""}</span></div>`;
     }
     h += "</div>";
   }
@@ -251,7 +311,7 @@ function viewMatches(d) {
   for (const m of d.live) {
     const t0 = m.players.filter(p => p.team === 0), t1 = m.players.filter(p => p.team === 1);
     const left = m.clock ? clock(m.clock.left - m.clock.age_s) : null;
-    h += `<div class="match"><div class="mh"><b>${esc(m.map ? m.map.name : "Map not chosen yet")}</b><span><span class="pill ${m.state === "running" ? "match" : "queue"}">${m.state === "running" ? "RUNNING" : "LOADING"}</span> ${esc(m.mode ? m.mode.toUpperCase() + " · " : "")}${esc(m.net === "steam-p2p" ? "STEAM P2P" : m.net === "server-relay" ? "SERVER RELAY" : "")} · ${dur(m.age_s)} · ID ${esc(m.id)}</span></div>`;
+    h += `<div class="match click" data-go="match/${esc(m.id)}"><div class="mh"><b>${esc(m.map ? m.map.name : "Map not chosen yet")}</b><span><span class="pill ${m.state === "running" ? "match" : "queue"}">${m.state === "running" ? "RUNNING" : "LOADING"}</span> ${esc(m.mode ? m.mode.toUpperCase() + " · " : "")}${esc(m.net === "steam-p2p" ? "STEAM P2P" : m.net === "server-relay" ? "SERVER RELAY" : "")} · ${dur(m.age_s)} · ID ${esc(m.id)}</span></div>`;
     h += `<div class="team">${teamBlock("TEAM 1", t0, "wlf")}${teamBlock("TEAM 2", t1, "sera")}</div>`;
     h += `<div class="kvs" style="margin:10px 0 0">` + kv("TIME LEFT", left != null ? left : '<span class="faint">no clock report yet</span>') +
       kv("REINFORCEMENTS", m.lives ? `${m.lives.team0} : ${m.lives.team1} <span class="faint">team 1 : team 2</span>` : '<span class="faint">not reported</span>') + "</div></div>";
@@ -260,14 +320,75 @@ function viewMatches(d) {
   if (!d.history.length) return h + '<div class="empty">NO MATCH IN THE LOG</div></div>';
   h += '<div class="tbl" style="--cols:120px 1fr 1.6fr 190px 80px 110px"><div class="tr th"><span>WHEN</span><span>MAP</span><span>TEAMS</span><span>RESULT</span><span>LENGTH</span><span>NET</span></div>';
   for (const m of d.history) {
-    h += `<div class="tr"><span class="dim">${esc(when(m.started || m.formed))}</span><span>${esc(m.map || "?")}</span>` +
+    h += `<div class="tr click" data-go="match/${esc(m.id)}"><span class="dim">${esc(when(m.started || m.formed))}</span><span>${esc(m.map || "?")}</span>` +
       `<span class="dim" title="${esc(m.team1.join(", ") + " vs " + m.team2.join(", "))}"><span class="wlf">${esc(m.team1.join(", ") || "-")}</span> vs <span class="sera">${esc(m.team2.join(", ") || "-")}</span>${m.left.length ? ` <span class="warn">· ${esc(m.left.join(", "))}</span>` : ""}</span>` +
       `<span class="${m.state === "ended" ? (m.winner === 2 ? "" : "ok") : "warn"}">${esc(m.result)}</span><span class="dim">${m.secs ? dur(m.secs) : "-"}</span><span class="dim">${m.net === "steam-p2p" ? "P2P" : m.net === "server-relay" ? "RELAY" : "-"}${m.ping_ms != null ? " " + m.ping_ms + "ms" : ""}</span></div>`;
   }
   return h + "</div></div>";
 }
 
-// TEAMS: the daemon's team rules, applied at every match
+// one match: its live chat log, players, kick / ban / mute buttons
+function viewMatch(d) {
+  if (!d.ok) return '<div class="sec"><a href="#matches" class="faint">&lsaquo; MATCHES</a></div>' + note(d.error || "Match not found.", true);
+  const m = d.match;
+  KICKABLE = d.canKick;
+  let h = '<div class="sec"><a href="#matches" class="faint">&lsaquo; MATCHES</a></div>';
+  const st = m.live ? `<span class="pill ${m.state === "running" ? "match" : "queue"}">${m.state === "running" ? "RUNNING" : "LOADING"}</span>` : `<span class="pill">${esc(m.result || "ENDED")}</span>`;
+  h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(m.map || "?")}</b><span>${st} ${esc(m.mode ? m.mode.toUpperCase() + " · " : "")}${esc(m.net === "steam-p2p" ? "STEAM P2P" : m.net === "server-relay" ? "SERVER RELAY" : "")} · ID ${esc(m.id)}</span></div>`;
+  const kvs = [];
+  if (m.live) {
+    kvs.push(kv("RUNNING FOR", dur(m.age_s)));
+    kvs.push(kv("TIME LEFT", m.clock ? clock(m.clock.left - m.clock.age_s) : '<span class="faint">no clock report yet</span>'));
+    kvs.push(kv("REINFORCEMENTS", m.lives ? `${m.lives.team0} : ${m.lives.team1} <span class="faint">team 1 : team 2</span>` : '<span class="faint">not reported</span>'));
+  } else {
+    kvs.push(kv("STARTED", esc(when(m.started || m.formed))));
+    kvs.push(kv("LENGTH", m.secs ? dur(m.secs) : "-"));
+  }
+  if (m.host) kvs.push(kv("HOST", esc(m.host) + (m.ping_ms != null ? ` <span class="faint">worst pair ${m.ping_ms} ms</span>` : "")));
+  if (m.left_log && m.left_log.length) kvs.push(kv("LEFT EARLY", `<span class="warn">${esc(m.left_log.join(", "))}</span>`));
+  if (m.joined && m.joined.length) kvs.push(kv("JOINED LATE", esc(m.joined.join(", "))));
+  h += `<div class="kvs" style="margin:10px 0 0">${kvs.join("")}</div>`;
+  const row = p => `<div class="tr"><span>${p.playerId ? `<a href="#player/${esc(p.playerId)}">${esc(p.display || p.name)}</a>` : esc(p.name)}` +
+    `${p.host ? ' <span class="faint">HOST</span>' : ""}${p.left ? ' <span class="bad">LEFT</span>' : ""}${p.banned ? ' <span class="pill bad">BANNED</span>' : ""}${p.muted ? ' <span class="pill bad">MUTED</span>' : ""}</span>` +
+    `<span class="dim">${p.ping_ms != null ? p.ping_ms + " ms" : ""}</span>` +
+    `<span class="acts">${p.kick ? `<button class="btn sm danger" data-kick="${esc(p.pid)}" data-name="${esc(p.name)}">KICK</button> ` : ""}${muteBtn(p.playerId, p.display || p.name, p.muted)} ${p.playerId ? banBtn(p.playerId, p.display || p.name, p.banned) : ""}</span></div>`;
+  const team = (n, cls, ps) => `<div class="sec"><h3><span class="${cls}">${n}</span> (${ps.length})</h3><div class="tbl" style="--cols:minmax(0,1fr) 54px max-content">${ps.map(row).join("") || '<div class="empty">-</div>'}</div></div>`;
+  h += `<div class="team mteams">${team("TEAM 1", "wlf", d.players.filter(p => p.team === 0))}${team("TEAM 2", "sera", d.players.filter(p => p.team === 1))}</div></div>`;
+  h += `<div class="sec"><h3>MATCH CHAT (${d.chat.length}) <span class="faint">match and team lines${m.live ? ", live" : ""}</span></h3>`;
+  if (!d.chat.length) h += '<div class="empty">NO CHAT IN THIS MATCH' + (m.live ? " YET" : "") + "</div>";
+  else {
+    h += '<div class="mchat" id="mchat">';
+    for (const l of d.chat) {
+      h += `<div class="ml${l.sentMuted ? " faint" : ""}"><span class="dim">${esc(new Date(l.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</span> ` +
+        (l.admin ? '<span class="pill ch-admin">ADMIN</span> <b class="admin-name">' + esc(l.name) + "</b>" :
+          `<span class="pill ch-${esc(l.kind)}">${esc(CHAT_KIND[l.kind])}</span> <b>${l.pid ? `<a href="#player/${esc(l.pid)}">${esc(l.name)}</a>` : esc(l.name)}</b>`) +
+        `${l.mutedNow ? ' <span class="pill bad">MUTED</span>' : ""}: ` +
+        `<span class="chatline">${esc(l.text)}</span>${l.sentMuted ? ' <span class="faint">(sent while muted)</span>' : ""} ${l.admin ? "" : muteBtn(l.pid, l.name, l.mutedNow)}</div>`;
+    }
+    h += "</div>";
+  }
+  // an admin line typed into the match chat AS: a name: the line goes to every
+  // player of this running match (daemon POST /chat/say, clients poll S_ACHAT) and shows on their MATCH tab in the admin colour (from the next client update).
+  if (m.live) {
+    h += `<div class="msay"><label>AS: <input id="msay-as" type="text" maxlength="24" list="msay-names" autocomplete="off" value="${esc(sayAs())}"></label>` +
+      `<datalist id="msay-names">${["Server", "Kellie", "Admin", "Moderator"].map(n => `<option value="${n}">`).join("")}</datalist>` +
+      `<input id="msay-text" type="text" maxlength="160" autocomplete="off" placeholder="Message to everyone in this match (Enter sends)">` +
+      `<button class="btn sm" data-msay="${esc(m.id)}">SEND</button></div>`;
+  }
+  return h + "</div>";
+}
+function sayAs() { try { return localStorage.getItem("t2r-say-as") || "Server"; } catch (e) { return "Server"; } }
+async function sendSay(mid) {
+  const as = ($("#msay-as") || {}).value || "", text = (($("#msay-text") || {}).value || "").trim();
+  if (!as.trim()) return flash("Type a name in AS: first.", true);
+  if (!text) return flash("Type the message first.", true);
+  try { localStorage.setItem("t2r-say-as", as.trim()); } catch (e) { /* private window */ }
+  const r = await post("/api/chat-say", { mid, name: as.trim(), text });
+  flash(r.ok ? `Sent to the match as ${as.trim()}.` : "Send failed: " + (r.error || "unknown"), !r.ok);
+  if (r.ok) { $("#msay-text").value = ""; S.last.body = null; refresh(true); }
+}
+
+// TEAMS (manual team switching): the daemon's team rules, applied at every match
 // formation (and the searching screen's [T1] / [T2] labels): "apart A B ..." never on one team, "together A B ..." same team.
 function teamsLive(d) {
   const live = d.live || [];
@@ -288,7 +409,7 @@ function teamsPreview(d) {
 function viewTeams(d) {
   if (!d.ok) return note(d.error, true);
   return `<div class="sec"><h3>RULES</h3><div class="dim">One rule per line, names as shown in game (any case) or Steam ids.<br>` +
-    `<b>apart PlayerA PlayerB</b> = never on the same team &nbsp;·&nbsp; <b>together PlayerC PlayerD</b> = same team &nbsp;·&nbsp; # = comment.<br>` +
+    `<b>apart ST notqntm</b> = never on the same team &nbsp;·&nbsp; <b>together DeSyncc jaskellie</b> = same team &nbsp;·&nbsp; # = comment.<br>` +
     `Applies to the next match that forms (a running match keeps its teams). top_players.txt players are also kept apart.</div>` +
     `<textarea id="trules" class="tool-in" rows="8" style="margin-top:12px;font-family:Consolas,monospace">${esc(d.rules)}</textarea>` +
     `<div style="margin-top:10px"><button class="btn main" id="tsave">SAVE RULES</button></div></div>` +
@@ -374,15 +495,20 @@ window.addEventListener("beforeunload", e => { if (notesDirty()) { e.preventDefa
 function parseRoute() {
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
   const [tab, ...rest] = h.split("/");
-  return { tab: TABS.includes(tab) || tab === "player" || tab === "report" ? tab : "overview", arg: rest.join("/") };
+  return { tab: TABS.includes(tab) || tab === "player" || tab === "report" || tab === "match" ? tab : "overview", arg: rest.join("/") };
 }
-function mainTab(r) { return r.tab === "player" ? "players" : r.tab === "report" ? "reports" : r.tab; }
+function mainTab(r) { return r.tab === "player" ? "players" : r.tab === "report" ? "reports" : r.tab === "match" ? "matches" : r.tab; }
 function go(p) { location.hash = "#" + p; }
 
 function renderToolbar() {
   const r = S.route, t = r.tab;
   let h = "";
   if (t === "players") h = `<input class="tool-in" id="q" placeholder="SEARCH NAME OR STEAM ID" value="${esc(S.q)}" autocomplete="off">`;
+  if (t === "chat") {
+    h = `<input class="tool-in" id="cq" placeholder="FILTER (TEXT OR NAME)" value="${esc(S.chatQ)}" autocomplete="off">` +
+      `<select class="tool-in" id="ck">${[["", "ALL CHANNELS"], ["match", "MATCH"], ["team", "TEAM"], ["party", "PARTY"], ["lobby", "LOBBY"]].map(([v, n]) => `<option value="${v}" ${S.chatKind === v ? "selected" : ""}>${n}</option>`).join("")}</select>` +
+      (r.arg ? '<button class="btn sm" data-go="chat">ALL PLAYERS</button>' : "");
+  }
   if (t === "logs") {
     h = `<input class="tool-in" id="lq" placeholder="FILTER (TEXT)" value="${esc(S.logQ)}" autocomplete="off">` +
       `<select class="tool-in" id="ll">${[["all", "ALL LINES"], ["evt", "EVENTS"], ["warn", "WARNINGS + ERRORS"], ["err", "ERRORS ONLY"]].map(([v, n]) => `<option value="${v}" ${S.logLevel === v ? "selected" : ""}>${n}</option>`).join("")}</select>` +
@@ -391,35 +517,95 @@ function renderToolbar() {
   const tb = $("#toolbar");
   if (S.last.toolbar !== h + t) { S.last.toolbar = h + t; tb.innerHTML = h; }
   document.querySelectorAll(".mi").forEach(b => b.classList.toggle("active", b.dataset.tab === mainTab(r)));
-  $("#ph-title").textContent = t === "player" ? "PLAYER" : t === "report" ? "BUG REPORT " + r.arg : TITLES[t];
-  document.title = (t === "player" ? "Player" : t === "report" ? "Report " + r.arg : TITLES[t].charAt(0) + TITLES[t].slice(1).toLowerCase()) + " - Twelve Weeks admin";
+  $("#ph-title").textContent = t === "player" ? "PLAYER" : t === "report" ? "BUG REPORT " + r.arg : t === "match" ? "MATCH " + r.arg : TITLES[t];
+  document.title = (t === "player" ? "Player" : t === "report" ? "Report " + r.arg : t === "match" ? "Match " + r.arg : TITLES[t].charAt(0) + TITLES[t].slice(1).toLowerCase()) + " - Twelve Weeks admin";
 }
 
+// The tab's own data (fetched in parallel with the top bar's overview + online, not after them)
+function tabUrl(r) {
+  switch (r.tab) {
+    case "players": return "/api/players?q=" + encodeURIComponent(S.q);
+    case "player": return "/api/player?id=" + encodeURIComponent(r.arg);
+    case "matches": return "/api/matches";
+    case "clans": return "/api/clans";
+    case "teams": return "/api/teams";
+    case "reports": return "/api/reports";
+    case "report": return "/api/report?code=" + encodeURIComponent(r.arg);
+    case "match": return "/api/match?id=" + encodeURIComponent(r.arg);
+    case "chat": return `/api/chat?q=${encodeURIComponent(S.chatQ)}&kind=${S.chatKind}&id=${encodeURIComponent(r.arg)}&n=300`;
+    case "logs": return `/api/logs?q=${encodeURIComponent(S.logQ)}&level=${S.logLevel}&file=${S.logFile}&quiet=${S.logQuiet ? 1 : 0}&n=400`;
+    case "overview": return "/api/notices";
+  }
+  return null;
+}
+// The top bar's overview + online: one request pair in flight, shared by overlapping refreshes.
+function topData() {
+  if (!S.ovp) {
+    const p = Promise.all([api("/api/overview"), api("/api/online")]);
+    S.ovp = p;
+    p.then(([ov]) => {
+      S.ov = ov;
+      paintTop(ov);
+      $("#ph-right").textContent = ov.source === "live" ? "LIVE" : ov.source === "snapshot" ? "SNAPSHOT" : "FROM LOG";
+      const rp = $("#rep-pip"); rp.hidden = !ov.totals.reportsNew;
+    }).catch(() => {}).finally(() => { if (S.ovp === p) S.ovp = null; });
+  }
+  return S.ovp;
+}
 async function refresh(force) {
-  if (S.busy) return;
-  S.busy = true;
-  const r = S.route, body = $("#body");
+  // A timer poll is skipped while a refresh runs. A forced one (tab switch, filter, action) starts at once and makes every older refresh
+  // stale (S.gen): a stale refresh never paints the body. The tab's own data is not held back by the (slow) overview: only the
+  // overview and players tabs wait for it. Before, a tab switch during a slow refresh was dropped, the old refresh painted the PREVIOUS
+  // tab (chat showed the overview) and the new tab only came with the next poll.
+  if (S.busy && !force) return;
+  if (force) S.gen++;
+  S.busy++;
+  const r = S.route, body = $("#body"), gen = S.gen;
+  const live = () => gen === S.gen;
+  const tu = tabUrl(r), tp = tu ? api(tu) : null;
+  if (tp) tp.catch(() => {});
+  const top = topData();
   try {
-    const [ov, on] = await Promise.all([api("/api/overview"), api("/api/online")]);
-    const nt = r.tab === "overview" ? await api("/api/notices").catch(() => null) : null;
-    S.ov = ov;
-    paintTop(ov);
+    let ov = null, on = null;
+    if (r.tab === "overview" || r.tab === "players") [ov, on] = await top;
+    else top.catch(e => { if (live() && !body.textContent.trim()) setHTML(body, "body", note("Cannot reach the admin site's API: " + e.message, true)); });
+    const nt = r.tab === "overview" ? await tp.catch(() => null) : null;
+    if (!live()) return;
     let html = "";
     if (r.tab === "overview") html = viewOverview(ov, on, nt);
-    else if (r.tab === "players") { const all = await api("/api/players?q=" + encodeURIComponent(S.q)); html = viewPlayers(on, all); }
-    else if (r.tab === "player") html = viewPlayer(await api("/api/player?id=" + encodeURIComponent(r.arg)));
-    else if (r.tab === "matches") html = viewMatches(await api("/api/matches"));
-    else if (r.tab === "clans") html = viewClans(await api("/api/clans"));
+    else if (r.tab === "players") { const all = await tp; html = viewPlayers(on, all); }
+    else if (r.tab === "player") html = viewPlayer(await tp);
+    else if (r.tab === "matches") html = viewMatches(await tp);
+    else if (r.tab === "clans") html = viewClans(await tp);
     else if (r.tab === "teams") {
-      const d = await api("/api/teams");
+      const d = await tp;
       if ($("#trules") && d.ok) { const pv = $("#tprev"); if (pv) pv.innerHTML = teamsPreview(d); const lv = $("#tlive"); if (lv) lv.innerHTML = teamsLive(d); html = null; }   // (never re-render the box being typed in)
       else html = viewTeams(d);
     }
-    else if (r.tab === "reports") html = viewReports(await api("/api/reports"));
-    else if (r.tab === "report") html = viewReport(await api("/api/report?code=" + encodeURIComponent(r.arg)), r.arg);
+    else if (r.tab === "reports") html = viewReports(await tp);
+    else if (r.tab === "report") html = viewReport(await tp, r.arg);
     else if (r.tab === "notes") { if ($("#nwframe")) html = null; else { setHTML(body, "body", viewNotes()); html = null; } }      // (never re-render the editor: unsaved edits)
+    else if (r.tab === "match") {
+      const lw = $("#mchat"), atEnd = !lw || lw.scrollHeight - lw.scrollTop - lw.clientHeight < 40, keep = lw ? lw.scrollTop : 0;
+      const md = await tp;
+      if (!live()) return;
+      // (the say box survives the poll's redraw: its text, AS name, focus and caret are put back)
+      const ia = $("#msay-as"), it = $("#msay-text"), fo = document.activeElement && document.activeElement.id;
+      const sv = ia && it ? { a: ia.value, t: it.value, s: fo === "msay-text" ? it.selectionStart : fo === "msay-as" ? ia.selectionStart : null } : null;
+      setHTML(body, "body", viewMatch(md));
+      if (sv && $("#msay-as") && $("#msay-text")) {
+        $("#msay-as").value = sv.a; $("#msay-text").value = sv.t;
+        const f = fo === "msay-text" || fo === "msay-as" ? $("#" + fo) : null;
+        if (f) { f.focus(); if (sv.s != null) f.setSelectionRange(sv.s, sv.s); }
+      }
+      const nw = $("#mchat");
+      if (nw) nw.scrollTop = atEnd || force ? nw.scrollHeight : keep;
+      html = null;
+    }
+    else if (r.tab === "chat") html = viewChat(await tp);
     else if (r.tab === "logs") {
-      const d = await api(`/api/logs?q=${encodeURIComponent(S.logQ)}&level=${S.logLevel}&file=${S.logFile}&quiet=${S.logQuiet ? 1 : 0}&n=400`);
+      const d = await tp;
+      if (!live()) return;
       const sel = $("#lf");
       if (sel && d.ok && S.last.logfiles !== d.files.join()) { S.last.logfiles = d.files.join(); sel.innerHTML = d.files.map(f => `<option value="${f}" ${f === S.logFile ? "selected" : ""}>${f === "0" ? "CURRENT LOG" : "ROTATED LOG " + f}</option>`).join(""); }
       html = viewLogs(d);
@@ -429,12 +615,13 @@ async function refresh(force) {
       if (nw) nw.scrollTop = S.logFollow && (atEnd || force) ? nw.scrollHeight : keep;
       html = null;
     }
+    if (!live()) return;
     if (html !== null) setHTML(body, "body", html);
-    $("#ph-right").textContent = ov.source === "live" ? "LIVE" : ov.source === "snapshot" ? "SNAPSHOT" : "FROM LOG";
-    const rp = $("#rep-pip"); rp.hidden = !ov.totals.reportsNew;
   } catch (e) {
-    setHTML(body, "body", note("Cannot reach the admin site's API: " + e.message, true));
-  } finally { S.busy = false; }
+    if (live()) setHTML(body, "body", note("Cannot reach the admin site's API: " + e.message, true));
+  } finally {
+    S.busy--;
+  }
 }
 
 function paintTop(ov) {
@@ -451,6 +638,7 @@ function onRoute() {
   if (S.route.tab === "notes" && nxt.tab === "notes" && $("#nwframe")) return;
   if (S.route.tab === "notes" && nxt.tab !== "notes" && notesDirty() && !confirm("The patch notes have unsaved changes. Leave and lose them?")) { location.hash = "#notes"; return; }
   S.route = nxt;
+  S.gen++;
   $("#body").classList.toggle("flush", nxt.tab === "notes");
   S.last.body = null;
   $("#body").innerHTML = "";
@@ -505,15 +693,27 @@ document.addEventListener("click", async e => {
     flash(r.ok ? `Clan of ${name} restored (${r.restored} rows)` : "Restore failed: " + (r.error || "unknown"), !r.ok);
     S.last.body = null; return refresh(true);
   }
+  const ube = t.closest("[data-unban-entry]");
+  if (ube) {
+    e.stopPropagation();
+    const name = ube.dataset.name, entry = ube.dataset.unbanEntry;
+    const ok = await confirmBox("UNBAN", `Remove <b>${esc(name)}</b> (${esc(entry)}) from the ban list? They can play again within a few seconds.`, "UNBAN", false);
+    if (!ok) return;
+    const r = await post("/api/unban-entry", { entry });
+    flash(r.ok ? `${name} unbanned` : "Unban failed: " + (r.error || "unknown"), !r.ok);
+    S.last.body = null; return refresh(true);
+  }
   const ban = t.closest("[data-ban]");
   if (ban) {
     e.stopPropagation();
     const name = ban.dataset.name;
     setTimeout(() => { const i = $("#ban-reason"); if (i) i.focus(); }, 30);
-    const ok = await confirmBox("BAN PLAYER", `Ban <b>${esc(name)}</b>?<br>Their Steam id goes on the server's ban list: they cannot play or use the launcher until unbanned. If they are online they are kicked now.<br><label style="display:block;margin-top:8px">Reason (shown to them):<input id="ban-reason" type="text" maxlength="160" autocomplete="off" style="margin-top:4px;width:100%"></label>`, "BAN " + name.toUpperCase().slice(0, 18), true);
+    const ok = await confirmBox("BAN PLAYER", `Ban <b>${esc(name)}</b>?<br>Their Steam id goes on the server's ban list: they cannot play or use the launcher until the ban ends or is lifted. If they are online they are kicked now.` +
+      `<label style="display:block;margin-top:8px">For:<select id="ban-dur" style="margin-top:4px;width:100%">${BAN_DUR.map(([m, n]) => `<option value="${m}" ${m === 0 ? "selected" : ""}>${n}</option>`).join("")}</select></label>` +
+      `<label style="display:block;margin-top:8px">Reason (shown to them):<input id="ban-reason" type="text" maxlength="160" autocomplete="off" style="margin-top:4px;width:100%"></label>`, "BAN " + name.toUpperCase().slice(0, 18), true);
     if (!ok) return;
-    const r = await post("/api/ban", { id: ban.dataset.ban, reason: ($("#ban-reason") || {}).value || "" });
-    flash(r.ok ? `${r.name || name} banned${r.kicked ? " and kicked" : ""}` : "Ban failed: " + (r.error || "unknown"), !r.ok);
+    const r = await post("/api/ban", { id: ban.dataset.ban, minutes: parseFloat(($("#ban-dur") || {}).value || "0"), reason: ($("#ban-reason") || {}).value || "" });
+    flash(r.ok ? `${r.name || name} banned ${r.until ? "until " + when(r.until) : "for good"}${r.kicked ? " and kicked" : ""}` : "Ban failed: " + (r.error || "unknown"), !r.ok);
     S.last.body = null; return refresh(true);
   }
   const unban = t.closest("[data-unban]");
@@ -524,6 +724,26 @@ document.addEventListener("click", async e => {
     if (!ok) return;
     const r = await post("/api/unban", { id: unban.dataset.unban });
     flash(r.ok ? `${r.name || name} unbanned` : "Unban failed: " + (r.error || "unknown"), !r.ok);
+    S.last.body = null; return refresh(true);
+  }
+  const mute = t.closest("[data-mute]");
+  if (mute) {
+    e.stopPropagation();
+    const name = mute.dataset.name;
+    setTimeout(() => { const i = $("#mute-reason"); if (i) i.focus(); }, 30);
+    const ok = await confirmBox("MUTE PLAYER", `Mute <b>${esc(name)}</b> in chat?<br>Their party and lobby lines and friend messages are refused; the game shows them YOU ARE MUTED instead of opening the chat (from the next client update).` +
+      `<label style="display:block;margin-top:8px">For:<select id="mute-dur" style="margin-top:4px;width:100%">${MUTE_DUR.map(([m, n]) => `<option value="${m}" ${m === 1440 ? "selected" : ""}>${n}</option>`).join("")}</select></label>` +
+      `<label style="display:block;margin-top:8px">Reason (shown to them):<input id="mute-reason" type="text" maxlength="160" autocomplete="off" style="margin-top:4px;width:100%"></label>`, "MUTE " + name.toUpperCase().slice(0, 18), true);
+    if (!ok) return;
+    const r = await post("/api/mute", { id: mute.dataset.mute, minutes: parseFloat(($("#mute-dur") || {}).value || "1440"), reason: ($("#mute-reason") || {}).value || "" });
+    flash(r.ok ? `${r.name || name} muted ${r.until ? "until " + when(r.until) : "for good"}` : "Mute failed: " + (r.error || "unknown"), !r.ok);
+    S.last.body = null; return refresh(true);
+  }
+  const unmute = t.closest("[data-unmute]");
+  if (unmute) {
+    e.stopPropagation();
+    const r = await post("/api/unmute", { id: unmute.dataset.unmute });
+    flash(r.ok ? `${r.name || unmute.dataset.name} unmuted` : "Unmute failed: " + (r.error || "unknown"), !r.ok);
     S.last.body = null; return refresh(true);
   }
   const kick = t.closest("[data-kick]");
@@ -537,6 +757,8 @@ document.addEventListener("click", async e => {
     flash(r.ok ? `${r.name || name} kicked: ${(r.did || []).join(", ") || "nothing to clear"}` : "Kick failed: " + (r.error || "unknown"), !r.ok);
     return refresh(true);
   }
+  const msay = t.closest("[data-msay]");
+  if (msay) { e.stopPropagation(); return sendSay(msay.dataset.msay); }
   const nsend = t.closest("[data-nsend]");
   if (nsend) {
     const text = $("#nt-text").value.trim();
@@ -560,7 +782,7 @@ document.addEventListener("click", async e => {
   const ncan = t.closest("[data-ncancel]");
   if (ncan) { const r = await post("/api/shutdown-cancel", {}); flash(r.ok ? "Restart cancelled." : "Nothing scheduled.", !r.ok); S.last.body = null; return refresh(true); }
   const go_ = t.closest("[data-go]");
-  if (go_) return go(go_.dataset.go);
+  if (go_ && !t.closest("a, button, input, select")) return go(go_.dataset.go);   // (a link / button inside a clickable row does its own thing)
   const hd = t.closest("[data-handled]");
   if (hd) { const r = await post("/api/report-handled", { code: hd.dataset.handled, handled: hd.dataset.to === "1" }); if (!r.ok) flash(r.error, true); return refresh(true); }
   const fl = t.closest("[data-file]");
@@ -573,18 +795,21 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("input", e => {
   if (e.target.id === "q") { S.q = e.target.value; clearTimeout(S.dq); S.dq = setTimeout(() => refresh(true), 200); }
+  if (e.target.id === "cq") { S.chatQ = e.target.value; clearTimeout(S.dq); S.dq = setTimeout(() => refresh(true), 250); }
   if (e.target.id === "lq") { S.logQ = e.target.value; clearTimeout(S.dq); S.dq = setTimeout(() => refresh(true), 250); }
 });
 document.addEventListener("change", e => {
+  if (e.target.id === "ck") { S.chatKind = e.target.value; refresh(true); }
   if (e.target.id === "ll") { S.logLevel = e.target.value; refresh(true); }
   if (e.target.id === "lf") { S.logFile = e.target.value; refresh(true); }
 });
 document.addEventListener("keydown", e => {
   const typing = /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-  if (e.key === "Escape") { if (typing) document.activeElement.blur(); else if (S.route.tab === "player") go("players"); else if (S.route.tab === "report") go("reports"); return; }
+  if (e.key === "Enter" && document.activeElement.id === "msay-text") { e.preventDefault(); const b = $("[data-msay]"); if (b) sendSay(b.dataset.msay); return; }
+  if (e.key === "Escape") { if (typing) document.activeElement.blur(); else if (S.route.tab === "player") go("players"); else if (S.route.tab === "report") go("reports"); else if (S.route.tab === "match") go("matches"); return; }
   if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.key >= "1" && e.key <= "8") go(TABS[+e.key - 1]);
-  else if (e.key === "/") { e.preventDefault(); const q = $("#q") || $("#lq"); if (q) q.focus(); }
+  if (e.key >= "1" && e.key <= "9") go(TABS[+e.key - 1]);
+  else if (e.key === "/") { e.preventDefault(); const q = $("#q") || $("#cq") || $("#lq"); if (q) q.focus(); }
   else if (e.key.toLowerCase() === "p") { S.paused = !S.paused; flash(S.paused ? "Auto refresh paused" : "Auto refresh on"); }
   else if (e.key.toLowerCase() === "r") refresh(true);
 });

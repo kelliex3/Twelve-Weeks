@@ -765,11 +765,13 @@ impl App {
         let flag = |k: &str, d: bool| body.get(k).map(py::truthy).unwrap_or(d);
         match r.path.as_str() {
             "/api/news" => self.result(self.live.news_save(body.get("entries"))),
-            "/api/ban" => self.result(a.ban(&s("id"), &s_or("reason"), &self.who_label(&ident))),
+            "/api/ban" => self.result(a.ban(&s("id"), body.get("minutes").unwrap_or(&Value::Null), &s_or("reason"), &self.who_label(&ident))),
+            "/api/unban-entry" => self.result(a.unban_entry(&s("entry"), &self.who_label(&ident))),
             "/api/unban" => self.result(a.unban(&s("id"), &self.who_label(&ident))),
             "/api/mute" => self.result(a.mute(&s("id"), body.get("minutes").unwrap_or(&Value::Null), &s_or("reason"), &self.who_label(&ident))),
             "/api/unmute" => self.result(a.unmute(&s("id"), &self.who_label(&ident))),
             "/api/kick" => self.json(200, &a.kick(&s("pid"), &s_or("reason"))),
+            "/api/chat-say" => self.json(200, &a.chat_say(&s("mid"), &s("name"), &s("text"), &self.who_label(&ident))),
             "/api/clan-reset" => self.result(a.clan_reset(&s("id"), &s("confirm"), flag("names", false))),
             "/api/clan-restore" => self.result(a.clan_restore(&s("id"), &s("file"))),
             "/api/notice" => {

@@ -48,6 +48,17 @@ pub fn datetime_str(t: f64) -> String {
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", l.year, l.month, l.day, l.hour, l.min, l.sec)
 }
 
+/// "30 Nov 18:00 UTC" (the end of a timed ban, as the player reads it: one zone for everyone)
+pub fn utc_short(t: f64) -> String {
+    let secs: i64 = t.floor() as i64;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::gmtime_r(&secs, &mut tm);
+    }
+    const M: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{} {} {:02}:{:02} UTC", tm.tm_mday, M[(tm.tm_mon.clamp(0, 11)) as usize], tm.tm_hour, tm.tm_min)
+}
+
 pub fn stamp_str(t: f64) -> String {
     let l = localtime(t);
     format!("{:04}{:02}{:02}-{:02}{:02}{:02}", l.year, l.month, l.day, l.hour, l.min, l.sec)
