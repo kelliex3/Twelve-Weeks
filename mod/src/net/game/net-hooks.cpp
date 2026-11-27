@@ -16,7 +16,6 @@
 #include "gameplay/melee-hit-react.hpp"
 #include "net/match/melee-bridge.hpp"
 #include "music-tier.hpp"
-#include "near-miss.hpp"
 
 #include <bit>
 #include <cmath>
@@ -93,10 +92,9 @@ namespace net::hooks {
         }
 
         net::session::SendEvent(NEVT_FIRE_SHOT, evt);
-        // ext immersion.c ImmSraySendTick: replicate the line this shot flew so other clients
-        // can detect a whizz-by. Gated inside near_miss::OnLocalShot (66 ms rate limit +
-        // t2r-no-shotray.txt); it does not touch the ext's 0xAF wire.
-        net::audio::near_miss::OnLocalShot();
+        // The shot-ray producer is near_miss::Tick(), not this hook: ext's ImmSraySendTick
+        // detects a shot from the held gun's clip going down, so it must not double-fire on
+        // this raw weapon hook (it would send a second 0xAF for every player shot).
         TO1_LOG("[FIRE] captured local shot -> broadcast NEVT_FIRE_SHOT\n");
     }
 

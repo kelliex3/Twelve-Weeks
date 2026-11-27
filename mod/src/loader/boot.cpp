@@ -39,6 +39,9 @@
 #include "engine/pcm.hpp"
 #include "net/audio/shivsting.hpp"
 #include "net/audio/alertsting.hpp"
+#include "net/audio/stun-tone.hpp"
+#include "net/audio/crossbow-hud.hpp"
+#include "net/audio/stun-cough.hpp"
 #include "net/audio/music-tier.hpp"
 #include "net/audio/music-sight.hpp"
 #include "net/audio/near-miss.hpp"
@@ -46,6 +49,7 @@
 #include "net/audio/xcam-bridge.hpp"
 #include "net/audio/bladesfx.hpp"
 #include "net/game/player-status.hpp"
+#include "net/match/net-player.hpp"
 #include "net/match/afk.hpp"
 #include "net/match/kick-state.hpp"
 #include "net/match/melee-bridge.hpp"
@@ -77,6 +81,7 @@
 
 #include <safetyhook.hpp>
 #include <cstdio>
+#include <cstring>
 #include <net-common.hpp>
 
 void NetTick();
@@ -204,6 +209,26 @@ namespace boot {
 		return s_extLoaded;
 	}
 
+	// The ext called stuntone_stunned() / the stun-cough own branch directly from
+	// stun_local. The native stun producer publishes the same start through
+	// gameplay::stun_lock::Until(); a rising edge is the once-per-lock confirmation.
+	static void BridgeLocalStunAudio()
+	{
+		if (const NetPlayer* p = NetPlayers::Local()) {
+			const char* look = p->LookOrDefault();
+			net::audio::stun_cough::SetOwnFemale(look && std::strstr(look, "female") != nullptr);
+		}
+		static uint64_t lastUntil = 0;
+		const uint64_t until = gameplay::stun_lock::Until();
+		if (until && until != lastUntil) {
+			net::audio::stun_tone::Stunned();
+			net::audio::stun_cough::NoteOwnStun(
+				until > gameplay::stun_lock::kTotalMs
+					? until - gameplay::stun_lock::kTotalMs : 0);
+		}
+		lastUntil = until;
+	}
+
 	static void FrameTick(SafetyHookContext&) {
 		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
 		const uint64_t now = ::GetTickCount64();
@@ -237,6 +262,7 @@ namespace boot {
 #endif
 		NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
 		net::match::melee_pullout_bridge::PostNetTick(); // SP camera / pair placement after replication
+		net::audio::xcam_bridge::Tick(); // paired-move victim edge -> exec music / shiv sting (ext xcam_start routing)
 		// Native menu / HUD owners. Each yields while the legacy ext is loaded so
 		// the ext cannot push the same page or sample the same click twice.
 		net::ui::launch_notice::Tick(now);  // once-per-run notice under the entry title
@@ -254,9 +280,13 @@ namespace boot {
 		net::audio::music_sight::Tick(); // gated native sight / cone samplers (before the tier consumes them)
 		net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
 		gameplay::stun_lock::Tick(::GetTickCount64(), net::player_status::MatchLive()); // stun end / grace
+		BridgeLocalStunAudio();  // native stun start -> confirmation tone + own cough cadence
 		net::audio::shivsting::Tick();  // shiv victim shock sting + drums (ported from tools/ext/shiv_sting.c)
 		net::audio::near_miss::Tick();  // immersion shot-ray whizz -> alert sting (before the sting's delayed play)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
+		net::audio::stun_tone::Tick();  // stun concussion bed / unconfirmed fade (alert_sting.c siblings)
+		net::audio::crossbow_hud::Tick(); // bolt impact / pulse / pulled-out HUD sounds
+		net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
 		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)

@@ -27,10 +27,15 @@
 //    (net/audio/near-miss.*) at "near miss out of the quiet" after its 120 ms hit check.
 //  - Dead / downed use music_tier::Dead() (ext g_msDead) and LocalDowned() (ext g_downed,
 //    itself an honest stub until the downed feature lands).
-//  - Data: alert_sting.h is a private generator. Without T2R_DATA_ALERT_STING, Play() is a
-//    no-op.
+//  - Data: alert_sting.h / alert_sting.pcm are private generated data. The sink is guarded by
+//    TO1_ALERT_STING_PCM (alertsting-pcm.hpp); without a private data header Play() starts no
+//    voice and does not consume the 6 s gap clock. The state machine itself is always live.
+//  - Yield: boot::ExtLoaded() makes every entry a no-op while the legacy ext is loaded.
 //
-// Opt-out: t2r-no-alert-sting.txt next to the exe. Logs "[ALERTSTING] ...".
+// Opt-out: t2r-no-alert-sting.txt next to the exe (read-only). Logs "[ALERTSTING] ...".
+// Pure rules live in alertsting-core.hpp and are covered by alertsting_core_test.cpp.
+
+#include "alertsting-core.hpp"
 
 namespace net::audio::alertsting {
 
@@ -45,5 +50,8 @@ namespace net::audio::alertsting {
     // Per frame from boot::FrameTick (ext AlertstingTick, minus the stun / crossbow / cough
     // sub-ticks).
     void Tick();
+
+    // Clear clocks / delayed cue on a match reset (net::replication::ResetRuntime).
+    void Reset();
 
 }

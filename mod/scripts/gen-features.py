@@ -146,7 +146,15 @@ OVERLAP = {
     "clanperk": "net/online/net-session.cpp", "clanend": "net/online/net-session.cpp",
     "friends13": "net/ui/*", "weather": "net/game/*", "modepick": "net/ui/net-gui2.cpp",
     "shiv_sting": "net/audio/shivsting.cpp, engine/pcm.cpp",
-    "alert_sting": "net/audio/alertsting.cpp, engine/pcm.cpp",
+    "alert_sting": ("net/audio/alertsting-core.hpp, net/audio/alertsting-pcm.hpp, "
+                    "net/audio/alertsting.{hpp,cpp}, engine/pcm.cpp"),
+    "alert_sting_stun_tone": ("net/audio/stun-tone-core.hpp, net/audio/stun-tone-pcm.hpp, "
+                              "net/audio/stun-tone.{hpp,cpp}, engine/pcm.cpp"),
+    "alert_sting_crossbow_hud": ("net/audio/crossbow-hud-core.hpp, "
+                                 "net/audio/crossbow-hud-pcm.hpp, "
+                                 "net/audio/crossbow-hud.{hpp,cpp}, engine/pcm.cpp"),
+    "alert_sting_stun_cough": ("net/audio/stun-cough-core.hpp, net/audio/stun-cough-pcm.hpp, "
+                               "net/audio/stun-cough.{hpp,cpp}, engine/pcm.cpp"),
     "afk": "net/match/afk.cpp, engine/pad.cpp",
     "padinject": "engine/pad.cpp (activity only)",
     "bloodbuild": "net/match/bloodbuild.cpp, engine/clipfx.cpp, engine/vfx.cpp, "
@@ -162,10 +170,20 @@ OVERLAP = {
 STATUS = {
     "notice": "ported", "scopeglint": "ported", "notify": "ported",
     "denynote": "ported", "glass": "ported",
-    # PCM mixer + the two stings' logic are ported (engine/pcm, net/audio/*); the sting
-    # triggers (xcam / music tier), the music-side drum cut and the PCM data are still
-    # gated, so these are in progress, not ported.
-    "shiv_sting": "in progress", "alert_sting": "in progress",
+    # The shiv shock-sting triggers now have a native xcam producer (the paired-move victim
+    # edge), but the private shiv PCM / DC music sinks are still absent, so shiv_sting stays
+    # in progress. alert_sting.c's four subfeatures are tracked separately: alert sting,
+    # stun tone, crossbow HUD and stun cough each own a pure core plus a data-gated sink.
+    "shiv_sting": "in progress", "alert_sting": "ported",
+    "alert_sting_stun_tone": "ported",
+    "alert_sting_crossbow_hud": "ported",
+    "alert_sting_stun_cough": "ported",
+    # immersion.c's near-miss producer is fully native (shot-ray wire, atomic ring / pending /
+    # hit-cancel state, two-ray LOS, pan / RNG / gain and the alert-sting handoff); its
+    # private whizz waves stay behind TO1_BULLET_BY_PCM. The module's other SP feel work
+    # (breath / effort vox, ...) is NOT ported, so FEATURES.md splits the module into two
+    # rows and only the near-miss one gets this status.
+    "immersion_near_miss": "ported",
     # The AFK watchdog + the pad-activity dependency are ported (net/match/afk,
     # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
     # counters are still gated, so it is in progress, not ported.
@@ -263,6 +281,69 @@ for m in modules:
         "toggles": toggles_for(base), "overlap": overlap_of(base),
         "status": STATUS.get(base, "not started"),
     })
+
+# The unity build lists immersion.c once, but FEATURES.md tracks two separate scopes:
+# the ported near-miss producer (Audio / PCM) and the unported SP breath / effort vox
+# work (Feel & cosmetics). Keep the split here so regeneration preserves both statuses.
+for r in rows:
+    if r["base"] == "immersion":
+        rows.append({
+            "module": "immersion.c (near miss)",
+            "base": "immersion_near_miss",
+            "feature": ("enemy shot passes within 2.5 m of our head without hitting: replicated "
+                        "shot line (MSG_SHOTRAY 0xAF / NEVT_SHOTRAY), 120 ms hit-cancelled whizz "
+                        "+ alert sting; whizz waves are private sp_bullet_by.h data"),
+            "domain": "Audio (PCM)", "pri": PRI["Audio (PCM)"],
+            "deps": "net, audio, camera, data",
+            "ndata": r["ndata"],
+            "toggles": ["t2r-no-shotray.txt", "t2r-no-near-miss.txt"],
+            "overlap": ("net/audio/near-miss-core.hpp, net/audio/near-miss-pcm.hpp, "
+                        "net/audio/near-miss.{hpp,cpp}, net/protocol/net-protocol.hpp, "
+                        "net/game/net-replication.cpp, net/game/net-hooks.cpp, loader/boot.cpp, "
+                        "tests/near_miss_core_test.cpp"),
+            "status": STATUS.get("immersion_near_miss", "not started"),
+        })
+        r["status"] = STATUS.get("immersion", "not started")
+        break
+
+# alert_sting.c contains four independent audio subfeatures. FEATURES.md tracks them as
+# separate rows so their cores, guarded data headers and wire feeds are auditable without
+# marking the still-private PCM blobs as shipped.
+for r in rows:
+    if r["base"] == "alert_sting":
+        r["feature"] = ("shot at us out of the quiet / back-shiv victim starts the delayed "
+                        "alert sting; calm freshness + quiet window, 100 ms recheck and the 6 s "
+                        "gap are owned natively; private stereo PCM stays behind "
+                        "TO1_ALERT_STING_PCM")
+        for key, module, feature, deps in (
+            ("alert_sting_stun_tone", "alert_sting.c (stun tone)",
+             "enemy stun-bomb burst within the 4.25 m (2013) radius starts the 3.45 s "
+             "concussion bed before the stun is judged; local stun confirms it, otherwise "
+             "an unconfirmed bed fades in 150 ms; private stun_tone / stun_ring PCM",
+             "net, audio, hook, data"),
+            ("alert_sting_crossbow_hud", "alert_sting.c (crossbow HUD)",
+             "a crossbow bolt stuck in us replays the impact, pulses every XBP period and "
+             "plays the pulled-out cue; fed by the local crossbow-damage hook and MSG_XBOLT "
+             "0x6E; private xbow_hud PCM",
+             "net, audio, hook, data"),
+            ("alert_sting_stun_cough", "alert_sting.c (stun cough)",
+             "our stun coughs are muffled 2-D; a stunned peer's puppet coughs in 3-D at "
+             "1150 ms on its MSG_STUNNED 0x45 stamp, gender-picked without repeats; "
+             "private stun_cough PCM",
+             "net, audio, hook, data"),
+        ):
+            rows.append({
+                "module": module,
+                "base": key,
+                "feature": feature,
+                "domain": "Audio (PCM)", "pri": PRI["Audio (PCM)"],
+                "deps": deps,
+                "ndata": r["ndata"],
+                "toggles": [],
+                "overlap": OVERLAP[key],
+                "status": STATUS.get(key, "not started"),
+            })
+        break
 
 def cell(s):
     return (s or "—").replace("|", "\\|")

@@ -45,7 +45,7 @@ ID was renumbered.
 | Match lifecycle | 3 | P1 |
 | Netcode / sync | 2 | P1 |
 | UI / HUD / menus | 23 | P1 |
-| Audio (PCM) | 18 | P2 |
+| Audio (PCM) | 22 | P2 |
 | Feel & cosmetics | 9 | P2 |
 | 2013 gameplay modes | 33 | P3 |
 | Misc | 5 | P3 |
@@ -53,15 +53,16 @@ ID was renumbered.
 | Melee / close combat | 40 | P4 |
 | Anti-cheat | 1 | P5 |
 | Diagnostics / dev | 19 | P5 |
-| **Total** | **156** | |
+| **Total** | **160** | |
 
 Counts include the 19 direct modules added by build 191 and the 2 added by build 199 (`chat.c`,
-`loadheap.c`); the 3 nested `customize_*.c` modules (marked `†` in the table) are included in their
-parent's row and are **not** counted again.
+`loadheap.c`), plus the split `immersion.c (near miss)` and three `alert_sting.c` subfeature rows;
+the 3 nested `customize_*.c` modules (marked `†` in the table) are included in their parent's row
+and are **not** counted again.
 
 - Generated data headers referenced: **91** (`GENERATED.md` rows; 6 new private rows in build 191,
   7 more in build 199/200); logic/contract headers: **39** (`chat.h`, `padact.h` added).
-- Modules with mod overlap: **~80**; modules with toggles: **~131** (build 191 brought 186 new
+- Modules with mod overlap: **~83**; modules with toggles: **~131** (build 191 brought 186 new
   `t2r-*.txt` strings; main's ext now has 1,743 distinct names vs 1,638 on this branch — these two
   estimates include the new modules).
 
@@ -101,8 +102,11 @@ parent's row and are **not** counted again.
 | `pmunlock.c` | build 191: the post-match UNLOCKS stage — the match's new achievements + CUSTOMIZE items (`clan_widgets.py` group "unlocks") | UI / HUD / menus | P1 | widget | 0 | net/ui/pmunlock-core.hpp, net/ui/pmunlock.{hpp,cpp}, net/ui/postmatch-screens.cpp, net/ui/achieve.{hpp,cpp}, net/ui/customize.{hpp,cpp}, loader/boot.cpp, net/game/net-replication.cpp, tests/pmunlock_core_test.cpp | ported (native — sole native owner of the UNLOCKS stage: match-start CUSTOMIZE grid snapshot, bounded achievements from the 0xAA table reply, faction-first item order with worn sex / tier / story gates, 4 rows x 2 columns, 140 ms stagger / 260 ms fade and 250 ms rebuild; `pmunlock.cpp` writes `anim-group.unlocks.*` while `postmatch-screens.cpp` owns page visibility, F13 header, prompt and the animation-length select gate, including a late table reply. Match-start snapshot and table capture come from the shared achieve / customize producers; ExtLoaded yield, runtime reset, no sidecar writes or toggle flips; generated GUI widgets are absent locally and no live A/B) |
 | `sendoff.c` | build 191: menu send-off — birds / crows after the war horn, WLF vehicles / Seraphite horses into the loading screen (re/menu-sendoff-impl-1115.md) | UI / HUD / menus | P1 | audio, widget, camera | 4 e.g. `t2r-no-sendoff.txt` | net/ui/sendoff-core.hpp, menu/sendoff.{hpp,cpp}, menu/sendoff-pcm.hpp, engine/pcm.{hpp,cpp}, net/ui/mfnr.{hpp,cpp}, loader/boot.cpp, net/game/net-replication.cpp, tests/sendoff_core_test.cpp | ported (native — sole native owner: the shared `mfnr` horn t=0 is the only trigger, sampled once with the active faction scene; ext TEST sidecar trigger is not ported. Native envelope drives the -10 dB session dip, UI fade, crows at 2200 ms, faction clip at 3800 ms, fade to black at 5200 ms, flock takeoff / flight / kill, flee and particle routes, and bank SFX plus guarded private PCM. `engine::pcm::SetGain` retargets live voices; clips stay silent without `TO1_SENDOFF_PCM` and a private data header. ExtLoaded yield, runtime reset, `t2r-no-sendoff.txt` / `t2r-sendoff-birds.txt` read-only with no toggle writes; runtime DC natives and private clips cannot be checked locally, no live A/B) |
 | `titlebg.c` | title (boat) screen background = Hillcrest overlook: camera + sway + render layer (menu_title.py; t2r-menu-boat.txt = off) | UI / HUD / menus | P1 | widget, camera, hook | 3 e.g. `t2r-menu-boat.txt` | menu/titlebg-core.hpp, menu/titlebg.{hpp,cpp}, loader/boot.cpp, net/game/net-replication.cpp, tests/titlebg_core_test.cpp | ported (native — sole native owner on the title / main stack in substate 0: Hillcrest pose 14.855 / 2.957 / 530.968 with 150.19 deg yaw, -3.23 deg pitch and 46.94 deg FOV, 4 s sway ramp within 0.15 / 0.06 deg and 4 cm, direct camera writes counted as the ext hook-hit readiness signal, render-settings override with the towerhill-vista default, and the boot black cover gated by title page + camera writes + render handle + settle / timeout. `t2r-title-cam.txt`, `t2r-title-rs.txt` and `t2r-menu-boat.txt` stay read-only; ExtLoaded yield, runtime reset, no toggle writes / live A/B; runtime DC camera / render / fade natives cannot be checked locally) |
-| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer). Both `Combat()` producers are wired: the damage event (ext `recv_hit_hook`) and the near-miss whizz receiver | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | net/audio/alertsting.cpp, net/audio/near-miss.cpp, engine/pcm.cpp | in progress |
-| `immersion.c` (near miss) | enemy shot passes within 2.5 m of our head without hitting: replicated shot line (`MSG_SHOTRAY` 0xAF / `NEVT_SHOTRAY`), 120 ms hit-cancelled whizz + alert sting; whizz waves are private `sp_bullet_by.h` data | Audio (PCM) | P2 | net, audio, camera, data | 2 `t2r-no-shotray.txt` (send), `t2r-no-near-miss.txt` (play) | net/audio/near-miss.*, net/protocol/net-protocol.hpp, net/game/net-replication.cpp, net/game/net-hooks.cpp, loader/boot.cpp | in progress (sting + geometry live; PCM behind `T2R_DATA_BULLET_BY`) |
+| `alert_sting.c` | t2-hud-stealth-notification: shot at out of the quiet / back-shiv victim (PCM mixer). Both `Combat()` producers are wired: the damage event (ext `recv_hit_hook`) and the near-miss whizz receiver | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-alert-sting.txt` | net/audio/alertsting-core.hpp, net/audio/alertsting-pcm.hpp, net/audio/alertsting.{hpp,cpp}, net/audio/near-miss.cpp, net/audio/shivsting.cpp, net/game/net-replication.cpp, loader/boot.cpp, tests/alertsting_core_test.cpp | ported (native — sole owner of the alert-sting sub-feature: threat stamp before every gate, 1500 ms calm freshness + 15 s quiet window, 100 ms delayed play with the dead / downed recheck, and the 6 s gap consumed only when a voice starts. Both producers are live: incoming damage and the near-miss whizz; the back-shiv producer is called from `shivsting::Start()` and now has a native paired-move producer through the enabled `xcam-bridge`, though its private shiv PCM stays absent. The stun tone / crossbow HUD / stun cough sub-features are separate rows below and now ported. Private stereo PCM stays silent without `TO1_ALERT_STING_PCM` and a private `alert_sting_pcm_data.hpp`; `t2r-no-alert-sting.txt` is read-only, state resets with the match, ExtLoaded yields, and the pure rules are covered by `alertsting_core_test.cpp`. No private clip, runtime voice or live A/B check locally) |
+| `alert_sting.c (stun tone)` | enemy stun-bomb burst within the 4.25 m (2013) radius starts the 3.45 s concussion bed before the stun is judged; local stun confirms it, otherwise an unconfirmed bed fades in 150 ms; private `stun_tone.h` / `stun_ring.h` PCM | Audio (PCM) | P2 | net, audio, hook, data | 0 | net/audio/stun-tone-core.hpp, net/audio/stun-tone-pcm.hpp, net/audio/stun-tone.{hpp,cpp}, engine/pcm.cpp | ported (native core + data-gated sink: `NEVT_STUN_BURST 0x4F` supplies the burst, the rising `stun_lock::Until()` edge confirms it, and match reset clears the bed; without `TO1_STUN_TONE_PCM` no voice, retrigger window or RNG is consumed) |
+| `alert_sting.c (crossbow HUD)` | a crossbow bolt stuck in us replays the impact, pulses every XBP period and plays the pulled-out cue; fed by the local crossbow-damage hook and `NEVT_XBOLT 0x6E`; private `xbow_hud.h` PCM | Audio (PCM) | P2 | net, audio, hook, data | 0 | net/audio/crossbow-hud-core.hpp, net/audio/crossbow-hud-pcm.hpp, net/audio/crossbow-hud.{hpp,cpp}, engine/pcm.cpp | ported (native core + data-gated sink: the damage hook names the new hit, the pinned wire only echoes our own bolt state, death / respawn clear it, and peer puppet visuals stay unported; without `TO1_XBOW_HUD_PCM` no impact or pulse voice starts) |
+| `alert_sting.c (stun cough)` | our stun coughs are muffled 2-D; a stunned peer's puppet coughs in 3-D at 1150 ms on its `NEVT_STUNNED 0x45` stamp, gender-picked without repeats; private `stun_cough.h` PCM | Audio (PCM) | P2 | net, audio, hook, data | 0 | net/audio/stun-cough-core.hpp, net/audio/stun-cough-pcm.hpp, net/audio/stun-cough.{hpp,cpp}, engine/pcm.cpp | ported (native core + data-gated sink: peer stamp uses the replicated puppet SID, respawn clears it, and the local look supplies our gender; without `TO1_STUN_COUGH_PCM` no voice, cadence stamp or RNG is consumed) |
+| `immersion.c (near miss)` | enemy shot passes within 2.5 m of our head without hitting: replicated shot line (`MSG_SHOTRAY` 0xAF / `NEVT_SHOTRAY`), 120 ms hit-cancelled whizz + alert sting; whizz waves are private `sp_bullet_by.h` data | Audio (PCM) | P2 | net, audio, camera, data | 2 `t2r-no-shotray.txt` (send), `t2r-no-near-miss.txt` (play) | net/audio/near-miss-core.hpp, net/audio/near-miss-pcm.hpp, net/audio/near-miss.{hpp,cpp}, net/protocol/net-protocol.hpp, net/game/net-replication.cpp, net/game/net-hooks.cpp, loader/boot.cpp, tests/near_miss_core_test.cpp | ported (native — sole owner of the near-miss producer: byte-identical 17-byte `ShotRayEvent` on `NEVT_SHOTRAY` 0xAF with no renumbering, 16-entry ring + 4-entry pending queue, 400 ms freshness / 120 ms delay / 250 ms hit cancel / 150 ms whizz cooldown / 66 ms send rate, ext two-ray static-world LOS from root+1.5 m to +0.6/+1.3 m, camera-right equal-power pan with the 0.85 clamp, xorshift32 wave pick and the unfloored gain tail. The alert sting still fires when the private wave cannot start; only a started voice consumes the whizz cooldown. Whizz PCM stays silent without `TO1_BULLET_BY_PCM` and a private `bullet_by_pcm_data.hpp`; `t2r-no-shotray.txt` / `t2r-no-near-miss.txt` are read-only, state resets with the match and ExtLoaded yields. Divergences documented in `near-miss.hpp`: shot source is the reticle pair, LOS cache keyed by the peer puppet SID (`p.npcSid`), ring written on the game thread. Pure rules covered by `near_miss_core_test.cpp`; private waves, runtime DC natives and live A/B cannot be checked locally) |
 | `bomb_roll.c` | thrown bombs: impact / bounce / roll sounds from their per-frame position (TLOU2 waves, PCM mixer) | Audio (PCM) | P2 | audio, data | 3 e.g. `t2r-bomb-roll-native.txt` | — | not started |
 | `death_theme.c` | death screen drone: a quiet TLOU2 SP tonal bed under the death sting / execution victim cue, loops, fades out at respawn (PCM mixer) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-death-drone.txt` | — | not started |
 | `downed_music.c` | downed music: three TLOU2 SP layers crossfaded by the bleed-out fraction, darker the closer to bleed-out (PCM mixer) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-downed-music.txt` | — | not started |
@@ -116,7 +120,7 @@ parent's row and are **not** counted again.
 | `intvox.c` | Interrogation voices: the interrogator's demand / the held victim's plea on the 2013 interrogate-enter pairs (real TLOU2 enemy takes, BEG_INT of vox_lines.py; t2r-no-int-vox.txt) | Audio (PCM) | P2 | audio, hook, data | 6 e.g. `t2r-ivx-native.txt` | — | not started |
 | `pmsfx.c` | post-match sounds: No Return's score count / stamp / page waves (rip_postmatch_sfx.py) | Audio (PCM) | P2 | audio, data | 1 e.g. `t2r-no-postmatch-sfx.txt` | — | not started |
 | `pullout_sting.c` | Prone pull-out victim feel (SP trace): grab kick + grunt, struggle screen, fail death sfx/vox + the set's decay | Audio (PCM) | P2 | camera | 8 e.g. `t2r-no-pullout-sting.txt` | — | not started |
-| `shiv_sting.c` | shock sting + struggle drums for the shiv victim (PCM mixer, faded when the death sting starts), with the combat-music cut / hold and the stunned-victim alert gate | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | net/audio/shivsting.cpp, net/audio/music-hold.*, gameplay/stun-lock.*, engine/pcm.cpp | in progress |
+| `shiv_sting.c` | shock sting + struggle drums for the shiv victim (PCM mixer, faded when the death sting starts), with the combat-music cut / hold and the stunned-victim alert gate | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-no-shiv-music.txt` | net/audio/shivsting.cpp, net/audio/music-hold.*, gameplay/stun-lock.*, net/audio/xcam-bridge.*, engine/pcm.cpp | in progress (the paired-move producer is enabled and feeds the exec / shiv state machines; private shiv PCM and DC music sinks remain absent) |
 | `sp_parity.c` | SP parity (re/sp-parity.md): our own foley = SP player foley, global level check, opt-in MP sound census | Audio (PCM) | P2 | net, camera, hook | 9 e.g. `t2r-agility-fxdrop-off.txt` | — | not started |
 | `vintage.c` | build 191: Vintage Rifle — the Part I hunting rifle gunshot from the side file (`p1-vintage.pcm`), else the hunting rifle event; bolt copies via generated `vintage_bolt_built.h` (`__has_include`) | Audio (PCM) | P2 | audio, data | 2 e.g. `t2r-vintage-p1.txt` | engine/pcm.*, net/audio/* | not started |
 | `voxchar.c` | build 191: a player body whose head has no voice (KELLIE) gets its faction's voice group | Audio (PCM) | P2 | audio, net | 0 | engine/pcm.*, net/audio/* | not started |
@@ -478,17 +482,36 @@ latch stays clear and the answer is 1 while down.
 The shiv-victim chain from `t2r-ext.c` / `shiv_sting.c` / `exec_music.c` is now carried by four
 pure cores plus inert seams. `gameplay/stun-lock.*` owns the 3.5 s lock, the 0.35 s blend-out, the
 1.2 s post-end grace and the front/back shiv victim check; the network producer that starts a stun
-is still absent, so it stays clear until a host feeds it. `net/audio/music-hold.*` owns the ext's
+is still absent, but a rising `stun_lock::Until()` now bridges its audio confirmation into the
+stun tone and the stun-cough own cadence. `net/audio/music-hold.*` owns the ext's
 `g_msHoldUntil` / `g_msResumeAt` / `g_msNowatchUntil` / `g_msDead` semantics and the `MusicPlay`
 sid (`FNV64("*name*")`), with an inert DC sink. `net/audio/exec-music.*` owns the pending-cue
 timing (hit seconds 2.44 / 2.35 / 2.31 / 2.35 / 2.39 s against the death-screen delay), the 12.5 s
 cap, the 300 ms fade and the 1.5 s resume. `net/audio/xcam.*` reproduces the `xcam_start` role-2
 routing: an upgraded pipe-mod one-shot suppresses exec music, a shiv (except
 `shiv-ground-execution-*`) dispatches the shiv sting / drum cut, a `ctxdown` move takes neither,
-and everything else victim-side starts the exec cue. The PCM cue producers and the DC music calls
-stay gated behind sinks; ext remains the behaviour owner. The new final render-camera observer
-(`engine/render-camera.*`) is read-only and drives none of these cues; the camera-writing path stays
-unported.
+and everything else victim-side starts the exec cue. `net/audio/xcam-bridge.*` is now **enabled**:
+it polls `net::anim::paired::Get()` once per frame from `boot::FrameTick()`, maps a 2013 move id
+back to its ext name and authored kill frame, dispatches once per paired-move uid, and yields to
+`t2r-ext.dll`. The bridge drives the exec/shiv state machines, but their private PCM and DC music
+sinks are still absent, so the cues are state-only locally. The render camera itself and its final
+render-camera hook stay unported; `engine/render-camera.*` remains a read-only observer.
+
+`alert_sting.c`'s other three subfeatures now have native owners beside the alert sting:
+`net/audio/stun-tone.*` owns the 3.45 s impact + tinnitus bed with the burst-radius, 1500 ms
+retrigger, 700 ms unconfirmed fade and 250 ms stun-over fade rules; its 2013 radius comes from the
+`NEVT_STUN_BURST 0x4F` receiver and its confirmation from the local stun edge.
+`net/audio/crossbow-hud.*` owns the impact / 900 ms pulse / pull-out transition from the
+crossbow-damage feed plus the pinned `NEVT_XBOLT 0x6E` wire; peer bolt state has no native puppet
+visual port. `net/audio/stun-cough.*` owns the 1150 ms gender-picked cadence, the muffled 2-D own
+voice and the 2.5 / 45 m peer voice, fed by `NEVT_STUNNED 0x45`, respawn clears and the local look.
+Each hides its game-derived PCM behind a guarded data header (`TO1_STUN_TONE_PCM`,
+`TO1_XBOW_HUD_PCM`, `TO1_STUN_COUGH_PCM`): with no data no voice, cadence stamp or RNG is consumed.
+`net/audio/near-miss.*` now also owns the ext's atomic shot-ray ring, rewindable snapshots,
+handle-keyed LOS cache and clip-decrement shot source; the raw `hk_Shot` call was removed so it
+cannot double-send `NEVT_SHOTRAY 0xAF`. The legacy `t2r-los-inside-ps38.txt` opt-out is not ported;
+the inside-collider rule is always used. No live A/B was run and the private waves are absent
+locally, so audible parity remains unverified.
 
 `net/audio/music-tier.*` now also accepts injected enemy-sight and forward-cone samplers (the ext's
 `MusicSlotSeen` / `MusicSlotCos`) and exports the ext's enemy-aware event values as pure helpers

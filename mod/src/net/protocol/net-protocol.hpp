@@ -210,9 +210,17 @@ enum NetEventType : uint8_t {
     // peer-stun rising edge that feeds the music "enemy stunned" (5.0) input. Pinned to the
     // ext's exact byte for cutover interop.
     NEVT_STUNNED     = 0x45,   // StunnedEvent
+    // ext MSG_STUN_BURST 0x4F (t2r-ext.c stun_burst_recv): the thrower's own stun-bomb burst
+    // point, sent at the frame its copy explodes (~0.1 s before the stun is judged). Payload is
+    // [f32 pos x3]; a current ext build appends [u64 sid], which older peers omit. Pinned to the
+    // ext's exact byte for cutover interop. Feeds the native stun-tone owner.
+    NEVT_STUN_BURST  = 0x4F,   // StunBurstEvent
     NEVT_ARMOR_HIT   = 0x4A,   // ext MSG_ARMOR_HIT: [u8 victim][u8 piece][u8 broke][f32 absorbed][f32 left]
     NEVT_PSYNC       = 0x4B,   // ext MSG_PSYNC: paired-move lifecycle / ping / pong / ack
     NEVT_HIT_REL     = 0x6C,   // ext MSG_HIT_REL: reliable one-shot hits (net/match/hit-rel.hpp)
+    // ext MSG_XBOLT 0x6E (t2r-ext.c): the victim's crossbow-bolt keep-alive / clear, pinned to
+    // the ext's exact byte for cutover interop. See CrossbowBoltEvent for the payload.
+    NEVT_XBOLT       = 0x6E,   // CrossbowBoltEvent
     NEVT_DODGE_SWING = 0x97,   // ext MSG_DODGE_SWING: a free melee swing was armed
     NEVT_DODGE_RES   = 0x98,   // ext MSG_DODGE_RES: a blow was dodged, play the miss
     NEVT_DODGE_PRESS = 0x99,   // ext MSG_DODGE_PRESS: dodge pressed (immune / dir / clip sid)
@@ -420,6 +428,26 @@ struct ShotRayEvent {
     uint8_t lenM;
 };
 static_assert(sizeof(ShotRayEvent) == 17, "ShotRayEvent layout");
+
+// ext MSG_STUN_BURST payload: [f32 pos x3] ([u64 sid] is appended by a current build and is
+// optional here -- the native receiver reads only the fixed 12-byte prefix). The ext rejects
+// non-finite / absurd coordinates before using the point; that validation lives in the owner.
+struct StunBurstEvent {
+    float pos[3];
+};
+static_assert(sizeof(StunBurstEvent) == 12, "StunBurstEvent layout");
+
+// ext MSG_XBOLT payload: [u8 state 1 bolt in / 0 out][u8 shoulder 0 left / 1 right]
+// [u8 shooter slot][u8 pull 1 came out alive (pull / heal), 0 down / death / match end].
+// Broadcast by the victim; the native crossbow-HUD owner uses `state` + `hitMs` (stamped on
+// receive) for the impact / pulse loop and `pull` for the pulled-out cue.
+struct CrossbowBoltEvent {
+    uint8_t state;
+    uint8_t shoulder;
+    uint8_t shooter;
+    uint8_t pull;
+};
+static_assert(sizeof(CrossbowBoltEvent) == 4, "CrossbowBoltEvent layout");
 
 struct MatchOverEvent {
     int8_t winner;

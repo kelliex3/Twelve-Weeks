@@ -56,6 +56,10 @@
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
+#include "stun-tone.hpp"
+#include "crossbow-hud.hpp"
+#include "stun-cough.hpp"
+#include "player-status.hpp"
 #include "music-tier.hpp"
 #include "music-sight.hpp"
 #include "engine/render-camera.hpp"
@@ -238,8 +242,26 @@ namespace net::replication {
         s_deathPending[netSlot] = false;   // a stale latch must never kill a fresh puppet
         s_deathAnimated[netSlot] = false;
         s_deathPendingAge[netSlot] = 0.0f;
+        // A fresh life clears the ext's g_stun_pup_at[s] / bolt-in state; neither a
+        // peer's cough cadence nor a stuck bolt may survive the respawn.
+        net::audio::stun_cough::ClearPeer(netSlot);
         TheMatch().slotState[netSlot].respawnGrace = kRespawnGraceSeconds;
     }
+
+    // ext xb_send (MSG_XBOLT): [state][shoulder][shooter][pull]. The victim owns the
+    // state; a new hit sends keep-alive (state 1), the bolt leaving sends state 0 with
+    // pull set only when it came out through a pull / heal.
+    static void SendCrossbowBolt(uint8_t state, int shooter, bool pulledOut)
+    {
+        CrossbowBoltEvent bolt{};
+        bolt.state    = state;
+        bolt.shoulder = 1;                 // ext's default g_xb.side (right shoulder)
+        bolt.shooter  = shooter >= 0 && shooter < kMaxNetPlayers
+                          ? static_cast<uint8_t>(shooter) : 0xFFu;
+        bolt.pull     = pulledOut ? 1u : 0u;
+        net::session::SendEvent(NEVT_XBOLT, bolt);
+    }
+
     static void TickAliveGrace(float dt)
     {
         for (auto& s : TheMatch().slotState)
@@ -589,6 +611,7 @@ namespace net::replication {
 
         if (slot == net::session::MySlot()) {
             auto& L = LocalState();
+            net::audio::crossbow_hud::NoteClear(false);  // a new life cannot keep a bolt
             if (L.respawnPending || L.respawnTimer.Running()) {
                 L.respawnTimer.Clear();
                 L.respawnLastSec = -1;
@@ -1576,6 +1599,8 @@ namespace net::replication {
 
         if (dead && !L.wasDead && !L.respawnTimer.Running() && !scoreboard) {
             ReportOwnDeath();
+            net::audio::crossbow_hud::NoteClear(false);  // ext xb_clear("dead")
+            SendCrossbowBolt(0, L.lastDamagerSlot, false);
             if (haveLives) StartRespawnCountdown();
             else           EnterElimSpectate();
         }
@@ -1802,10 +1827,21 @@ namespace net::replication {
             // shot actually connected. The alert sting reads the calm clock BEFORE the music
             // heat input marks this frame hot (AlertstingCombat then MusicEvent("we took a hit")).
             if (evt.damage > 0.0f && evt.damage < 100000.0f) {
+                const uint64_t hitAt = ::GetTickCount64();
                 net::audio::near_miss::NoteHitFrom(
-                    static_cast<int>(senderSlot), ::GetTickCount64());
+                    static_cast<int>(senderSlot), hitAt);
                 net::audio::alertsting::Combat("shot / hit out of the quiet");
                 net::audio::music_tier::NoteEvent(3.0f, "we took a hit");
+
+                // ext xb_hit (recv_hit_hook): a crossbow bolt that leaves us alive starts
+                // the HUD impact / pulse loop and is broadcast as MSG_XBOLT. The HUD owner
+                // is the sole owner here; the ext's bolt bleed gameplay stays absent.
+                if (evt.weaponSID == SID("crossbow") && !evt.lethalClaim &&
+                    net::player_status::LocalAlive() &&
+                    !net::player_status::LocalDowned()) {
+                    net::audio::crossbow_hud::NoteBolt(static_cast<int>(senderSlot), hitAt);
+                    SendCrossbowBolt(1, static_cast<int>(senderSlot), false);
+                }
             }
 
             auto& L = LocalState();
@@ -2122,13 +2158,50 @@ namespace net::replication {
 
         // ext MSG_STUNNED 0x45: the sender's local stun lock started. Ext plays the stun
         // reaction on that peer's puppet and stamps g_stunPupAt[slot], the rising edge that
-        // feeds the "enemy stunned" (5.0) tier input. The mod has no per-peer stun clip, so
-        // this receiver only feeds the tier; the tier also polls the peer puppet's own
-        // npc-is-stunned? state so the input is live without a local stun broadcaster.
+        // feeds the "enemy stunned" (5.0) tier input and the peer's cough cadence. The mod
+        // has no per-peer stun clip, but both audio consumers read this same stamp.
         case NEVT_STUNNED: {
             StunnedEvent evt;
             if (!ReadPod(data, size, evt)) break;
-            net::audio::music_tier::SetPeerStunned(static_cast<int>(senderSlot), true);
+            const int slot = static_cast<int>(senderSlot);
+            net::audio::music_tier::SetPeerStunned(slot, true);
+            const char* look = sender.LookOrDefault();
+            // Pass the puppet SID (ext pe+0x60) and no replicated root: the cough owner
+            // resolves the live entity's world position, as ext's pcm_play_at did.
+            net::audio::stun_cough::NotePeerStun(
+                slot, ::GetTickCount64(), look && std::strstr(look, "female") != nullptr,
+                static_cast<uint64_t>(sender.npcSid));
+            break;
+        }
+
+        // ext MSG_STUN_BURST 0x4F: the thrower's own burst point, sent ~0.1 s before the
+        // stun is judged. The ext's thrower-side audio starts from the engine explode (at
+        // this point); the native owner reads the same finite 12-byte prefix and applies
+        // the 2013 radius. A current build's trailing [u64 sid] is ignored.
+        case NEVT_STUN_BURST: {
+            StunBurstEvent evt;
+            if (!ReadPod(data, size, evt)) break;
+            bool sane = true;
+            for (float v : evt.pos)
+                sane = sane && std::isfinite(v) && std::fabs(v) <= 1.0e6f;
+            if (sane)
+                net::audio::stun_tone::Burst(static_cast<int>(senderSlot), evt.pos, 4.25f);
+            break;
+        }
+
+        // ext MSG_XBOLT 0x6E: the victim's bolt-in / bolt-out state. The local HUD owner
+        // is fed by the crossbow damage hook in NEVT_TAKE_DAMAGE; this receiver handles
+        // only a local echo (none is generated by the ring today) so peer bolt state can
+        // never trigger our own impact sound. Peer puppet visuals are not ported.
+        case NEVT_XBOLT: {
+            CrossbowBoltEvent evt;
+            if (!ReadPod(data, size, evt)) break;
+            if (senderSlot != net::session::MySlot())
+                break;
+            if (evt.state == 1)
+                net::audio::crossbow_hud::NoteBolt(static_cast<int>(senderSlot), ::GetTickCount64());
+            else if (evt.state == 0)
+                net::audio::crossbow_hud::NoteClear(evt.pull != 0);
             break;
         }
 
@@ -2218,6 +2291,10 @@ namespace net::replication {
         net::audio::music_sight::Reset();
         ::engine::render_camera::Reset();
         net::audio::near_miss::Reset();
+        net::audio::alertsting::Reset();  // alert-sting quiet / gap / delayed-play clocks
+        net::audio::stun_tone::Reset();
+        net::audio::crossbow_hud::Reset();
+        net::audio::stun_cough::Reset();
         net::audio::music_hold::Reset();
         net::audio::exec_music::Reset();
         net::audio::shivsting::Reset();

@@ -1,8 +1,11 @@
 // ported from tools/ext/alert_sting.c (the alert sting; the stun tone / crossbow HUD / stun
-// cough sub-features are separate and not ported)
+// cough sub-features are separate and not ported). Pure rules: alertsting-core.hpp.
 
 #include "alertsting.hpp"
 
+#include "alertsting-pcm.hpp"
+
+#include "boot.hpp"
 #include "engine/flag.hpp"
 #include "engine/pcm.hpp"
 
@@ -15,92 +18,77 @@
 
 #include <cstdint>
 
-#ifdef T2R_DATA_ALERT_STING
-#include "alert_sting.h"    // generated (private): als_blob, AL_N, AL_RATE
-#endif
-
 namespace net::audio::alertsting {
 
     namespace {
 
-        constexpr uint64_t kQuietMs = 15000;   // ext ALS_QUIET_MS
-        constexpr uint64_t kGapMs   = 6000;    // ext ALS_GAP_MS
-        constexpr uint64_t kDelayMs = 100;     // ext ALS_DELAY_MS
+        namespace core = net::audio::alertsting::core;
+        namespace sink = net::audio::alertsting::pcm;
 
-        uint64_t    g_alsLast      = 0;
-        uint64_t    g_alsCalmMs    = 0;        // last tick the combat music was calm (tier 0)
-        uint64_t    g_alsThreatMs  = 0;        // last enemy-caused music input (hit / near miss)
-        uint64_t    g_alsDue       = 0;        // when the delayed sting is due
-        const char* g_alsDueWhy    = nullptr;
+        core::State g_state;
+
+        bool ExtOwns() noexcept { return boot::ExtLoaded(); }
 
     }
 
     void Play(float level, const char* why)
     {
-        (void)why;      // only the (debug-only) logs use it
-        if (engine::flag::Present("t2r-no-alert-sting.txt"))
+        if (ExtOwns() || engine::flag::Present("t2r-no-alert-sting.txt"))
             return;
-        if (!net::player_status::MatchLive())
-            return;
+        const char* tag = why ? why : "?";
+        (void)tag;                             // log-only when TO1_DEBUG is off
         const uint64_t now = GetTickCount64();
-        if (g_alsLast && now - g_alsLast < kGapMs) {
-            TO1_LOG("[ALERTSTING] %s ignored - played %llu ms ago\n", why ? why : "?",
-                static_cast<unsigned long long>(now - g_alsLast));
+        const float gain = level * engine::pcm::MusicUserVolume();
+        const core::PlayGate gate = core::CheckPlay(g_state, now,
+                                                    net::player_status::MatchLive(), gain);
+        if (gate == core::PlayGate::kNotLive)
+            return;
+        if (gate == core::PlayGate::kGap) {
+            TO1_LOG("[ALERTSTING] %s ignored - played %llu ms ago\n", tag,
+                    static_cast<unsigned long long>(now - g_state.last));
             return;
         }
-        const float g = level * engine::pcm::MusicUserVolume();
-        if (g <= 0.0f)
-            return;
-#ifdef T2R_DATA_ALERT_STING
+        if (gate == core::PlayGate::kSilent)
+            return;                             // ext: g <= 0 -> nothing to play
+
         engine::pcm::Voice l, r;
-        if (!engine::pcm::PlayStereoRaw(als_blob, als_blob + AL_N, AL_N, g, AL_RATE, l, r)) {
-            TO1_LOG("[ALERTSTING] %s - mixer off / voices busy\n", why ? why : "?");
+        if (!sink::Play(gain, l, r)) {
+            TO1_LOG("[ALERTSTING] %s - %s\n", tag,
+                    sink::kHave ? "mixer off / voices busy" : "data not built (TO1_ALERT_STING_PCM off)");
             return;
         }
-        g_alsLast = now;
-        TO1_LOG("[ALERTSTING] %s - playing (%.2f s, gain %.2f)\n", why ? why : "?",
-            AL_N / static_cast<double>(AL_RATE), static_cast<double>(g));
-#else
-        (void)g;
-        TO1_LOG("[ALERTSTING] %s - data not built (T2R_DATA_ALERT_STING off)\n", why ? why : "?");
-#endif
+        core::CommitPlay(g_state, now);           // ext only stamps the gap on a started voice
+        TO1_LOG("[ALERTSTING] %s - playing (%.2f s, gain %.2f)\n", tag,
+                sink::Seconds(), static_cast<double>(gain));
     }
 
     void Combat(const char* why)
     {
-        const uint64_t now = GetTickCount64(), prev = g_alsThreatMs;
-        g_alsThreatMs = now;
-        // ext AlertstingCombat: the tier-0 requirement is the calm clock below -- music_tier::
-        // Tick refreshes it on every frame the tier is calm, so a fresh g_alsCalmMs means the
-        // combat music was tier 0 when the shot landed. The two explicit gates are the ext's
-        // own g_msDead / g_downed checks.
-        if (!net::player_status::MatchLive())
+        if (ExtOwns())
             return;
-        if (music_tier::Dead() || net::player_status::LocalDowned())
-            return;
-        if (!g_alsCalmMs || now - g_alsCalmMs > 1500)
-            return;
-        if (prev && now - prev < kQuietMs)
-            return;
-        g_alsDue = now + kDelayMs;
-        g_alsDueWhy = why;      // delayed ~0.1 s: it played too soon, right after getting hit
+        const uint64_t now = GetTickCount64();
+        core::Combat(g_state, now, net::player_status::MatchLive(),
+                     music_tier::Dead(), net::player_status::LocalDowned(), why);
     }
 
     void Tick()
     {
-        // ext AlertstingTick: the music layer's calm frames (g_msTier == 0) keep this clock
-        // fresh. music_tier::Tick runs first in boot::FrameTick, so this is the same frame's
-        // tier, matching the ext (FeatureCombatMusic -> AlertstingTick).
+        if (ExtOwns())
+            return;
+        // music_tier::Tick runs first in boot::FrameTick, so this is the same frame's tier.
         const uint64_t now = GetTickCount64();
-        if (music_tier::Tier() == 0)
-            g_alsCalmMs = now;
-        if (g_alsDue && now >= g_alsDue) {
-            g_alsDue = 0;
-            if (!music_tier::Dead() && !net::player_status::LocalDowned())
-                Play(0.8f, g_alsDueWhy ? g_alsDueWhy : "shot at");
-        }
+        const core::Due due = core::Tick(g_state, now, music_tier::Tier() == 0,
+                                         music_tier::Dead(),
+                                         net::player_status::LocalDowned());
+        if (due.fire)
+            Play(due.level, due.why);
         // (the ext also ticks the stun tone, the crossbow HUD and the stun cough here; those
         // are separate features and are not ported)
     }
 
-}
+    void Reset()
+    {
+        core::Reset(g_state);
+    }
+
+} // namespace net::audio::alertsting
