@@ -295,3 +295,7 @@ body.srv-test .bar { border-bottom-color: #d9822b; box-shadow: inset 0 -2px 0 #d
 .ck.inv:hover, .ck.inv.on { color: #15130a; background: #F0C83C; border-color: #F0C83C; }
 .ck.fix:hover, .ck.fix.on { color: #0b150b; background: #5BD05B; border-color: #5BD05B; }
 .rs-inv { color: #F0C83C; } .rs-fix { color: #5BD05B; }
+
+/* REPORTS sub tabs (bug reports / player reports) */
+.subtabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+.subtabs .btn.main .warn { color: #6a4c10; }

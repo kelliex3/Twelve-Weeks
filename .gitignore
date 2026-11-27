@@ -96,3 +96,5 @@ Thumbs.db
 .desloppify
 *.c~
 *.h~
+# admin-rs: private parts are never public
+tools/admin-rs/private/

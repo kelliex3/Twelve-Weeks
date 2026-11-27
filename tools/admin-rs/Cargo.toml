@@ -21,6 +21,9 @@ tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
 
 [features]
 heapprof = []
+# The private parts (player reports from the anti-cheat database) live in ./private (never on GitHub).
+# Without this feature the admin site builds with neutral stubs (src/privstub.rs).
+private = []
 
 [profile.release]
 opt-level = 3

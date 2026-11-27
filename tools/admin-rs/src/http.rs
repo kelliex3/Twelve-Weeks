@@ -701,6 +701,12 @@ impl App {
                 None => self.text(404, "no such video"),
             },
             "/api/match" => self.result(a.match_detail(&qs("id", ""))),
+            "/api/preports" => self.result(a.preports_list()),
+            "/api/preport" => self.result(a.preport_detail(&qs("id", ""))),
+            "/api/preport-demo" => match a.preport_demo(&qs("id", ""), &qs("demo", "")) {
+                Some((path, size)) => self.range(r, path, "application/gzip", size),
+                None => self.text(404, "no such recording"),
+            },
             "/api/chat" => {
                 let int = |k: &str, d: &str| -> Result<i64, String> {
                     let raw = qs(k, d);
@@ -797,6 +803,11 @@ impl App {
             "/api/teams-move" => self.json(200, &a.teams_move(&s("pid"))),
             "/api/report-handled" => self.result(a.mark_handled(&s("code"), flag("handled", true))),
             "/api/report-state" => self.result(a.mark_state(&s("code"), &s("state"))),
+            "/api/preport-state" => self.result(a.mark_preport_state(&s("id"), &s("state"), &self.who_label(&ident))),
+            "/api/notice-to" => {
+                let num = |k: &str, d: f64| body.get(k).filter(|v| py::truthy(v)).and_then(py::to_float).unwrap_or(d);
+                self.result(a.notice_to(&s("id"), &s("text"), num("seconds", 15.0), num("minutes", 60.0), &self.who_label(&ident)))
+            }
             _ => self.json(404, &json!({"ok": false, "error": "unknown action"})),
         }
     }

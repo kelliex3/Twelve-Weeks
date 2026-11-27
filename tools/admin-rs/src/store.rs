@@ -221,11 +221,24 @@ pub struct Group {
 pub struct Groups {
     pub list: Vec<Group>,
     by_id: HashMap<String, usize>,
+    by_tok: HashMap<String, usize>,
 }
 
 impl Groups {
     pub fn get(&self, id: &str) -> Option<&Group> {
         self.by_id.get(id).map(|&i| &self.list[i])
+    }
+
+    /// The person one install token belongs to.
+    pub fn by_token(&self, tok: &str) -> Option<&Group> {
+        self.by_tok.get(tok).map(|&i| &self.list[i])
+    }
+}
+
+impl Group {
+    /// The install tokens (64 hex) of this person.
+    pub fn tokens(&self) -> &[String] {
+        &self.tokens
     }
 }
 
@@ -253,6 +266,7 @@ struct State {
     alife_sum: HashMap<String, (f64, Value)>,
     acct_index: Option<(Instant, Arc<HashMap<String, (String, String)>>)>,
     metas: HashMap<PathBuf, (Sig, Option<Arc<Map<String, Value>>>)>,
+    preports_new: Option<(Instant, usize)>,
 }
 
 pub struct Admin {
@@ -322,6 +336,7 @@ impl Admin {
                 alife_sum: HashMap::new(),
                 acct_index: None,
                 metas: HashMap::new(),
+                preports_new: None,
             }),
             file_lock: Mutex::new(()),
             groups_build: Mutex::new(()),
@@ -826,7 +841,13 @@ impl Admin {
             by_id.entry(g.id.clone()).or_insert(list.len());
             list.push(g);
         }
-        Ok(Groups { list, by_id })
+        let mut by_tok = HashMap::new();
+        for (i, g) in list.iter().enumerate() {
+            for t in &g.tokens {
+                by_tok.entry(t.clone()).or_insert(i);
+            }
+        }
+        Ok(Groups { list, by_id, by_tok })
     }
 
     pub fn name_for_steam(&self, sid: i64) -> Option<String> {
@@ -965,7 +986,7 @@ impl Admin {
             "clients": {"versions": clients, "outdated": outdated},
             "totals": {"players": pg.as_ref().map(|p| p.list.len()).unwrap_or(0), "clans": seen.len(), "clansAlive": seen.iter().filter(|s| s.1).count(),
                        "matchesLogged": ended.len(), "matches24h": ended.iter().filter(|m| m.ended.map(|e| now - e < 86400.0).unwrap_or(false)).count(),
-                       "reportsNew": reports_new},
+                       "reportsNew": reports_new, "playerReportsNew": self.preports_new()},
             "errors": errs, "canKick": lv.source == "live"
         }))
     }
@@ -1225,7 +1246,8 @@ impl Admin {
             Value::Null
         };
         let earliest = self.log.as_ref().and_then(|l| l.lock().earliest());
-        Ok(json!({"ok": true, "id": pid, "name": g.display, "tag": g.tag, "aliases": g.names.iter().collect::<Vec<_>>(), "steamid": g.steamid,
+        let against = self.preports_named(crate::private::preports_against(&self.ac_db(), g.tokens(), g.steamid), &pg);
+        Ok(json!({"ok": true, "sanctions": self.sanctions(g), "playerReports": against, "id": pid, "name": g.display, "tag": g.tag, "aliases": g.names.iter().collect::<Vec<_>>(), "steamid": g.steamid,
                   "installs": g.ntokens, "matches": g.matches, "wins": g.wins, "losses": g.losses, "draws": g.draws, "kills": g.kills, "deaths": g.deaths,
                   "avgParts": avg, "lastSeen": g.last_seen, "version": g.version, "platform": g.platform, "clan": g.clan, "morale": morale,
                   "people": people_rows, "alive": alive_n, "feed": feed, "alife": null, "history": hist, "reports": reps, "online": online, "ban": self.ban_state(g), "mute": self.mute_state(g),
@@ -1747,6 +1769,22 @@ impl Admin {
     }
 
     pub fn notices(&self) -> Value {
+        let mut v = self.notices_raw();
+        if let Some(Value::Array(ps)) = v.get_mut("personal") {
+            let pg = self.player_groups().ok();
+            for p in ps.iter_mut() {
+                if let Some(o) = p.as_object_mut() {
+                    let g = o.get("token").and_then(Value::as_str).and_then(|t| pg.as_ref().and_then(|pg| pg.by_token(t)));
+                    o.insert("name".into(), json!(g.map(|g| g.display.clone())));
+                    o.insert("playerId".into(), json!(g.map(|g| g.id.clone())));
+                    o.remove("token");
+                }
+            }
+        }
+        v
+    }
+
+    fn notices_raw(&self) -> Value {
         match self.call("/notices", None, 1.5) {
             Ok(v) => v,
             Err(e) => json!({"ok": false, "error": e.reason(), "notices": []}),
@@ -1975,6 +2013,242 @@ impl Admin {
         let who = clean_ban(who, 60);
         self.audit(&format!("UNBAN {} by {} (ban list)", entry, if who.is_empty() { "?" } else { &who }));
         Ok(json!({"ok": true, "entry": entry, "removed": gone.len()}))
+    }
+
+    // ------------------------------------------------------------------ moderation history
+    /// One player's moderation history from admin-actions.log, newest first: bans, unbans, bans that ran out, mutes, unmutes and
+    /// personal notices, with length, who and why. Lines are found by Steam id / mute key, or by name for lines without one.
+    pub fn sanctions(&self, g: &Group) -> Value {
+        use std::sync::OnceLock;
+        static RE: OnceLock<Option<(regex::Regex, regex::Regex)>> = OnceLock::new();
+        let res = RE.get_or_init(|| Some((regex::Regex::new(r" for (good|[0-9.]+ min) by ").ok()?, regex::Regex::new(r" by (.+?)(?:: (.*))?$").ok()?)));
+        let Some((re_for, re_by)) = res else { return json!({"list": []}) };
+        let text = std::fs::read_to_string(self.dbdir.join("admin-actions.log")).unwrap_or_default();
+        let mut needles: Vec<String> = Vec::new();
+        if g.steamid != 0 {
+            needles.push(format!("({})", g.steamid));
+            needles.push(format!("s:{}", g.steamid));
+        }
+        needles.extend(mute_keys(g).into_iter().filter(|k| k.starts_with("t:")));
+        let sid = g.steamid.to_string();
+        let mut out = Vec::new();
+        let (mut bans, mut mutes, mut notes, mut forever) = (0, 0, 0, false);
+        let mut longest: f64 = 0.0;
+        for line in text.lines() {
+            if line.len() < 21 || !line.is_char_boundary(19) || !line.is_char_boundary(20) {
+                continue;
+            }
+            let (ts, rest) = (&line[..19], line[20..].trim_end());
+            let Some(kind) = ["BAN ENDED", "UNBAN", "UNMUTE", "BAN", "MUTE", "NOTICE TO"].into_iter().find(|k| rest.starts_with(&format!("{} ", k))) else {
+                continue;
+            };
+            let body = &rest[kind.len() + 1..];
+            // the name part: up to " (" (the ids) or " by "
+            let name = body.split(" (").next().unwrap_or("").split(" by ").next().unwrap_or("").trim().to_lowercase();
+            let hit = needles.iter().any(|n| body.contains(n.as_str()))
+                || (kind == "BAN ENDED" && (name == sid || g.alias.contains(&name)))
+                || (g.steamid == 0 && body.contains("(no steam id)") && g.alias.contains(&name))
+                || (kind == "UNMUTE" && !body.contains(" (") && g.alias.contains(&name));
+            if !hit {
+                continue;
+            }
+            let minutes: Value = match re_for.captures(body).and_then(|c| c.get(1)) {
+                Some(m) if m.as_str() == "good" => Value::Null,
+                Some(m) => json!(m.as_str().trim_end_matches(" min").parse::<f64>().unwrap_or(0.0)),
+                None => json!(false),
+            };
+            let (by, reason) = if kind == "BAN ENDED" {
+                (String::new(), String::new())
+            } else {
+                match re_by.captures(body) {
+                    Some(c) => (c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default(), c.get(2).map(|m| m.as_str().to_string()).unwrap_or_default()),
+                    None => (String::new(), String::new()),
+                }
+            };
+            match kind {
+                "BAN" => {
+                    bans += 1;
+                    match minutes.as_f64() {
+                        Some(m) => longest = longest.max(m),
+                        None => forever = true,
+                    }
+                }
+                "MUTE" => mutes += 1,
+                "NOTICE TO" => notes += 1,
+                _ => {}
+            }
+            out.push(json!({"at": ts, "kind": kind, "minutes": minutes, "by": by, "reason": reason}));
+        }
+        out.reverse();
+        json!({"bans": bans, "mutes": mutes, "notices": notes, "everForGood": forever, "longestBanMin": longest, "list": out})
+    }
+
+    // ------------------------------------------------------------------ player reports (launcher + in-game REPORT PLAYER)
+    fn ac_db(&self) -> PathBuf {
+        crate::private::ac_db(&self.dbdir)
+    }
+
+    fn preport_states(&self) -> Map<String, Value> {
+        match self.read_json("preport-states.json") {
+            Some(Value::Object(m)) => m,
+            _ => Map::new(),
+        }
+    }
+
+    /// Player report rows with the reporter / reported player's names and profile ids, and the admin state (new / investigating /
+    /// fixed, kept by the admin site in preport-states.json). The raw install tokens are left out.
+    fn preports_named(&self, rows: Vec<Value>, pg: &Groups) -> Vec<Value> {
+        let st = self.preport_states();
+        rows.into_iter()
+            .map(|mut r| {
+                let id = r.get("id").and_then(Value::as_i64).unwrap_or(0).to_string();
+                let rep = r.get("reporter").and_then(Value::as_str).and_then(|t| pg.by_token(t));
+                let tsid = r.get("targetSid").and_then(Value::as_i64).unwrap_or(0);
+                let tgt = r.get("target").and_then(Value::as_str).and_then(|t| pg.by_token(t));
+                let tgt = tgt.or_else(|| if tsid != 0 { pg.list.iter().find(|g| g.steamid == tsid) } else { None });
+                let state = match st.get(&id).and_then(Value::as_str) {
+                    Some("investigating") => "investigating",
+                    Some("fixed") => "fixed",
+                    _ => "new",
+                };
+                if let Some(o) = r.as_object_mut() {
+                    o.insert("reporterName".into(), json!(rep.map(|g| g.display.clone())));
+                    o.insert("reporterId".into(), json!(rep.map(|g| g.id.clone())));
+                    o.insert("targetId".into(), json!(tgt.map(|g| g.id.clone())));
+                    if let Some(g) = tgt {
+                        o.insert("targetDisplay".into(), json!(g.display));
+                    }
+                    o.insert("state".into(), json!(state));
+                    o.remove("reporter");
+                    o.remove("target");
+                }
+                r
+            })
+            .collect()
+    }
+
+    /// How many player reports are still NEW (for the top bar dot; counted at most every 20 s).
+    fn preports_new(&self) -> usize {
+        if let Some((t, n)) = self.state().preports_new {
+            if t.elapsed().as_secs_f64() < 20.0 {
+                return n;
+            }
+        }
+        let st = self.preport_states();
+        let n = crate::private::preports(&self.ac_db(), 500).iter().filter(|r| !st.contains_key(&r.get("id").and_then(Value::as_i64).unwrap_or(0).to_string())).count();
+        self.state().preports_new = Some((Instant::now(), n));
+        n
+    }
+
+    pub fn preports_list(&self) -> Result<Value, String> {
+        let pg = self.player_groups()?;
+        let rows = self.preports_named(crate::private::preports(&self.ac_db(), 500), &pg);
+        let n = |s: &str| rows.iter().filter(|r| r.get("state").and_then(Value::as_str) == Some(s)).count();
+        Ok(json!({"available": crate::private::AVAILABLE, "new": n("new"), "investigating": n("investigating"), "fixed": n("fixed"), "reports": rows}))
+    }
+
+    /// One player report with the logs that help: the match (players, results, chat), the reported player's recent chat lines, their
+    /// moderation history and other reports, and the anti-cheat case, findings and recordings of that match.
+    pub fn preport_detail(&self, id: &str) -> Result<Value, String> {
+        let pg = self.player_groups()?;
+        let Some(nid) = id.trim_start_matches(['R', 'r']).parse::<i64>().ok() else {
+            return Ok(json!({"ok": false, "error": "bad report id"}));
+        };
+        let db = self.ac_db();
+        let Some(raw) = crate::private::preport(&db, nid) else {
+            return Ok(json!({"ok": false, "error": "no such player report"}));
+        };
+        let tgt_tok = raw.get("target").and_then(Value::as_str).unwrap_or("").to_string();
+        let tsid = raw.get("targetSid").and_then(Value::as_i64).unwrap_or(0);
+        let mut r = self.preports_named(vec![raw], &pg).pop().unwrap_or(Value::Null);
+        let tgt = pg.by_token(&tgt_tok).or_else(|| if tsid != 0 { pg.list.iter().find(|g| g.steamid == tsid) } else { None });
+        let mid = r.get("mid").and_then(Value::as_str).unwrap_or("").to_string();
+        let m = self.match_detail(&mid).ok().filter(|v| v.get("ok").map(py::truthy).unwrap_or(false));
+        let (chat, sanctions, others) = match tgt {
+            Some(g) => (
+                self.chat("", "", &g.id, 0, 60).ok().and_then(|v| v.get("lines").cloned()).unwrap_or(json!([])),
+                self.sanctions(g),
+                self.preports_named(crate::private::preports_against(&db, g.tokens(), g.steamid), &pg),
+            ),
+            None => (json!([]), Value::Null, Vec::new()),
+        };
+        if let Some(o) = r.as_object_mut() {
+            o.insert("ok".into(), json!(true));
+            o.insert("match".into(), m.unwrap_or(Value::Null));
+            o.insert("targetChat".into(), chat);
+            o.insert("targetSanctions".into(), sanctions);
+            o.insert("targetReports".into(), Value::Array(others.into_iter().filter(|x| x.get("id").and_then(Value::as_i64) != Some(nid)).collect()));
+            o.insert("mute".into(), tgt.map(|g| self.mute_state(g)).unwrap_or(Value::Null));
+            o.insert("ban".into(), tgt.map(|g| self.ban_state(g)).unwrap_or(Value::Null));
+            if let Some(Value::Array(ro)) = o.get_mut("roster") {
+                for p in ro.iter_mut() {
+                    if let Some(po) = p.as_object_mut() {
+                        let g = po.get("token").and_then(Value::as_str).and_then(|t| pg.by_token(t));
+                        po.insert("playerId".into(), json!(g.map(|g| g.id.clone())));
+                        po.insert("display".into(), json!(g.map(|g| g.display.clone())));
+                        po.remove("token");
+                    }
+                }
+            }
+            if let Some(Value::Array(ds)) = o.get_mut("demos") {
+                for d in ds.iter_mut() {
+                    if let Some(dobj) = d.as_object_mut() {
+                        dobj.remove("token");
+                    }
+                }
+            }
+        }
+        Ok(r)
+    }
+
+    pub fn mark_preport_state(&self, id: &str, state: &str, who: &str) -> Result<Value, String> {
+        let Some(nid) = id.trim_start_matches(['R', 'r']).parse::<i64>().ok() else {
+            return Ok(json!({"ok": false, "error": "bad report id"}));
+        };
+        if !matches!(state, "new" | "investigating" | "fixed") {
+            return Ok(json!({"ok": false, "error": "state must be new, investigating or fixed"}));
+        }
+        let _g = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut st = self.preport_states();
+        if state == "new" {
+            st.remove(&nid.to_string());
+        } else {
+            st.insert(nid.to_string(), json!(state));
+        }
+        let data = serde_json::to_vec_pretty(&Value::Object(st)).map_err(|e| e.to_string())?;
+        write_atomic(&self.dbdir.join("preport-states.json"), &data).map_err(|e| format!("cannot save: {}", e))?;
+        self.audit(&format!("PLAYER REPORT R{} -> {} by {}", nid, state, if who.is_empty() { "?" } else { who }));
+        self.state().preports_new = None;
+        Ok(json!({"ok": true, "id": nid, "state": state}))
+    }
+
+    pub fn preport_demo(&self, id: &str, demo: &str) -> Option<(PathBuf, u64)> {
+        let nid = id.trim_start_matches(['R', 'r']).parse::<i64>().ok()?;
+        crate::private::demo_file(&self.ac_db(), nid, demo.parse().ok()?)
+    }
+
+    // ------------------------------------------------------------------ personal notices
+    /// A personal notice to one player: shown on their screen like a server message (in game and in the launcher), only to them;
+    /// if they are offline it waits `minutes` for them.
+    pub fn notice_to(&self, pid: &str, text: &str, seconds: f64, minutes: f64, who: &str) -> Result<Value, String> {
+        let pg = self.player_groups()?;
+        let Some(g) = pg.get(pid) else {
+            return Ok(json!({"ok": false, "error": "no such player"}));
+        };
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(json!({"ok": false, "error": "empty message"}));
+        }
+        let toks: Vec<&String> = g.tokens().iter().filter(|t| t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())).collect();
+        if toks.is_empty() {
+            return Ok(json!({"ok": false, "error": "this player has no install token"}));
+        }
+        let r = self.notice_call("/notice/to", json!({"tokens": toks, "text": py::head(text, 140), "seconds": seconds.clamp(2.0, 600.0), "minutes": minutes.clamp(1.0, 1440.0)}));
+        if r.get("ok").map(py::truthy).unwrap_or(false) {
+            let sid_text = if g.steamid != 0 { g.steamid.to_string() } else { "no steam id".into() };
+            self.audit(&format!("NOTICE TO {} ({}) by {}: {}", g.display, sid_text, if who.is_empty() { "?" } else { who }, py::head(text, 140)));
+        }
+        Ok(r)
     }
 
     fn audit(&self, line: &str) {
@@ -2430,7 +2704,7 @@ impl Admin {
             return Ok(json!({"ok": false, "error": "not muted"}));
         }
         self.mutes_write(&keep)?;
-        self.audit(&format!("UNMUTE {} by {}", g.display, if who.is_empty() { "?" } else { who }));
+        self.audit(&format!("UNMUTE {} ({}) by {}", g.display, ks.iter().cloned().collect::<Vec<_>>().join(","), if who.is_empty() { "?" } else { who }));
         Ok(json!({"ok": true, "name": g.display}))
     }
 

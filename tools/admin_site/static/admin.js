@@ -107,6 +107,9 @@ function noticePanel(nt) {
     const left = n.kind === "r" && n.endsAt ? "in " + dur(Math.max(0, Math.round(n.endsAt - Date.now() / 1000))) : n.endsAt ? "until " + when(n.endsAt) : "";
     return `<div class="tr"><span class="warn">${esc(NK[n.kind] || n.kind)}</span><span>${esc(n.text || "")}</span><span class="dim">${esc(left)}</span><span>${n.kind === "t" || n.kind === "r" ? `<button class="btn sm" data-nclear="${esc(n.id)}">${n.kind === "r" ? "CANCEL" : "REMOVE"}</button>` : ""}</span></div>`;
   }).join("") + "</div>" : '<div class="empty">NO ACTIVE NOTICE</div>';
+  const pl = (nt && nt.personal) || [];
+  if (pl.length) h += '<h3 style="margin-top:12px">PERSONAL NOTICES <span class="faint">(one player each; waiting until they come online or the time runs out)</span></h3><div class="tbl" style="--cols:190px 1fr 150px 90px">' + pl.map(n =>
+    `<div class="tr"><span>${plink(n.playerId, n.name)}</span><span>${esc(n.text || "")}</span><span class="dim">${n.endsAt ? "until " + esc(when(n.endsAt)) : ""}</span><span><button class="btn sm" data-nclear="${esc(n.id)}">REMOVE</button></span></div>`).join("") + "</div>";
   h += '<div class="row-in"><input class="tool-in grow" id="nt-text" maxlength="140" placeholder="Free text for all players">' +
     '<input class="tool-in num" id="nt-sec" value="8" title="seconds on screen (2-600)"><span class="dim">s</span><button class="btn main" data-nsend="1">SEND NOTICE</button></div>';
   h += '<div class="row-in"><input class="tool-in num" id="sd-min" value="10" title="minutes until the restart"><input class="tool-in grow" id="sd-why" maxlength="100" placeholder="Reason (optional)">' +
@@ -254,7 +257,7 @@ function viewPlayer(p) {
   const dec = p.wins + p.losses + p.draws;
   const wr = dec ? Math.round(p.wins / dec * 100) + "%" : "-";
   let h = '<button class="back" data-go="players">&lt; PLAYERS</button>';
-  h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(p.name)}</b><span>${p.online ? statePill(p.online.state) : '<span class="faint">OFFLINE</span>'} ${p.clan ? facPill(p.clan.factionName) : ""} ${p.canKick ? `<button class="btn sm danger" data-kick="${esc(p.online.pid)}" data-name="${esc(p.name)}">FORCE KICK</button>` : ""} ${muteBtn(p.id, p.name, !!p.mute)} ${banBtn(p.id, p.name, !!p.ban)} <button class="btn sm" data-go="chat/${esc(p.id)}">CHAT</button></span></div>`;
+  h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(p.name)}</b><span>${p.online ? statePill(p.online.state) : '<span class="faint">OFFLINE</span>'} ${p.clan ? facPill(p.clan.factionName) : ""} ${p.canKick ? `<button class="btn sm danger" data-kick="${esc(p.online.pid)}" data-name="${esc(p.name)}">FORCE KICK</button>` : ""} ${muteBtn(p.id, p.name, !!p.mute)} ${banBtn(p.id, p.name, !!p.ban)} ${noticeBtn(p.id, p.name)} <button class="btn sm" data-go="chat/${esc(p.id)}">CHAT</button></span></div>`;
   if (p.mute) h += note("MUTED " + muteLeft(p.mute.left) + (p.mute.reason ? ": " + p.mute.reason : ""), true);
   if (p.ban) h += note("BANNED " + banLeft(p.ban.left) + (p.ban.reason ? ": " + p.ban.reason : "") + "  (bans.txt: " + p.ban.line + ")", true);
   const nowMid = p.online && p.online.match ? String(p.online.match) : "";   // the daemon's live row names the match the player is in
@@ -271,6 +274,8 @@ function viewPlayer(p) {
     (p.matches === 0 ? "" : "") + "</div>" +
     (p.kills || p.deaths ? "" : '<div class="faint" style="font-size:11.5px;margin-top:8px;line-height:1.5">Kills, deaths and executions are not recorded by the server (the engine keeps them in the match).</div>') +
     '</div><div class="sec"><h3>CLAN</h3>' + clanBlock(p.clan, p.morale) + "</div></div>";
+  h += sanctionsBlock(p.sanctions);
+  if (p.playerReports && p.playerReports.length) h += `<div class="sec"><h3>PLAYER REPORTS AGAINST THEM (${p.playerReports.length})</h3>${prepTable(p.playerReports, true)}</div>`;
   if (p.clan && p.clan.status) h += `<div class="sec"><h3>CLAN, AS THE PLAYER SEES IT <span class="faint">(the launcher's CLAN tab, read-only; EN / PL button inside)</span></h3><iframe class="clanframe" title="clan" src="/clan.html?id=${encodeURIComponent(p.id)}"></iframe></div>`;
   if (p.feed.length) {      // English only (both sites get localisation later), the newest few open, the rest behind SHOW ALL
     const line = m => `<div class="feedline"><em>W${m.week} D${m.day}${m.kind === "alife" ? ' <span class="pill ok">A-LIFE</span>' : ""}</em>${esc(m.text)}</div>`;
@@ -448,9 +453,100 @@ function repChecks(r) {
   return `<span class="rchecks"><button class="ck inv${st === "investigating" ? " on" : ""}" data-rstate="${code}" data-to="${st === "investigating" ? "new" : "investigating"}" title="${st === "investigating" ? "Back to NEW" : "Mark INVESTIGATING"}">✓</button>` +
     `<button class="ck fix${st === "fixed" ? " on" : ""}" data-rstate="${code}" data-to="${st === "fixed" ? "new" : "fixed"}" title="${st === "fixed" ? "Back to NEW" : "Mark FIXED"}">✓</button></span>`;
 }
+// ---------------------------------------------------------------- player reports, moderation history, personal notices
+// Player reports (launcher REPORT PLAYER now, the in-game box from the next client update) get their own tab under REPORTS,
+// with the logs that help judging them; every player page lists earlier bans / mutes; admins can send one player a personal notice.
+function reportTabs(sub) {
+  const ov = S.ov && S.ov.totals ? S.ov.totals : {};
+  const b = (k, go, label, n) => `<button class="btn sm${sub === k ? " main" : ""}" data-go="${go}">${label}${n ? ` <span class="${sub === k ? "" : "warn"}">${n} NEW</span>` : ""}</button>`;
+  return `<div class="subtabs">${b("bugs", "reports", "BUG REPORTS", ov.reportsNew)}${b("players", "reports/players", "PLAYER REPORTS", ov.playerReportsNew)}</div>`;
+}
+function prepChecks(r) {
+  const st = r.state || "new", id = esc(r.id);
+  return `<span class="rchecks"><button class="ck inv${st === "investigating" ? " on" : ""}" data-pstate="${id}" data-to="${st === "investigating" ? "new" : "investigating"}" title="${st === "investigating" ? "Back to NEW" : "Mark INVESTIGATING"}">✓</button>` +
+    `<button class="ck fix${st === "fixed" ? " on" : ""}" data-pstate="${id}" data-to="${st === "fixed" ? "new" : "fixed"}" title="${st === "fixed" ? "Back to NEW (not handled)" : "Mark HANDLED"}">✓</button></span>`;
+}
+const PREP_STATE = { new: ["NEW", "warn"], investigating: ["INVESTIGATING", "rs-inv"], fixed: ["HANDLED", "rs-fix"] };
+function prepLabel(r) { const [t, c] = PREP_STATE[r.state || "new"]; return `<span class="${c}">${t}</span>`; }
+function prepReasons(r) { return (r.reasons || []).map(x => `<span class="pill ${x === "abuse" ? "warn" : "bad"}">${esc(x)}</span>`).join(" "); }
+function plink(id, name) { return id ? `<a href="#player/${esc(id)}">${esc(name || "?")}</a>` : esc(name || "?"); }
+function prepTable(list, short) {
+  let h = `<div class="tbl" style="--cols:64px 130px ${short ? "" : "150px "}150px 170px 1fr ${short ? "120px" : "210px"}"><div class="tr th"><span>CODE</span><span>RECEIVED</span>${short ? "" : "<span>REPORTED</span>"}<span>BY</span><span>REASON</span><span>TEXT</span><span>STATE</span></div>`;
+  for (const r of list) {
+    h += `<div class="tr click" data-go="preport/${esc(r.id)}"><span>${esc(r.code)}</span><span class="dim">${esc(when(r.ts))}</span>` +
+      (short ? "" : `<span>${plink(r.targetId, r.targetDisplay || r.targetName)}</span>`) + `<span class="dim">${plink(r.reporterId, r.reporterName)}</span>` +
+      `<span>${prepReasons(r)}</span><span class="dim">${esc(r.text || "")}</span><span class="rstate">${short ? "" : prepChecks(r) + " "}${prepLabel(r)}</span></div>`;
+  }
+  return h + "</div>";
+}
+function viewPreports(d) {
+  let h = reportTabs("players");
+  if (!d.available) return h + note("Player reports are not part of this build of the admin site.");
+  h += `<div class="sec"><h3>PLAYER REPORTS (${d.reports.length}, ${d.new} new${d.investigating ? `, ${d.investigating} investigating` : ""}${d.fixed ? `, ${d.fixed} handled` : ""}) <span class="faint">(REPORT PLAYER in the launcher; in game from the next client update)</span></h3>`;
+  if (!d.reports.length) return h + '<div class="empty">NO PLAYER REPORTS</div></div>';
+  return h + prepTable(d.reports) + "</div>";
+}
+const SANC = { BAN: ["BANNED", "bad"], UNBAN: ["UNBANNED", "ok"], "BAN ENDED": ["BAN ENDED", "dim"], MUTE: ["MUTED", "warn"], UNMUTE: ["UNMUTED", "ok"], "NOTICE TO": ["NOTICE", "dim"] };
+function sancLen(x) { return x.minutes === null ? "for good" : typeof x.minutes === "number" ? dur(x.minutes * 60) : ""; }
+function sanctionsBlock(s, title) {
+  if (!s) return "";
+  let h = `<div class="sec"><h3>${title || "MODERATION HISTORY"} <span class="faint">(admin site bans, mutes and notices, newest first)</span></h3>`;
+  if (!s.list.length) return h + '<div class="empty">NO BANS, MUTES OR NOTICES RECORDED</div></div>';
+  h += '<div class="facts" style="margin:0 0 10px">' + fact("BANS", s.bans, s.everForGood ? "one was for good" : s.longestBanMin ? "longest " + dur(s.longestBanMin * 60) : "") + fact("MUTES", s.mutes) + fact("NOTICES", s.notices) + "</div>";
+  h += '<div class="tbl" style="--cols:140px 110px 90px 170px 1fr"><div class="tr th"><span>WHEN</span><span>ACTION</span><span>LENGTH</span><span>BY</span><span>REASON</span></div>';
+  for (const x of s.list) {
+    const [t, c] = SANC[x.kind] || [x.kind, ""];
+    h += `<div class="tr"><span class="dim">${esc(x.at)}</span><span class="${c}">${esc(t)}</span><span class="dim">${esc(sancLen(x))}</span><span class="dim">${esc(x.by || "")}</span><span>${esc(x.reason || "")}</span></div>`;
+  }
+  return h + "</div></div>";
+}
+function noticeBtn(id, name) { return id ? `<button class="btn sm" data-pnotice="${esc(id)}" data-name="${esc(name)}" title="A message on this player's screen only, like a server notice">NOTICE</button>` : ""; }
+function viewPreport(r) {
+  const back = '<button class="back" data-go="reports/players">&lt; PLAYER REPORTS</button>';
+  if (!r.ok) return back + `<div class="empty">${esc(r.error || "no such report")}</div>`;
+  const tname = r.targetDisplay || r.targetName;
+  let h = back + `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(r.code)} · ${esc(tname)}</b><span class="rstate">${prepLabel(r)} ${prepChecks(r)}</span></div>`;
+  h += '<div class="kvs" style="margin:0">' + kv("RECEIVED", esc(when(r.ts)) + ` <span class="faint">${esc(ago(r.ts))}</span>`) + kv("REPORTED PLAYER", plink(r.targetId, tname) + (r.targetSid ? ` <span class="faint">${esc(r.targetSid)}</span>` : "")) +
+    kv("REPORTED BY", plink(r.reporterId, r.reporterName)) + kv("REASON", prepReasons(r)) + kv("MATCH", r.mid ? `<a href="#match/${esc(r.mid)}">${esc(r.mid)}</a>` : "-") +
+    kv("ANTI-CHEAT CASE", r.case ? `#${esc(r.case.id)} ${esc(r.case.status || "")}${r.case.decision ? " · " + esc(r.case.decision) : ""} <span class="faint">score ${r.targetScore != null ? Math.round(r.targetScore * 10) / 10 : "-"}</span>` : "-") + "</div>";
+  h += `<div class="row-in" style="margin-top:10px;gap:8px;display:flex;flex-wrap:wrap">${r.targetId ? muteBtn(r.targetId, tname, !!r.mute) + " " + banBtn(r.targetId, tname, !!r.ban) + " " + noticeBtn(r.targetId, tname) + ` <button class="btn sm" data-go="chat/${esc(r.targetId)}">THEIR CHAT</button>` : ""}` +
+    `${r.reporterId ? ` <button class="btn sm" data-pnotice="${esc(r.reporterId)}" data-name="${esc(r.reporterName || "")}" data-text="Thanks for your report ${esc(r.code)}. We are looking into it.">NOTICE TO REPORTER</button>` : ""}` +
+    `${r.mid ? ` <button class="btn sm" data-logq="${esc(r.mid)}">SERVER LOG OF THIS MATCH</button>` : ""}</div></div>`;
+  if (r.mute) h += note("MUTED NOW " + muteLeft(r.mute.left) + (r.mute.reason ? ": " + r.mute.reason : ""), true);
+  if (r.ban) h += note("BANNED NOW " + banLeft(r.ban.left) + (r.ban.reason ? ": " + r.ban.reason : ""), true);
+  h += `<div class="sec"><h3>WHAT THE REPORTER WROTE</h3><pre class="txt">${esc(r.text || "(no text)")}</pre></div>`;
+  h += sanctionsBlock(r.targetSanctions, "MODERATION HISTORY OF " + esc(String(tname || "").toUpperCase()));
+  if (r.targetReports && r.targetReports.length) h += `<div class="sec"><h3>OTHER REPORTS AGAINST THIS PLAYER (${r.targetReports.length})</h3>${prepTable(r.targetReports, true)}</div>`;
+  const ev = r.events || [];
+  h += `<div class="sec"><h3>ANTI-CHEAT FINDINGS IN THIS MATCH (${ev.length}) <span class="faint">(against the reported player)</span></h3>`;
+  h += ev.length ? '<div class="tbl" style="--cols:90px 260px 120px 70px 1fr"><div class="tr th"><span>TIME</span><span>FINDING</span><span>VALUES</span><span>WEIGHT</span><span>NOTE</span></div>' +
+    ev.map(x => `<div class="tr"><span class="dim">${esc(new Date(x.ts * 1000).toLocaleTimeString())}</span><span>${esc(x.kind)}${x.fromPlayer ? ' <span class="faint">(from a player)</span>' : ""}</span><span class="dim">${esc([x.v1, x.v2].filter(v => v != null && v !== 0).join(" / "))}</span><span class="dim">${x.weight != null ? esc(x.weight) : ""}</span><span class="dim">${esc(x.note || "")}</span></div>`).join("") + "</div>" : '<div class="empty">NO FINDINGS</div>';
+  h += "</div>";
+  const m = r.match;
+  if (m) {
+    const pr = p => `<span>${p.playerId ? `<a href="#player/${esc(p.playerId)}">${esc(p.display || p.name)}</a>` : esc(p.name)}${p.host ? ' <span class="faint">HOST</span>' : ""}${p.left ? ' <span class="bad">LEFT</span>' : ""}</span>`;
+    const team = (n, cls, ps) => `<div><b class="${cls}">${n}</b> ${ps.map(pr).join(", ") || "-"}</div>`;
+    h += `<div class="sec"><h3>THE MATCH <span class="faint">${esc(m.match.map || "?")} · ${esc(m.match.result || m.match.state || "")} · <a href="#match/${esc(r.mid)}">OPEN MATCH &gt;</a></span></h3>${team("TEAM 1", "wlf", m.players.filter(p => p.team === 0))}${team("TEAM 2", "sera", m.players.filter(p => p.team === 1))}`;
+    h += `<h3 style="margin-top:12px">MATCH CHAT (${m.chat.length})</h3>` + (m.chat.length ? '<div class="mchat">' + m.chat.map(l => `<div class="ml"><span class="dim">${esc(new Date(l.ts * 1000).toLocaleTimeString())}</span> <span class="pill ch-${esc(l.kind)}">${esc(CHAT_KIND[l.kind] || "ADMIN")}</span> <b>${esc(l.name)}</b>: <span class="chatline">${esc(l.text)}</span></div>`).join("") + "</div>" : '<div class="empty">NO CHAT IN THIS MATCH</div>') + "</div>";
+  } else if (r.mid) h += `<div class="sec"><h3>THE MATCH</h3><div class="empty">MATCH ${esc(r.mid)} IS NOT IN THE RETAINED SERVER LOGS OR THE CHAT LOG ANY MORE</div></div>`;
+  const ro = r.roster || [];
+  if (ro.length && !(m && m.players && m.players.length)) h += `<div class="sec"><h3>PLAYERS IN THAT MATCH (${ro.length}) <span class="faint">(the server's roster)</span></h3>` +
+    ro.map(p => `<span class="pill">${esc(p.slot)}</span> ${plink(p.playerId, p.display || p.name)}${p.name === r.targetName ? ' <span class="bad">REPORTED</span>' : ""}`).join(" &nbsp; ") + "</div>";
+  const tc = r.targetChat || [];
+  h += `<div class="sec"><h3>RECENT CHAT OF THE REPORTED PLAYER (${tc.length}) <span class="faint">(all channels, newest first)</span></h3>` +
+    (tc.length ? '<div class="mchat">' + tc.map(l => `<div class="ml"><span class="dim">${esc(when(l.ts))}</span> <span class="pill ch-${esc(l.kind)}">${esc(CHAT_KIND[l.kind] || l.kind)}</span> <span class="chatline">${esc(l.text)}</span></div>`).join("") + "</div>" : '<div class="empty">NO CHAT LINES</div>') + "</div>";
+  const dm = r.demos || [];
+  h += `<div class="sec"><h3>RECORDINGS (${dm.length}) <span class="faint">(movement / shot recordings the server asked the players of that match for)</span></h3>` +
+    (dm.length ? '<div class="tbl" style="--cols:1fr 160px 90px 110px">' + dm.map(x => `<div class="tr"><span>${esc(x.name)}</span><span class="dim">${esc(when(x.ts))}</span><span class="dim">${(x.size / 1024).toFixed(1)} KB</span><span><a class="btn sm" href="/api/preport-demo?id=${encodeURIComponent(r.id)}&demo=${encodeURIComponent(x.id)}">DOWNLOAD</a></span></div>`).join("") + "</div>" : '<div class="empty">NO RECORDINGS</div>') + "</div>";
+  const cs = r.targetCases || [];
+  if (cs.length) h += `<div class="sec"><h3>ANTI-CHEAT CASES OF THIS PLAYER (${cs.length})</h3><div class="tbl" style="--cols:60px 130px 90px 70px 1fr 140px">` +
+    cs.map(c => `<div class="tr"><span>#${esc(c.id)}</span><span class="dim">${esc(when(c.ts))}</span><span class="dim">${c.mid ? `<a href="#match/${esc(c.mid)}">${esc(c.mid)}</a>` : ""}</span><span class="dim">${c.score != null ? Math.round(c.score * 10) / 10 : ""}</span><span class="dim">${esc(c.reason || "")}</span><span>${esc(c.status || "")}${c.decision ? " · " + esc(c.decision) : ""}</span></div>`).join("") + "</div></div>";
+  return h;
+}
+
 function viewReports(d) {
-  if (!d.configured) return note("No report store configured. Start the site with --reports <update server data dir>/reports.");
-  let h = `<div class="sec"><h3>BUG REPORTS (${d.reports.length}, ${d.new} new${d.investigating ? `, ${d.investigating} investigating` : ""}${d.fixed ? `, ${d.fixed} fixed` : ""})</h3>`;
+  if (!d.configured) return reportTabs("bugs") + note("No report store configured. Start the site with --reports <update server data dir>/reports.");
+  let h = reportTabs("bugs") + `<div class="sec"><h3>BUG REPORTS (${d.reports.length}, ${d.new} new${d.investigating ? `, ${d.investigating} investigating` : ""}${d.fixed ? `, ${d.fixed} fixed` : ""})</h3>`;
   if (!d.reports.length) return h + '<div class="empty">NO REPORTS</div></div>';
   h += '<div class="tbl" style="--cols:80px 140px 120px 90px 1fr 210px 60px"><div class="tr th"><span>CODE</span><span>RECEIVED</span><span>PLAYER</span><span>BUILD</span><span>TEXT</span><span>STATE</span><span>FILES</span></div>';
   for (const r of d.reports) {
@@ -506,9 +602,9 @@ window.addEventListener("beforeunload", e => { if (notesDirty()) { e.preventDefa
 function parseRoute() {
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
   const [tab, ...rest] = h.split("/");
-  return { tab: TABS.includes(tab) || tab === "player" || tab === "report" || tab === "match" ? tab : "overview", arg: rest.join("/") };
+  return { tab: TABS.includes(tab) || tab === "player" || tab === "report" || tab === "preport" || tab === "match" ? tab : "overview", arg: rest.join("/") };
 }
-function mainTab(r) { return r.tab === "player" ? "players" : r.tab === "report" ? "reports" : r.tab === "match" ? "matches" : r.tab; }
+function mainTab(r) { return r.tab === "player" ? "players" : r.tab === "report" || r.tab === "preport" ? "reports" : r.tab === "match" ? "matches" : r.tab; }
 function go(p) { location.hash = "#" + p; }
 
 function renderToolbar() {
@@ -528,8 +624,8 @@ function renderToolbar() {
   const tb = $("#toolbar");
   if (S.last.toolbar !== h + t) { S.last.toolbar = h + t; tb.innerHTML = h; }
   document.querySelectorAll(".mi").forEach(b => b.classList.toggle("active", b.dataset.tab === mainTab(r)));
-  $("#ph-title").textContent = t === "player" ? "PLAYER" : t === "report" ? "BUG REPORT " + r.arg : t === "match" ? "MATCH " + r.arg : TITLES[t];
-  document.title = (t === "player" ? "Player" : t === "report" ? "Report " + r.arg : t === "match" ? "Match " + r.arg : TITLES[t].charAt(0) + TITLES[t].slice(1).toLowerCase()) + " - Twelve Weeks admin";
+  $("#ph-title").textContent = t === "player" ? "PLAYER" : t === "report" ? "BUG REPORT " + r.arg : t === "preport" ? "PLAYER REPORT R" + r.arg : t === "match" ? "MATCH " + r.arg : TITLES[t];
+  document.title = (t === "player" ? "Player" : t === "report" ? "Report " + r.arg : t === "preport" ? "Player report R" + r.arg : t === "match" ? "Match " + r.arg : TITLES[t].charAt(0) + TITLES[t].slice(1).toLowerCase()) + " - Twelve Weeks admin";
 }
 
 // The tab's own data (fetched in parallel with the top bar's overview + online, not after them)
@@ -540,7 +636,8 @@ function tabUrl(r) {
     case "matches": return "/api/matches";
     case "clans": return "/api/clans";
     case "teams": return "/api/teams";
-    case "reports": return "/api/reports";
+    case "reports": return r.arg === "players" ? "/api/preports" : "/api/reports";
+    case "preport": return "/api/preport?id=" + encodeURIComponent(r.arg);
     case "report": return "/api/report?code=" + encodeURIComponent(r.arg);
     case "match": return "/api/match?id=" + encodeURIComponent(r.arg);
     case "chat": return `/api/chat?q=${encodeURIComponent(S.chatQ)}&kind=${S.chatKind}&id=${encodeURIComponent(r.arg)}&n=300`;
@@ -558,7 +655,7 @@ function topData() {
       S.ov = ov;
       paintTop(ov);
       $("#ph-right").textContent = ov.source === "live" ? "LIVE" : ov.source === "snapshot" ? "SNAPSHOT" : "FROM LOG";
-      const rp = $("#rep-pip"); rp.hidden = !ov.totals.reportsNew;
+      const rp = $("#rep-pip"); rp.hidden = !(ov.totals.reportsNew || ov.totals.playerReportsNew);
     }).catch(() => {}).finally(() => { if (S.ovp === p) S.ovp = null; });
   }
   return S.ovp;
@@ -593,7 +690,8 @@ async function refresh(force) {
       if ($("#trules") && d.ok) { const pv = $("#tprev"); if (pv) pv.innerHTML = teamsPreview(d); const lv = $("#tlive"); if (lv) lv.innerHTML = teamsLive(d); html = null; }   // (never re-render the box being typed in)
       else html = viewTeams(d);
     }
-    else if (r.tab === "reports") html = viewReports(await tp);
+    else if (r.tab === "reports") html = r.arg === "players" ? viewPreports(await tp) : viewReports(await tp);
+    else if (r.tab === "preport") html = viewPreport(await tp);
     else if (r.tab === "report") html = viewReport(await tp, r.arg);
     else if (r.tab === "notes") { if ($("#nwframe")) html = null; else { setHTML(body, "body", viewNotes()); html = null; } }      // (never re-render the editor: unsaved edits)
     else if (r.tab === "match") {
@@ -770,6 +868,31 @@ document.addEventListener("click", async e => {
   }
   const msay = t.closest("[data-msay]");
   if (msay) { e.stopPropagation(); return sendSay(msay.dataset.msay); }
+  const pst = t.closest("[data-pstate]");
+  if (pst) {
+    e.stopPropagation();
+    const r = await post("/api/preport-state", { id: pst.dataset.pstate, state: pst.dataset.to });
+    if (!r.ok) flash("Failed: " + (r.error || "unknown"), true);
+    S.last.body = null; return refresh(true);
+  }
+  const lq = t.closest("[data-logq]");
+  if (lq) { S.logQ = lq.dataset.logq; S.logLevel = "all"; S.logQuiet = false; return go("logs"); }
+  const pn = t.closest("[data-pnotice]");
+  if (pn) {
+    e.stopPropagation();
+    const name = pn.dataset.name;
+    setTimeout(() => { const i = $("#pn-text"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 30);
+    const ok = await confirmBox("PERSONAL NOTICE", `A message on <b>${esc(name)}</b>'s screen only (in game and in the launcher), shown like a server notice.` +
+      `<label style="display:block;margin-top:8px">Message (140 characters):<input id="pn-text" type="text" maxlength="140" autocomplete="off" style="margin-top:4px;width:100%" value="${esc(pn.dataset.text || "")}"></label>` +
+      `<label style="display:block;margin-top:8px">On screen for:<select id="pn-sec" style="margin-top:4px;width:100%">${[[8, "8 SECONDS"], [15, "15 SECONDS"], [30, "30 SECONDS"], [60, "1 MINUTE"]].map(([v, n]) => `<option value="${v}" ${v === 15 ? "selected" : ""}>${n}</option>`).join("")}</select></label>` +
+      `<label style="display:block;margin-top:8px">If they are offline, wait for them:<select id="pn-min" style="margin-top:4px;width:100%">${[[10, "10 MINUTES"], [60, "1 HOUR"], [360, "6 HOURS"], [1440, "24 HOURS"]].map(([v, n]) => `<option value="${v}" ${v === 60 ? "selected" : ""}>${n}</option>`).join("")}</select></label>`, "SEND TO " + name.toUpperCase().slice(0, 16), false);
+    if (!ok) return;
+    const text = (($("#pn-text") || {}).value || "").trim();
+    if (!text) return flash("Type the message first.", true);
+    const r = await post("/api/notice-to", { id: pn.dataset.pnotice, text, seconds: parseFloat(($("#pn-sec") || {}).value || "15"), minutes: parseFloat(($("#pn-min") || {}).value || "60") });
+    flash(r.ok ? `Notice sent to ${name}${r.online ? "" : " (offline now: it waits for them)"}` : "Notice failed: " + (r.error || "unknown"), !r.ok);
+    S.last.body = null; return refresh(true);
+  }
   const nsend = t.closest("[data-nsend]");
   if (nsend) {
     const text = $("#nt-text").value.trim();
