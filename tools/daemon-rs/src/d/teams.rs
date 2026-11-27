@@ -1109,14 +1109,6 @@ pub fn install_steamid(token: &str) -> u64 {
     sid
 }
 
-/// a connection of its own (`dbc()`), never under the daemon's database lock
-fn dbc() -> rusqlite::Result<rusqlite::Connection> {
-    let c = rusqlite::Connection::open(&db::CFG.path)?;
-    c.busy_timeout(std::time::Duration::from_secs(10))?;
-    c.execute_batch("PRAGMA synchronous=FULL")?;
-    Ok(c)
-}
-
 // py: daemon.py:6602 class _SocialHost
 pub struct SocialHostImpl;
 
@@ -1129,7 +1121,18 @@ impl SocialHost for SocialHostImpl {
         crate::log::line(&v);
     }
     fn with_db(&self, f: &mut dyn FnMut(&rusqlite::Connection) -> rusqlite::Result<()>) -> rusqlite::Result<()> {
-        let c = dbc()?;
+        // 11-27: through DBLOCK and its write connection, no connection of its own. The social ops (~25 a second live: launcher + in-game
+        // friends polls) each held the SQLite write lock (BEGIN IMMEDIATE) on a separate connection; DBLOCK writers then failed their
+        // read-to-write upgrade at once ("database is locked") or waited in SQLite's busy poll while holding DBLOCK, and every request behind
+        // DBLOCK waited with them (boot replies past the client's 15 s window = the title-page loop, poll requests abandoned).
+        // Safe to nest: the closure takes no lock that a DBLOCK holder waits on in the other order (MM.lock only with try_lock_for, see
+        // alive_tokens / mm_state; names / steam ids are pooled read-only reads), and the callers (social_op, Social.tick from the matchmaker
+        // loop, clog_flush) hold no other lock. A DBLOCK re-entry on this thread is refused (db::lock), never a self-deadlock.
+        let mut l = db::lock().map_err(|e| match e {
+            db::DbErr::Sql(e) => e,
+            _ => rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY), Some("database lock wait abandoned".into())),
+        })?;
+        let c = l.conn()?;
         // (Python: sqlite3 begins the transaction at the first write; a deferred BEGIN here took a read lock first and the upgrade failed at once with "database is locked" when another thread wrote: IMMEDIATE waits for the lock)
         c.execute_batch("BEGIN IMMEDIATE")?;
         match f(&c) {

@@ -67,6 +67,8 @@ pub type DbResult<T> = Result<T, DbErr>;
 thread_local! {
     /// py: _req.deadline (monotonic instant after which this thread's request is not worth serving; None = no deadline)
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+    /// 11-27: this thread holds DBLOCK now (a second lock() on the same thread would wait for itself forever: it is refused instead)
+    static HELD: Cell<bool> = const { Cell::new(false) };
 }
 
 pub fn set_deadline(d: Option<Instant>) {
@@ -152,11 +154,13 @@ pub struct DbLock<'a> {
     at: &'static std::panic::Location<'static>,
 }
 
-/// Diagnostic, off by default: T2R_DB_HOLD_LOG_MS = N logs every DB lock wait or hold of N ms or more with its call site (DB-WAIT / DB-HOLD).
-static HOLD_LOG_MS: LazyLock<u64> = LazyLock::new(|| env_parse("T2R_DB_HOLD_LOG_MS", 0u64));
+/// Diagnostic: T2R_DB_HOLD_LOG_MS = N logs every DB lock wait or hold of N ms or more with its call site (DB-WAIT / DB-HOLD); 0 = off.
+/// 11-27: on by default at 2000 ms (the title-page loops: a lock held that long makes the boot reply miss the client's 15 s window).
+static HOLD_LOG_MS: LazyLock<u64> = LazyLock::new(|| env_parse("T2R_DB_HOLD_LOG_MS", 2000u64));
 
 impl Drop for DbLock<'_> {
     fn drop(&mut self) {
+        HELD.with(|h| h.set(false));
         if *HOLD_LOG_MS > 0 {
             let ms = self.t0.elapsed().as_millis() as u64;
             if ms >= *HOLD_LOG_MS {
@@ -175,6 +179,7 @@ fn locked(g: MutexGuard<'static, Writer>, w0: Instant) -> DbLock<'static> {
             dlog!("DB-WAIT", format!("{} ms", ms), format!("{}:{}", at.file(), at.line()), std::thread::current().name().unwrap_or("-"));
         }
     }
+    HELD.with(|h| h.set(true));
     DbLock { g, t0: Instant::now(), at }
 }
 
@@ -203,6 +208,13 @@ impl<'a> DbLock<'a> {
 
 #[track_caller]
 pub fn lock() -> DbResult<DbLock<'static>> {
+    if HELD.with(|h| h.get()) {
+        // (DBLOCK is not re-entrant: this thread already holds it, e.g. a db_read fallback inside a write. Waiting would never end.)
+        let at = std::panic::Location::caller();
+        dlog!("DB-REENTRY refused", format!("{}:{}", at.file(), at.line()), std::thread::current().name().unwrap_or("-"));
+        ABANDONED.fetch_add(1, Ordering::Relaxed);
+        return Err(DbErr::Abandoned);
+    }
     let w0 = Instant::now();
     match deadline() {
         None => Ok(locked(DBLOCK.lock(), w0)),
@@ -228,7 +240,13 @@ pub fn lock() -> DbResult<DbLock<'static>> {
 pub fn with_write<R>(f: impl FnOnce(&Connection) -> DbResult<R>) -> DbResult<R> {
     let mut l = lock()?;
     let c = l.conn()?;
-    c.execute_batch("BEGIN")?;
+    // 11-27: IMMEDIATE, not a deferred BEGIN. A deferred transaction starts as a reader at its first SELECT; its first write then has to
+    // upgrade, and when another connection (the separate HOSTCAP writes, t2r.db tools) holds or has just committed a write, SQLite fails that
+    // upgrade AT ONCE with "database is locked" (no busy wait: waiting could deadlock). Live 11-27: ~950 such errors in 80 min (clan
+    // snapshots, career stats, ELO, IDENT, clan match stats lost; 8 snapshot failures inside one second while DBLOCK serialises them).
+    // Python never had it: its sqlite3 module ran the SELECTs outside a transaction and began at the first write. IMMEDIATE takes the write
+    // lock first, through the busy timeout like any plain write.
+    c.execute_batch("BEGIN IMMEDIATE")?;
     match f(c) {
         Ok(v) => match c.execute_batch("COMMIT") {
             Ok(()) => Ok(v),
