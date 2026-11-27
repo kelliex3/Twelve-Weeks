@@ -796,6 +796,7 @@ impl App {
             "/api/teams" => self.json(200, &a.teams_set(&s("rules"))),
             "/api/teams-move" => self.json(200, &a.teams_move(&s("pid"))),
             "/api/report-handled" => self.result(a.mark_handled(&s("code"), flag("handled", true))),
+            "/api/report-state" => self.result(a.mark_state(&s("code"), &s("state"))),
             _ => self.json(404, &json!({"ok": false, "error": "unknown action"})),
         }
     }

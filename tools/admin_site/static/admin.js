@@ -292,7 +292,7 @@ function viewPlayer(p) {
   }
   h += "</div>";
   if (p.reports.length) {
-    h += '<div class="sec"><h3>BUG REPORTS</h3><div class="tbl" style="--cols:80px 140px 1fr 90px">' + p.reports.map(r => `<div class="tr click" data-go="report/${esc(r.code)}"><span>${esc(r.code)}</span><span class="dim">${esc((r.received || "").replace("T", " ").slice(0, 16))}</span><span class="dim">${esc(r.text)}</span><span>${r.handled ? '<span class="faint">handled</span>' : '<span class="warn">NEW</span>'}</span></div>`).join("") + "</div></div>";
+    h += '<div class="sec"><h3>BUG REPORTS</h3><div class="tbl" style="--cols:80px 140px 1fr 120px">' + p.reports.map(r => `<div class="tr click" data-go="report/${esc(r.code)}"><span>${esc(r.code)}</span><span class="dim">${esc((r.received || "").replace("T", " ").slice(0, 16))}</span><span class="dim">${esc(r.text)}</span><span>${repLabel(r)}</span></div>`).join("") + "</div></div>";
   }
   return h;
 }
@@ -438,13 +438,23 @@ function viewClans(d) {
   return h + "</div>";
 }
 
+// report state: NEW, INVESTIGATING (yellow check) or FIXED (green check; the same as MARK HANDLED). A report from before the check
+// marks that was marked handled shows as FIXED.
+function repState(r) { return r.state || (r.handled ? "fixed" : "new"); }
+const REP_STATE = { new: ["NEW", "warn"], investigating: ["INVESTIGATING", "rs-inv"], fixed: ["FIXED", "rs-fix"] };
+function repLabel(r) { const [t, c] = REP_STATE[repState(r)]; return `<span class="${c}">${t}</span>`; }
+function repChecks(r) {
+  const st = repState(r), code = esc(r.code);
+  return `<span class="rchecks"><button class="ck inv${st === "investigating" ? " on" : ""}" data-rstate="${code}" data-to="${st === "investigating" ? "new" : "investigating"}" title="${st === "investigating" ? "Back to NEW" : "Mark INVESTIGATING"}">✓</button>` +
+    `<button class="ck fix${st === "fixed" ? " on" : ""}" data-rstate="${code}" data-to="${st === "fixed" ? "new" : "fixed"}" title="${st === "fixed" ? "Back to NEW" : "Mark FIXED"}">✓</button></span>`;
+}
 function viewReports(d) {
   if (!d.configured) return note("No report store configured. Start the site with --reports <update server data dir>/reports.");
-  let h = `<div class="sec"><h3>BUG REPORTS (${d.reports.length}, ${d.new} new)</h3>`;
+  let h = `<div class="sec"><h3>BUG REPORTS (${d.reports.length}, ${d.new} new${d.investigating ? `, ${d.investigating} investigating` : ""}${d.fixed ? `, ${d.fixed} fixed` : ""})</h3>`;
   if (!d.reports.length) return h + '<div class="empty">NO REPORTS</div></div>';
-  h += '<div class="tbl" style="--cols:80px 140px 120px 90px 1fr 80px 60px"><div class="tr th"><span>CODE</span><span>RECEIVED</span><span>PLAYER</span><span>BUILD</span><span>TEXT</span><span>STATE</span><span>FILES</span></div>';
+  h += '<div class="tbl" style="--cols:80px 140px 120px 90px 1fr 210px 60px"><div class="tr th"><span>CODE</span><span>RECEIVED</span><span>PLAYER</span><span>BUILD</span><span>TEXT</span><span>STATE</span><span>FILES</span></div>';
   for (const r of d.reports) {
-    h += `<div class="tr click" data-go="report/${esc(r.code)}"><span>${esc(r.code)}</span><span class="dim">${esc((r.received || "").replace("T", " ").slice(0, 16))}</span><span>${esc(r.name)}</span><span class="dim">${esc(r.version)}</span><span class="dim">${esc(r.text)}</span><span>${r.handled ? '<span class="faint">handled</span>' : '<span class="warn">NEW</span>'}</span><span class="dim">${r.files}</span></div>`;
+    h += `<div class="tr click" data-go="report/${esc(r.code)}"><span>${esc(r.code)}</span><span class="dim">${esc((r.received || "").replace("T", " ").slice(0, 16))}</span><span>${esc(r.name)}</span><span class="dim">${esc(r.version)}</span><span class="dim">${esc(r.text)}</span><span class="rstate">${repChecks(r)} ${repLabel(r)}</span><span class="dim">${r.files}</span></div>`;
   }
   return h + "</div></div>";
 }
@@ -452,7 +462,7 @@ function viewReports(d) {
 function viewReport(r, code) {
   if (!r.ok) return `<button class="back" data-go="reports">&lt; REPORTS</button><div class="empty">${esc(r.error)}</div>`;
   const m = r.meta;
-  let h = `<button class="back" data-go="reports">&lt; REPORTS</button><div class="match" style="margin-top:10px"><div class="mh"><b>${esc(m.code)}</b><span>${m.handled ? '<span class="faint">HANDLED</span>' : '<span class="pill warn">NEW</span>'} <button class="btn sm" data-handled="${esc(m.code)}" data-to="${m.handled ? 0 : 1}">${m.handled ? "MARK NEW AGAIN" : "MARK HANDLED"}</button></span></div>`;
+  let h = `<button class="back" data-go="reports">&lt; REPORTS</button><div class="match" style="margin-top:10px"><div class="mh"><b>${esc(m.code)}</b><span class="rstate">${repLabel(m)} ${repChecks(m)}</span></div>`;
   h += '<div class="kvs" style="margin:0">' + kv("RECEIVED", esc((m.received || "").replace("T", " ").replace("Z", " UTC"))) + kv("FROM", esc(m.name || "-") + ` <span class="faint">${esc(m.nameSource || "")}</span>`) +
     kv("STEAM ID", esc(m.steamId || "-")) + kv("BUILD / LAUNCHER", `${esc(m.version || "-")} / ${esc(m.launcherVersion || "-")}`) + kv("WHEN IT HAPPENED", esc([m.when, m.whenText].filter(Boolean).join(" · ") || "-")) +
     kv("MAP / MODE", esc(m.mapMode || "-")) + kv("SYSTEM", esc(m.os || "-")) + kv("GPU", esc(m.gpu || "-")) + kv("DUMPS INCLUDED", m.includeDumps ? "yes" : "no") + "</div></div>";
@@ -786,6 +796,13 @@ document.addEventListener("click", async e => {
   // (a link / button INSIDE a clickable row does its own thing; a button that is itself the data-go element navigates)
   const ctl = t.closest("a, button, input, select");
   if (go_ && (!ctl || ctl === go_ || !go_.contains(ctl))) return go(go_.dataset.go);
+  const rs = t.closest("[data-rstate]");
+  if (rs) {
+    e.stopPropagation();
+    const r = await post("/api/report-state", { code: rs.dataset.rstate, state: rs.dataset.to });
+    if (!r.ok) flash("Failed: " + (r.error || "unknown"), true);
+    S.last.body = null; return refresh(true);
+  }
   const hd = t.closest("[data-handled]");
   if (hd) { const r = await post("/api/report-handled", { code: hd.dataset.handled, handled: hd.dataset.to === "1" }); if (!r.ok) flash(r.error, true); return refresh(true); }
   const fl = t.closest("[data-file]");

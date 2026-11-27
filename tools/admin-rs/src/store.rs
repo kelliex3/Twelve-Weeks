@@ -136,6 +136,17 @@ fn ban_reason(line: &str) -> String {
     }
 }
 
+/// A report's state for the REPORTS page: "fixed" (meta handled), "investigating" (meta status, not handled yet) or "new".
+fn report_state(m: &Map<String, Value>) -> &'static str {
+    if m.get("handled").map(py::truthy).unwrap_or(false) {
+        "fixed"
+    } else if m.get("status").and_then(Value::as_str) == Some("investigating") {
+        "investigating"
+    } else {
+        "new"
+    }
+}
+
 fn valid_pid(p: &str) -> bool {
     (4..=64).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
@@ -904,7 +915,7 @@ impl Admin {
                 }
             }
         }
-        let reports_new = if self.reports.is_empty() { 0 } else { self.report_metas().iter().filter(|(_, m)| !m.get("handled").map(py::truthy).unwrap_or(false)).count() };
+        let reports_new = if self.reports.is_empty() { 0 } else { self.report_metas().iter().filter(|(_, m)| report_state(m) == "new").count() };
         let ended: Vec<&Match> = ms.iter().filter(|m| m.state == "ended").collect();
         Ok(json!({
             "now": now, "source": lv.source, "snapshotAge": lv.age, "notes": notes,
@@ -1160,7 +1171,7 @@ impl Admin {
             if g.alias.contains(&name) || steam_hit {
                 let text = m.get("text").filter(|v| py::truthy(v)).map(py::to_str).unwrap_or_default();
                 reps.push(json!({"code": m.get("code"), "received": m.get("received"), "text": py::head(&text, 160),
-                                 "handled": m.get("handled").map(py::truthy).unwrap_or(false)}));
+                                 "handled": m.get("handled").map(py::truthy).unwrap_or(false), "state": report_state(&m)}));
             }
         }
         let lv = self.live_view();
@@ -1424,10 +1435,11 @@ impl Admin {
             let files = m.get("files").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
             rows.push(json!({"code": m.get("code"), "received": m.get("received"), "name": m.get("name"), "version": m.get("version"),
                              "mapMode": m.get("mapMode"), "text": if text.is_empty() { "" } else { py::head(first, 120) },
-                             "handled": m.get("handled").map(py::truthy).unwrap_or(false), "files": files}));
+                             "handled": m.get("handled").map(py::truthy).unwrap_or(false), "state": report_state(&m), "files": files}));
         }
-        let new = rows.iter().filter(|r| r.get("handled") != Some(&Value::Bool(true))).count();
-        json!({"reports": rows, "configured": !self.reports.is_empty(), "new": new})
+        let count = |st: &str| rows.iter().filter(|r| r.get("state").and_then(Value::as_str) == Some(st)).count();
+        let (new, inv, fixed) = (count("new"), count("investigating"), count("fixed"));
+        json!({"reports": rows, "configured": !self.reports.is_empty(), "new": new, "investigating": inv, "fixed": fixed})
     }
 
     fn find_report(&self, code: &str) -> Option<(PathBuf, Arc<Map<String, Value>>)> {
@@ -1560,6 +1572,14 @@ impl Admin {
     }
 
     pub fn mark_handled(&self, code: &str, handled: bool) -> Result<Value, String> {
+        self.mark_state(code, if handled { "fixed" } else { "new" })
+    }
+
+    /// REPORTS page check marks: "new", "investigating" (meta status, still not handled) or "fixed" (meta handled = true, as MARK HANDLED).
+    pub fn mark_state(&self, code: &str, state: &str) -> Result<Value, String> {
+        if !["new", "investigating", "fixed"].contains(&state) {
+            return Ok(json!({"ok": false, "error": "bad state"}));
+        }
         let Some((d, _)) = self.find_report(code) else {
             return Ok(json!({"ok": false, "error": "no such report"}));
         };
@@ -1569,9 +1589,15 @@ impl Admin {
         let Ok(Value::Object(mut m)) = serde_json::from_slice::<Value>(&b) else {
             return Ok(json!({"ok": false, "error": "no such report"}));
         };
+        let handled = state == "fixed";
         m.insert("handled".into(), Value::Bool(handled));
+        if state == "investigating" {
+            m.insert("status".into(), json!("investigating"));
+        } else {
+            m.remove("status");
+        }
         write_atomic(&p, py::dumps_indent1(&Value::Object(m)).as_bytes()).map_err(|e| format!("OSError: {}", e))?;
-        Ok(json!({"ok": true, "handled": handled}))
+        Ok(json!({"ok": true, "handled": handled, "state": state}))
     }
 
     pub fn logs(&self, q: &str, level: &str, which: &str, n: i64, quiet: bool) -> Value {

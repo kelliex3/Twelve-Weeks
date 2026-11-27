@@ -285,3 +285,13 @@ body.srv-test .bar { border-bottom-color: #d9822b; box-shadow: inset 0 -2px 0 #d
 .nowmatch:hover { background: rgba(155, 176, 138, .12); }
 .nowmatch b { font-family: var(--ui); letter-spacing: .06em; text-transform: uppercase; }
 .nowmatch .go { margin-left: auto; font-family: var(--ui); font-size: 12px; letter-spacing: .2em; color: var(--ok); }
+
+/* report state check marks: yellow = INVESTIGATING, green = FIXED (filled when set) */
+.rstate { display: inline-flex; align-items: center; gap: 10px; }
+.rchecks { display: inline-flex; gap: 6px; }
+.ck { width: 26px; height: 26px; padding: 0; font-size: 15px; line-height: 1; font-weight: 700; background: transparent; cursor: pointer; border: 1px solid; border-radius: 3px; }
+.ck.inv { color: rgba(240, 200, 60, .55); border-color: rgba(240, 200, 60, .4); }
+.ck.fix { color: rgba(91, 208, 91, .55); border-color: rgba(91, 208, 91, .4); }
+.ck.inv:hover, .ck.inv.on { color: #15130a; background: #F0C83C; border-color: #F0C83C; }
+.ck.fix:hover, .ck.fix.on { color: #0b150b; background: #5BD05B; border-color: #5BD05B; }
+.rs-inv { color: #F0C83C; } .rs-fix { color: #5BD05B; }
