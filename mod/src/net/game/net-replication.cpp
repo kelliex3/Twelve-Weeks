@@ -14,6 +14,8 @@
 #include "net/ui/kick-note.hpp"
 #include "net/ui/launch-notice.hpp"
 #include "menu/loadseq.hpp"
+#include "menu/sendoff.hpp"
+#include "menu/titlebg.hpp"
 #include "net-gui2.hpp"
 #include "scopeglint.hpp"
 #include "notify.hpp"
@@ -50,6 +52,7 @@
 #include "net/ui/death-ui.hpp"
 #include "net/ui/nrui.hpp"
 #include "net/ui/mfnr.hpp"
+#include "net/ui/pmunlock.hpp"
 #include "backpack.hpp"
 #include "net-timer.hpp"
 #include "alertsting.hpp"
@@ -2198,6 +2201,7 @@ namespace net::replication {
         net::clan::page::Reset();
         net::ui::postmatch::Reset();
         net::ui::achieve::Reset();
+        net::ui::pmunlock::Reset();     // match-start unlock grid / UNLOCKS stage
         net::ui::choose::Reset();
         net::ui::customize::Reset();
         net::ui::customize::challenges::Reset();
@@ -2205,6 +2209,8 @@ namespace net::replication {
         net::ui::customize::stage::Reset();
         net::ui::nrui::Reset();        // shared frame glides / cached layouts
         net::ui::mfnr::Reset();        // MAP VOTE page / 0xEA poll state
+        menu::sendoff::Reset();        // shared-horn send-off birds / fades / voices
+        menu::titlebg::Reset();        // title background camera / boot cover
         net::ui::death_ui::Reset();
         net::requeue::Reset();
         net::direct::Reset();

@@ -19,9 +19,17 @@
 //     A GUI pak without the generated nmRim clones makes every rim write inert.
 //   * Our own role comes from net::clan::OwnRole() (0xBF/0xE1 state); SetOwnRole
 //     is a producer / test override and stays inert at 0.
-//   * The ext also replays engine writes to unknown row handles (its pending ring).
-//     The mod observes only its own widget writes, so a row rebuilt by the engine
-//     between two 150 ms polls can still miss its first name until the next poll.
+//   * The ext's 128-slot ring of engine writes to unknown row handles is not
+//     ported. It exists only because the ext sees winmm's single early row write
+//     through a global settext twin at exe+0x180064450 but resolves row handles
+//     only twice a second; row 0 (us) had no roster fallback and stayed blank
+//     (namerim.c:39-42). Native makes that write itself in net-gui2::fillLobby
+//     with Username() == net::session::LocalName(), so row 0 falls back to that
+//     direct producer value (LocalNameFallback) and rows 1..7 to the read-only
+//     roster. Porting the ext hook instead would detour the same pinned prologue
+//     t2r-ext already owns, double-notify search-rows' single SetTextObserver,
+//     and refill an unfiltered ring with unrelated DC writes (128 of them evict
+//     the wanted name). No second hook, no ring, same visible result.
 
 namespace net::name_rim {
 

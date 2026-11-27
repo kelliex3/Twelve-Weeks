@@ -57,6 +57,7 @@ namespace net::ui::mfnr {
         constexpr uint8_t kLsWrapperCall[5] = { 0xE8, 0x1F, 0x00, 0x00, 0x00 };
         constexpr size_t kLsWrapperCallOff = 0x4c;
         constexpr uint64_t kLsRequestMs = 6300;   // ext MH_POP_MS: horn asks for LOADING
+        constexpr uint64_t kHornMaxMs = 11000;    // ext MH_MAX_MS: envelope end
         constexpr uint64_t kLsWatchdogMs = 30000; // ext's own load watchdog
 
         constexpr uint8_t kOpRead = static_cast<uint8_t>(NetDaemonOp::kMapVoteRead);
@@ -132,6 +133,10 @@ namespace net::ui::mfnr {
             core::Meta lsMeta;
             bool lsMetaHave = false;
             bool sawCd = false;            // ext horn's `saw_cd`: a flow stage was seen
+            // Shared match-found horn t=0 for menu::sendoff (ext feature_match_horn's
+            // `t0`). `hornScene` is sampled once at the trigger; 0 = unknown.
+            uint64_t hornAt = 0;
+            int hornScene = 0;
         };
 
         Runtime g;
@@ -155,6 +160,22 @@ namespace net::ui::mfnr {
             gLsTipCat = DbSlot{};
             gLsTip = DbSlot{};
             gLsSpin = DbSlot{};
+        }
+
+        // The ext derives g_ms_cur from the live menu task subnode. Sample it
+        // once when the horn fires so a scene swap under the fade cannot split
+        // the birds / send-off across factions. The clan faction is the fallback
+        // when no task probe succeeds (no sidecar is read or written).
+        int HornScene()
+        {
+            if (DEBUG::IS_TASK_ACTIVE(SID("starlight-levels"),
+                                      SID("starlight-main-menu")))
+                return 1;
+            if (DEBUG::IS_TASK_ACTIVE(SID("starlight-levels"),
+                                      SID("starlight-t2-main-menu")))
+                return 2;
+            const int fac = net::clan::Get().fac;
+            return fac == 1 || fac == 2 ? fac : 0;
         }
 
         uintptr_t ModuleBase()
@@ -1214,6 +1235,8 @@ namespace net::ui::mfnr {
 
         void LsForceOff()
         {
+            g.hornAt = 0;
+            g.hornScene = 0;
             if (!g.lsOwn) return;
             g.lsOwn = 0;
             g.lsWant = false;
@@ -1372,10 +1395,21 @@ namespace net::ui::mfnr {
             && !g.lsWant && !g.lsReqAt) {
             g.sawCd = false;
             g.lsReqAt = now + kLsRequestMs;
+            g.hornAt = now;
+            g.hornScene = HornScene();
+            TO1_LOG("mfnr: match horn t=0 (scene %d)\n", g.hornScene);
         }
-        // The latch survives the code falling to 0 (the ext holds the local
-        // start); only leaving the lobby / match phase moving on cancels it.
+        // The LOADING latch only survives the code falling to 0; leaving the
+        // pre-load lobby still cancels it. The horn envelope is longer: hold it
+        // until the match starts or the ext's MH_MAX_MS passes, so the send-off
+        // keeps its own 7.6 s timeline without a second trigger.
         if (g.lsReqAt && core::HornCanceled(phase, sub)) g.lsReqAt = 0;
+        if (g.hornAt && (phase != 2 || sub < 2
+                         || (sub >= 4 && g.lsOwn != 0)
+                         || now - g.hornAt > kHornMaxMs)) {
+            g.hornAt = 0;
+            g.hornScene = 0;
+        }
         if (g.lsReqAt && now >= g.lsReqAt) {
             g.lsWant = true;
             g.lsReqAt = 0;
@@ -1473,6 +1507,12 @@ namespace net::ui::mfnr {
             BoosterInput(sel);
             BoosterRpc(now);
         }
+    }
+
+    HornState Horn()
+    {
+        if (Disabled()) return {};
+        return HornState{g.hornAt != 0, g.hornAt, g.hornScene};
     }
 
     void Reset()

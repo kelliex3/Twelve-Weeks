@@ -104,6 +104,12 @@ namespace engine::pcm {
     // The handle still plays its source (ext: g_mixv[slot].on && .src == src).
     bool Live(const Voice& v);
 
+    // Change a live voice's target gain (ext pcm_voice_ctl(src, gain, 0)). The
+    // sfx slider is applied for 2D voices and the mixer ramps over one block;
+    // a 3D voice stores it as its base gain for the next VoicesUpdate(). Use
+    // Cut() for a timed fade-out.
+    void SetGain(Voice& v, float gain);
+
     // Fade the voice out over ms (0 = stop now) if it is still live, then clear the handle.
     void Cut(Voice& v, int ms);
 

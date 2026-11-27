@@ -92,6 +92,11 @@ namespace net::ui::achieve {
             uint32_t  seenT = kSeenUnread;
             bool      seenLoaded = false;
 
+            // ext g_ach_new: the daemon's new unlocks since the match began.
+            Toast     matchNew[kToastQ];
+            int       matchNewN = 0;
+            bool      matchNewArmed = false;
+
             // t2r-ach-ui-seen.txt is the UI NEW-dot baseline: read on each
             // page open, written on leave. It is data, not an opt-in toggle.
             uint32_t  uiSeenT = 0;
@@ -202,6 +207,10 @@ namespace net::ui::achieve {
             } else {
                 if (newest > g.seenT) g.seenT = newest;
                 for (int i = 0; i < n; ++i) EnqueueCard(g.card, q[i]);
+            }
+            if (g.matchNewArmed) {
+                for (int i = 0; i < n && g.matchNewN < kToastQ; ++i)
+                    g.matchNew[g.matchNewN++] = q[i];
             }
             g.built = false;        // rebuild on the next page tick
             (void)dropped;
@@ -1020,6 +1029,23 @@ namespace net::ui::achieve {
 
     bool Active() { return !Disabled(); }
     const core::Table& CurrentTable() { return g.table; }
+
+    const core::Toast* MatchNew(int* count)
+    {
+        if (count) *count = g.matchNewN;
+        return g.matchNew;
+    }
+
+    void NoteMatchStart()
+    {
+        g.matchNewN = 0;
+        g.matchNewArmed = true;
+    }
+
+    void DropNew(const char* id)
+    {
+        if (id) (void)core::DropCard(g.card, id);
+    }
 
     void Reset()
     {

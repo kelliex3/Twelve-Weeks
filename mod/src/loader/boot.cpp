@@ -18,6 +18,8 @@
 #include "sid/sidbase.hpp"
 #include "menu/net-menu.hpp"
 #include "menu/loadseq.hpp"
+#include "menu/sendoff.hpp"
+#include "menu/titlebg.hpp"
 #include "gameplay/barrel-check.hpp"
 #include "gameplay/stun-lock.hpp"
 #include "net/ui/notice.hpp"
@@ -27,6 +29,7 @@
 #include "net/ui/prompt-anim.hpp"
 #include "net/ui/nrui.hpp"
 #include "net/ui/mfnr.hpp"
+#include "net/ui/pmunlock.hpp"
 #include "net/ui/sbteam.hpp"
 #include "net/ui/scopeglint.hpp"
 #include "net/ui/notify.hpp"
@@ -213,6 +216,7 @@ namespace boot {
 		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
 		net::ui::prompt_anim::Tick(now);    // one shared pad / key snapshot for self-drawn prompts
 		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
+		net::ui::pmunlock::Tick(now);  // match-start unlock snapshot (before the achievement reply)
 		net::match::downed_bridge::Install(); // native sink; yields entirely while the ext is loaded
 		net::match::downed_bridge::Tick();    // downed state + revive reach, after shared input is settled
 		net::match::melee_pullout_bridge::Install(); // native family-5 pull-out owner (ext wins when loaded)
@@ -276,6 +280,8 @@ namespace boot {
 		net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
 		net::ui::customize::compose::Tick(now); // 0x59 outfit cache + composed look2 registry (yields to ext)
 		net::ui::mfnr::Tick(now); // match flow: map vote / boosters / engine LOADING screen
+		menu::sendoff::Tick(now);  // menu send-off: shared horn t=0, birds, fades and clips
+		menu::titlebg::Tick(now);  // title background: Hillcrest camera, FOV and boot cover
 		net::ui::nrui::Tick(now); // shared No Return frame glides (after page writers)
 		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
 		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)

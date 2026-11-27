@@ -24,6 +24,18 @@ namespace net::ui::mfnr {
     // vote / booster / loading widget writes are the last word for this frame.
     void Tick(uint64_t now);
 
+    // The shared match-found horn latch. `startedAt` is the same t=0 the ext's
+    // feature_match_horn gives the send-off timeline; `scene` is the faction
+    // menu scene (1 WLF / 2 Seraphites, 0 unknown) sampled when it fired. The
+    // latch is held until the level start or a cancel. menu::sendoff is the only
+    // consumer; nothing here renumbers a wire opcode or writes a sidecar.
+    struct HornState {
+        bool     active = false;
+        uint64_t startedAt = 0;
+        int      scene = 0;
+    };
+    HornState Horn();
+
     // Drop the vote / meta state, page latches, optimistic vote and loading
     // ownership on session reset. The hook stays installed.
     void Reset();

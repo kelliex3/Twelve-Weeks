@@ -728,6 +728,22 @@ namespace engine::pcm {
         return s.on && s.src == v.src;
     }
 
+    void SetGain(Voice& v, float gain)
+    {
+        if (v.slot < 0 || g_mixState.load(std::memory_order_acquire) != 1)
+            return;
+        const float g = gain > 0.0f ? gain : 0.0f;
+        const float vol = SfxUserVolume();
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        Slot& s = g_mixv[v.slot];
+        if (!s.on || s.src != v.src)
+            return;
+        if (s.dyn)
+            s.base = g;              // the next VoicesUpdate rebuilds l/r with it
+        else
+            s.tgl = s.tgr = g * vol; // 2D: start already applied the slider
+    }
+
     void Cut(Voice& v, int ms)
     {
         if (v.slot >= 0 && g_mixState.load(std::memory_order_acquire) == 1) {

@@ -1,6 +1,8 @@
 // Native port of build-191 tools/ext/namerim.c (nrim_tick / nrim_apply).
-// Lobby rows come from the read-only search / lobby mirrors; scoreboard rows
-// from net-gui2's read-only name mirror. See name-rim.hpp for the honest gates.
+// Lobby rows come from the read-only search / lobby mirrors and, for row 0,
+// the local account name; scoreboard rows from net-gui2's read-only name
+// mirror. The ext's 128-entry ring of unknown-handle engine text writes is
+// deliberately NOT ported: see name-rim.hpp for why.
 
 #include "name-rim.hpp"
 #include "name-rim-core.hpp"
@@ -91,12 +93,20 @@ namespace net::name_rim {
         }
 
         // The shown name of a lobby row: the search mirror first (SEARCHING),
-        // then the read-only roster order (MATCH FOUND). Row 0 is always us.
-        const char* RowName(int r, char* buf, size_t cap)
+        // then row 0's own account name, then the read-only roster order
+        // (MATCH FOUND). Row 0 is always us. net-gui2 writes row 0 with the
+        // same string (Username() == LocalName()) through a raw DC call that
+        // no observer sees, so the ext's pending-ring recovery of that one
+        // early write is replaced here by the direct producer value.
+        const char* RowName(int r, char* buf, size_t cap, const char* local)
         {
             const char* s = net::social::search_rows::Name(r);
             if (s && s[0]) {
                 std::snprintf(buf, cap, "%s", s);
+                return buf;
+            }
+            if (core::LocalNameFallback(r) && local && local[0]) {
+                std::snprintf(buf, cap, "%s", local);
                 return buf;
             }
             if (r > 0 && engine::lobby::Ready()) {
@@ -133,7 +143,7 @@ namespace net::name_rim {
         if (!engine::lobby::InMatch()) {
             for (int r = 0; r < core::kRows; ++r) {
                 char name[48];
-                const char* shown = RowName(r, name, sizeof name);
+                const char* shown = RowName(r, name, sizeof name, local);
                 const bool me = r == 0;
                 char np[96], fmt[96];
                 core::LobbyNamePath(np, sizeof np, r);

@@ -108,6 +108,12 @@ namespace net::social::name_rim::core {
             || !std::strcmp(name, "-");
     }
 
+    // ext namerim.c:127: only row 0 (us) falls back to the remembered own-name
+    // write (g_nrim_mt, fed by the ext's pending ring); rows 1..7 fall back to
+    // the roster. Native owns the local account name, so row 0 can fall back to
+    // it directly -- no competing engine settext hook is needed.
+    [[nodiscard]] inline bool LocalNameFallback(int row) noexcept { return row == 0; }
+
     // ext namerim.c:128 / :138. Row 0 is us (own role from the clan state);
     // every other row uses the shared 0xBF table. Placeholders have no role.
     inline int LobbyRole(bool me, const char* shown, int ownRole,

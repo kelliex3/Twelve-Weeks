@@ -18,6 +18,7 @@ namespace net::ui::customize {
     void Reset();
 
     bool Active();                       // this page is on top and owned by mod/
+    void EnsureLoaded();                 // read the profile sidecar once (match-start snapshots)
     core::Profile& GetProfile();
 
     // The challenges page edits the same profile and calls these after a

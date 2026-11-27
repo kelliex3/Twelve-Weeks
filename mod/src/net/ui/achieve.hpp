@@ -17,6 +17,14 @@
 // widget an older GUI pak does not carry -- the state machine still runs.
 namespace net::ui::achieve {
 
+    // The post-match UNLOCKS stage lists the achievements the daemon's reply
+    // marks new since the match started. MatchNew() is a read-only view of that
+    // bounded queue; the UNLOCKS owner calls DropNew() so the same unlock does
+    // not pop up again as a card when the achievement page opens later.
+    const core::Toast* MatchNew(int* count);
+    void NoteMatchStart();                // clear the queue and start capturing replies
+    void DropNew(const char* id);
+
     // Producers call this for an achievement-only counter (labels 64..127).
     // It is inert outside a live match, with the opt-out sidecar, and while the
     // ext is loaded -- the same guard as ext ach_note().

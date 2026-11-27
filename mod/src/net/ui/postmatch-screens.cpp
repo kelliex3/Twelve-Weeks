@@ -17,6 +17,7 @@
 #include "fac13-core.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/online/clan-state.hpp"
+#include "net/ui/pmunlock.hpp"
 
 #include <windows.h>
 
@@ -264,6 +265,7 @@ namespace net::ui::postmatch {
             int stage = 0, started = 0, fin = 0, skipped = 0;
             int refill = 0, sndCnt = 0;
             bool hSel = true, hBack = true;
+            bool pmLast = false;        // stage 2 prompt: CONTINUE only when no UNLOCKS follow
             uint64_t t0 = 0, backAt = 0, outAt = 0, autoAt = 0, setAt = 0;
             float curA = 0.0f;
             uint64_t lastFrame = 0;
@@ -338,9 +340,10 @@ namespace net::ui::postmatch {
             UiVisible("anim-group.earned", true);
             UiVisible("anim-group.convert", true);
             UiVisible("anim-group.result", false);
+            UiVisible("anim-group.unlocks", false);
             UiVisible("anim-group.convert.pmWait", false);
             UiVisible("anim-group.convert.pmLeft", false);
-            UiPrompt(true);
+            UiPrompt(false);            // NEXT while the supply counter is counting
             g_pm.dots.r = 190.0f;
             g_pm.dots.mid = 215.0f;
             for (int k = 0; k < kDots; ++k) {
@@ -538,23 +541,53 @@ namespace net::ui::postmatch {
                 }
                 PmResult(c);
                 RunDots(g_pm.dots, c, true);
-                UiPrompt(true);
+                g_pm.pmLast = pmunlock::Count(c.fac, now) == 0;
+                UiPrompt(g_pm.pmLast);
                 return;
             }
 
-            const int dur = 1000;
-            const int diff = c.lsup - c.lneed;
-            const int v = PmCount(diff < 0 ? -diff : diff, g_pm.t0, now, dur);
-            char b[96];
-            if (diff >= 0) std::snprintf(b, sizeof b, "+%d", v);
-            else std::snprintf(b, sizeof b, "<font color=\"#e04848\">-%d</font>", v);
-            PmText(net::clan::kPmRows + 3, "anim-group.result.pmDailyNum", b);
-            PmNumDb(net::clan::kPmRows + 4, "anim-group.result.pmGainNum",
-                    PmCount(c.lgain, g_pm.t0, now, dur));
-            RunDots(g_pm.dots, c, false);
+            int dur = 0;
+            if (g_pm.stage == 3) {          // what the match unlocked (pmunlock.c)
+                dur = static_cast<int>(pmunlock::AnimMs());
+                pmunlock::Frame(c.fac, now,
+                                now > g_pm.t0 ? now - g_pm.t0 : 0);
+            } else {
+                dur = 1000;
+                // The achievement reply can land while the day result is up.
+                // NEXT stays until we know there is an UNLOCKS stage to show.
+                const bool last = pmunlock::Count(c.fac, now) == 0;
+                if (last != g_pm.pmLast) {
+                    g_pm.pmLast = last;
+                    UiPrompt(last);
+                }
+                const int diff = c.lsup - c.lneed;
+                const int v = PmCount(diff < 0 ? -diff : diff, g_pm.t0, now, dur);
+                char b[96];
+                if (diff >= 0) std::snprintf(b, sizeof b, "+%d", v);
+                else std::snprintf(b, sizeof b, "<font color=\"#e04848\">-%d</font>", v);
+                PmText(net::clan::kPmRows + 3, "anim-group.result.pmDailyNum", b);
+                PmNumDb(net::clan::kPmRows + 4, "anim-group.result.pmGainNum",
+                        PmCount(c.lgain, g_pm.t0, now, dur));
+                RunDots(g_pm.dots, c, false);
+            }
             if (!sel) return;
             if (!g_pm.started || now < g_pm.t0 + static_cast<uint64_t>(dur)) {
-                g_pm.t0 = now - 100000;
+                g_pm.t0 = now - 100000;   // first press shows every row at once
+                return;
+            }
+            if (g_pm.stage == 2 && pmunlock::Count(c.fac, now) > 0) {
+                g_pm.stage = 3;
+                g_pm.t0 = now;
+                g_pm.pmLast = true;
+                const int rd = net::clan::PostDay();
+                const int cd = rd < 0 ? 0 : rd < 84 ? rd : 83;
+                const int rf = c.fac >= 1 && c.fac <= 2 ? c.fac : 1;
+                UiVisible("anim-group.result", false);
+                UiVisible("anim-group.unlocks", true);
+                F13Header(rf, "UNLOCKS", cd, c.ok ? c.day : cd);
+                pmunlock::Fill(c.fac, now);
+                pmunlock::Frame(c.fac, now, 0);
+                UiPrompt(true);
                 return;
             }
             PmClose("continue");

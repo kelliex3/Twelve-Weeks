@@ -83,6 +83,8 @@ int main()
           "another row uses the 0xBF table role");
     Check(LobbyRole(true, "PLAYER 1", 4, 4) == 0,
           "a placeholder row has no role even when it is ours");
+    Check(LocalNameFallback(0) && !LocalNameFallback(1) && !LocalNameFallback(7),
+          "only row 0 falls back to the local name, not the roster rows");
     Check(ScoreboardRole("[T2R] Ellie", "Ellie", 4, 0) == 4,
           "our scoreboard row matches a tagged local name");
     Check(ScoreboardRole("Other", "Ellie", 4, 4) == 4,

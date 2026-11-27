@@ -901,6 +901,7 @@ namespace net::ui::customize {
     }
 
     bool Active() { return !Disabled() && g.on; }
+    void EnsureLoaded() { LoadOnce(); }
     core::Profile& GetProfile() { return g.p; }
     int EditingFaction() { return g.fac; }
     int EditingCategory() { return g.cat; }
