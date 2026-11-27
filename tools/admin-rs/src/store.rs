@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags};
@@ -136,6 +136,15 @@ fn ban_reason(line: &str) -> String {
     }
 }
 
+/// The build lock when it is free; None while another request is building (the caller then serves its previous copy).
+fn build_once(m: &Mutex<()>) -> Option<MutexGuard<'_, ()>> {
+    match m.try_lock() {
+        Ok(g) => Some(g),
+        Err(TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
+}
+
 /// A report's state for the REPORTS page: "fixed" (meta handled), "investigating" (meta status, not handled yet) or "new".
 fn report_state(m: &Map<String, Value>) -> &'static str {
     if m.get("handled").map(py::truthy).unwrap_or(false) {
@@ -259,6 +268,9 @@ pub struct Admin {
     update_data: String,
     st: Mutex<State>,
     file_lock: Mutex<()>,
+    // one player list / clan list build at a time (see build_once)
+    groups_build: Mutex<()>,
+    clans_build: Mutex<()>,
 }
 
 pub struct LiveView {
@@ -312,6 +324,8 @@ impl Admin {
                 metas: HashMap::new(),
             }),
             file_lock: Mutex::new(()),
+            groups_build: Mutex::new(()),
+            clans_build: Mutex::new(()),
         }
     }
 
@@ -571,21 +585,27 @@ impl Admin {
     }
 
     pub fn player_groups(&self) -> Result<Arc<Groups>, String> {
-        if let Some(c) = &self.state().players {
-            if c.at.elapsed().as_secs_f64() < 4.0 {
-                return Ok(c.val.clone());
-            }
+        if let Some(v) = self.groups_cached() {
+            return Ok(v);
         }
-        let key = self.db_sigs();
-        {
-            let mut st = self.state();
-            if let Some(c) = &mut st.players {
-                if c.key == key {
-                    c.at = Instant::now();
-                    return Ok(c.val.clone());
+        // The database changes every second on a busy server, so every request after the 4 s mark used to build its own copy of the
+        // player list at the same time (each build is ~1M allocations); on a loaded box those builds piled up and the heap kept growing.
+        // Now one request builds and the others get the previous list (a few seconds old) meanwhile.
+        let _b = match build_once(&self.groups_build) {
+            Some(g) => g,
+            None => {
+                // (the state lock is let go before waiting: the build needs it)
+                let prev = self.state().players.as_ref().map(|c| c.val.clone());
+                match prev {
+                    Some(v) => return Ok(v),
+                    None => self.groups_build.lock().unwrap_or_else(|e| e.into_inner()),
                 }
             }
+        };
+        if let Some(v) = self.groups_cached() {
+            return Ok(v);
         }
+        let key = self.db_sigs();
         match self.build_groups() {
             Ok(g) => {
                 let g = Arc::new(g);
@@ -597,6 +617,23 @@ impl Admin {
                 None => Err(e),
             },
         }
+    }
+
+    /// The cached player list when it is under 4 s old or the database has not changed since it was built.
+    fn groups_cached(&self) -> Option<Arc<Groups>> {
+        if let Some(c) = &self.state().players {
+            if c.at.elapsed().as_secs_f64() < 4.0 {
+                return Some(c.val.clone());
+            }
+        }
+        let key = self.db_sigs();
+        let mut st = self.state();
+        let c = st.players.as_mut()?;
+        if c.key == key {
+            c.at = Instant::now();
+            return Some(c.val.clone());
+        }
+        None
     }
 
     fn build_groups(&self) -> Result<Groups, String> {
@@ -1253,22 +1290,42 @@ impl Admin {
 
     pub fn clans(&self) -> Result<Value, String> {
         let pg = self.player_groups()?;
-        let key = self.db_sigs();
-        {
-            let mut st = self.state();
-            if let Some(c) = &mut st.clans {
-                if c.at.elapsed().as_secs_f64() < 10.0 {
-                    return Ok((*c.val).clone());
-                }
-                if c.key == key {
-                    c.at = Instant::now();
-                    return Ok((*c.val).clone());
+        if let Some(v) = self.clans_cached() {
+            return Ok((*v).clone());
+        }
+        // one build at a time, the others get the previous list meanwhile (as player_groups)
+        let _b = match build_once(&self.clans_build) {
+            Some(g) => g,
+            None => {
+                // (the state lock is let go before waiting: the build needs it)
+                let prev = self.state().clans.as_ref().map(|c| c.val.clone());
+                match prev {
+                    Some(v) => return Ok((*v).clone()),
+                    None => self.clans_build.lock().unwrap_or_else(|e| e.into_inner()),
                 }
             }
+        };
+        if let Some(v) = self.clans_cached() {
+            return Ok((*v).clone());
         }
+        let key = self.db_sigs();
         let v = Arc::new(self.build_clans(&pg));
         self.state().clans = Some(Cached { at: Instant::now(), key, val: v.clone() });
         Ok((*v).clone())
+    }
+
+    fn clans_cached(&self) -> Option<Arc<Value>> {
+        let key = self.db_sigs();
+        let mut st = self.state();
+        let c = st.clans.as_mut()?;
+        if c.at.elapsed().as_secs_f64() < 10.0 {
+            return Some(c.val.clone());
+        }
+        if c.key == key {
+            c.at = Instant::now();
+            return Some(c.val.clone());
+        }
+        None
     }
 
     fn build_clans(&self, pg: &Groups) -> Value {

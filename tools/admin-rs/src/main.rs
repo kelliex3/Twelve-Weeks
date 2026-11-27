@@ -1,5 +1,7 @@
 mod clan_pages;
 mod daemon;
+#[cfg(feature = "heapprof")]
+mod heapprof;
 mod http;
 mod logindex;
 mod news;
@@ -206,7 +208,13 @@ async fn serve(app: Arc<App>, peer: SocketAddr, req: Request<Incoming>) -> Resul
     Ok(out)
 }
 
+#[cfg(feature = "heapprof")]
+#[global_allocator]
+static PROF: heapprof::Prof = heapprof::Prof;
+
 fn main() {
+    #[cfg(feature = "heapprof")]
+    heapprof::start();
     let a = match parse_args() {
         Ok(a) => a,
         Err(e) => {
