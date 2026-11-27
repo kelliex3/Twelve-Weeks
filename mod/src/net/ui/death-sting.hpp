@@ -23,6 +23,10 @@ namespace net::ui::death_sting {
 #  include "death_sting_data.hpp"
 
     inline engine::pcm::Voice g_left, g_right;
+    inline bool  g_duckCaptured = false;
+    inline float g_duckBaseL = 1.0f, g_duckBaseR = 1.0f;
+
+    inline void Stop(int fadeMs = 0);
 
     // Start the sting. Returns true when at least one voice started.
     inline bool Play()
@@ -35,12 +39,45 @@ namespace net::ui::death_sting {
     }
 
     // Fade out the running sting (0 = immediate), if any.
-    inline void Stop(int fadeMs = 0)
+    inline void Stop(int fadeMs)
     {
         if (engine::pcm::Live(g_left)) engine::pcm::Cut(g_left, fadeMs);
         if (engine::pcm::Live(g_right)) engine::pcm::Cut(g_right, fadeMs);
         engine::pcm::Invalidate(g_left);
         engine::pcm::Invalidate(g_right);
+        g_duckCaptured = false;
+    }
+
+    // Ext death-duck seam: 1.0 = original level, lower = ducked. The first
+    // non-unity call captures the sting's raw target gains; later calls scale
+    // them from that base and restore it when the tail is gone / duck ends.
+    inline void SetDuck(float duck)
+    {
+        if (duck < 0.0f) duck = 0.0f;
+        if (duck > 1.0f) duck = 1.0f;
+        if (!engine::pcm::Live(g_left) && !engine::pcm::Live(g_right)) {
+            g_duckCaptured = false;
+            return;
+        }
+        if (!g_duckCaptured && duck < 1.0f) {
+            float l = 1.0f, r = 1.0f;
+            if (engine::pcm::RawGains(g_left, l, r)) {
+                g_duckBaseL = l;
+                g_duckBaseR = r;
+            } else if (engine::pcm::RawGains(g_right, l, r)) {
+                g_duckBaseL = l;
+                g_duckBaseR = r;
+            }
+            g_duckCaptured = true;
+        }
+        if (!g_duckCaptured)
+            return;
+        if (engine::pcm::Live(g_left))
+            engine::pcm::SetTargetGainRaw(g_left, g_duckBaseL * duck, 0.0f);
+        if (engine::pcm::Live(g_right))
+            engine::pcm::SetTargetGainRaw(g_right, 0.0f, g_duckBaseR * duck);
+        if (duck >= 1.0f)
+            g_duckCaptured = false;
     }
 
     inline int Frames() { return kDeathStingFrames; }
@@ -50,6 +87,7 @@ namespace net::ui::death_sting {
 
     inline bool Play()        { return false; }   // no data compiled in: owned no-op
     inline void Stop(int)     {}
+    inline void SetDuck(float) {}
     inline int  Frames()      { return 0; }
     inline int  Rate()        { return 0; }
 

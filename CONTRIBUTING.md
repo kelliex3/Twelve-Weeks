@@ -59,6 +59,9 @@ with the launcher.
 ## Admin page and website
 
 - `python tools/admin_site/admin.py --db <t2r.db> ...` - local admin page on 127.0.0.1 (see its README).
+- New Refine/FastAPI replacement (Overview ported so far): see `tools/admin_dashboard/README.md`.
+  Build the client with `cd tools/admin_dashboard/admin-client && npm run build`, then serve API and
+  SPA together with `python tools/admin_dashboard/admin-server/server.py --db <t2r.db> --port 7010`.
 - `python tools/web/web.py --db <t2r.db> --news <news.json>` - serves `site/` with leaderboards and player
   pages. The site images (`site/assets/`) are not in the repository.
 
@@ -94,6 +97,7 @@ Generate the headers listed in `tools/ext/GENERATED.md` first. `--mode dev` buil
 python tools/update_server/test_update_server.py
 python tools/update_server/test_robustness.py
 python tools/admin_site/test_admin.py
+python tools/admin_dashboard/admin-server/tests/test_overview.py
 cd release/launcher && npm test
 ```
 

@@ -230,8 +230,11 @@ namespace engine::pcm {
         }
 
         // Start the mixer once; fills two free slots for a stereo wave under one lock.
-        bool StartStereo(const Sample* l, const Sample* r, int n, float gain, int rate,
-                         Voice& outL, Voice& outR)
+        // `start` is a source-sample offset (phase-matched music stage changes), and the
+        // per-channel gains let a caller ramp a crossfade from silence.
+        bool StartStereoAt(const Sample* l, const Sample* r, int n,
+                           float gl0, float gr0, int rate, double start,
+                           Voice& outL, Voice& outR)
         {
             outL = {};
             outR = {};
@@ -249,19 +252,25 @@ namespace engine::pcm {
             }
             if (b < 0)
                 return false;
+            double pos = start;
+            if (!(pos >= 0.0))
+                pos = 0.0;
+            if (pos > static_cast<double>(n - 2))
+                pos = static_cast<double>(n - 2);
             const Sample* src[2] = { l, r };
             const int     vv[2] = { a, b };
+            const float   gains[2][2] = { { gl0, 0.0f }, { 0.0f, gr0 } };
             for (int k = 0; k < 2; k++) {
                 Slot& s = g_mixv[vv[k]];
                 s.src = src[k];
                 s.n = n;
-                s.pos = 0.0;
+                s.pos = pos;
                 s.step = static_cast<double>(rate) / kRate;
                 s.played = 0;
                 s.fadeN = 0;
                 s.fadeLeft = 0;
-                s.gl = k ? 0.0f : gain;
-                s.gr = k ? gain : 0.0f;
+                s.gl = gains[k][0];
+                s.gr = gains[k][1];
                 s.tgl = s.gl;
                 s.tgr = s.gr;
                 s.base = 1.0f;
@@ -273,6 +282,12 @@ namespace engine::pcm {
             outL = { a, l };
             outR = { b, r };
             return true;
+        }
+
+        bool StartStereo(const Sample* l, const Sample* r, int n, float gain, int rate,
+                         Voice& outL, Voice& outR)
+        {
+            return StartStereoAt(l, r, n, gain, 0.0f, rate, 0.0, outL, outR);
         }
 
         // ---- the game's options volume (ext SfxOptionRaw / GeneralVolume) --------
@@ -620,6 +635,13 @@ namespace engine::pcm {
         return StartStereo(l, r, n, gain, rate, outL, outR);
     }
 
+    bool PlayStereoRawAt(const Sample* l, const Sample* r, int n,
+                         float gainL, float gainR, int rate, double startFrame,
+                         Voice& outL, Voice& outR)
+    {
+        return StartStereoAt(l, r, n, gainL, gainR, rate, startFrame, outL, outR);
+    }
+
     Voice PlayAt(const Sample* src, int n, float gain, int rate, StringId64 ent,
                  const float* wpos)
     {
@@ -742,6 +764,79 @@ namespace engine::pcm {
             s.base = g;              // the next VoicesUpdate rebuilds l/r with it
         else
             s.tgl = s.tgr = g * vol; // 2D: start already applied the slider
+    }
+
+    void SetTargetGainRaw(Voice& v, float gl, float gr)
+    {
+        if (v.slot < 0 || g_mixState.load(std::memory_order_acquire) != 1)
+            return;
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        Slot& s = g_mixv[v.slot];
+        if (!s.on || s.src != v.src)
+            return;
+        s.tgl = gl > 0.0f ? gl : 0.0f;
+        s.tgr = gr > 0.0f ? gr : 0.0f;
+    }
+
+    bool RawGains(const Voice& v, float& gl, float& gr)
+    {
+        gl = gr = 0.0f;
+        if (v.slot < 0 || g_mixState.load(std::memory_order_acquire) != 1)
+            return false;
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        const Slot& s = g_mixv[v.slot];
+        if (!s.on || s.src != v.src)
+            return false;
+        gl = s.tgl;
+        gr = s.tgr;
+        return true;
+    }
+
+    double Position(const Voice& v)
+    {
+        if (v.slot < 0 || g_mixState.load(std::memory_order_acquire) != 1)
+            return -1.0;
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        const Slot& s = g_mixv[v.slot];
+        return s.on && s.src == v.src ? s.pos : -1.0;
+    }
+
+    float ForegroundPeak(const Sample* const* ignore, int ignoreCount)
+    {
+        if (g_mixState.load(std::memory_order_acquire) != 1)
+            return 0.0f;
+        float peak = 0.0f;
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        for (int v = 0; v < kVoices; v++) {
+            const Slot& s = g_mixv[v];
+            if (!s.on || s.dyn || !s.src || s.step <= 0.0)
+                continue;
+            bool skip = false;
+            for (int i = 0; i < ignoreCount && ignore; ++i)
+                if (ignore[i] == s.src) { skip = true; break; }
+            if (skip)
+                continue;
+            const double rate = s.step * kRate;
+            if (rate <= 0.0 || s.n < rate * 0.5)
+                continue;
+            float gn = s.gl > s.gr ? s.gl : s.gr;
+            if (s.fadeN > 0)
+                gn *= static_cast<float>(s.fadeLeft) / static_cast<float>(s.fadeN);
+            if (gn <= 0.0f)
+                continue;
+            int p0 = static_cast<int>(s.pos);
+            if (p0 < 0) p0 = 0;
+            int p1 = p0 + static_cast<int>(rate * 0.08);
+            if (p1 > s.n) p1 = s.n;
+            for (int i = p0; i < p1; i += 4) {
+                const float x = s.src[i] < 0 ? static_cast<float>(-s.src[i])
+                                              : static_cast<float>(s.src[i]);
+                const float level = x / 32768.0f * gn;
+                if (level > peak)
+                    peak = level;
+            }
+        }
+        return peak;
     }
 
     void Cut(Voice& v, int ms)

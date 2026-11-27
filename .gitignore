@@ -95,5 +95,3 @@ Thumbs.db
 /tools/spawns/*.json.sha1
 !/tools/spawns/wilds-houses.json
 
-# not quite ready im afraid
-tools/admin_dashboard/

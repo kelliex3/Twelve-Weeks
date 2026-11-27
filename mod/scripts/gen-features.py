@@ -155,6 +155,18 @@ OVERLAP = {
                                  "net/audio/crossbow-hud.{hpp,cpp}, engine/pcm.cpp"),
     "alert_sting_stun_cough": ("net/audio/stun-cough-core.hpp, net/audio/stun-cough-pcm.hpp, "
                                "net/audio/stun-cough.{hpp,cpp}, engine/pcm.cpp"),
+    "bomb_roll": ("net/audio/bomb-roll-core.hpp, net/audio/bomb-roll-pcm.hpp, "
+                  "net/audio/bomb-roll.{hpp,cpp}, engine/pcm.cpp, loader/boot.cpp, "
+                  "net/game/net-replication.cpp, tests/bomb_roll_core_test.cpp"),
+    "death_theme": ("net/audio/death-theme-core.hpp, net/audio/death-theme-pcm.hpp, "
+                    "net/audio/death-theme.{hpp,cpp}, net/ui/death-ui.{hpp,cpp}, engine/pcm.cpp, "
+                    "loader/boot.cpp, net/game/net-replication.cpp, tests/death_theme_core_test.cpp"),
+    "downed_music": ("net/audio/downed-music-core.hpp, net/audio/downed-music-pcm.hpp, "
+                     "net/audio/downed-music.{hpp,cpp}, net/ui/death-sting.hpp, engine/pcm.cpp, "
+                     "loader/boot.cpp, net/game/net-replication.cpp, tests/downed_music_core_test.cpp"),
+    "downed_vox": ("net/audio/downed-vox-core.hpp, net/audio/downed-vox-data.hpp, "
+                   "net/audio/downed-vox.{hpp,cpp}, loader/boot.cpp, net/game/net-hooks.cpp, "
+                   "net/game/net-replication.cpp, tests/downed_vox_core_test.cpp"),
     "afk": "net/match/afk.cpp, engine/pad.cpp",
     "padinject": "engine/pad.cpp (activity only)",
     "bloodbuild": "net/match/bloodbuild.cpp, engine/clipfx.cpp, engine/vfx.cpp, "
@@ -174,7 +186,7 @@ STATUS = {
     # edge), but the private shiv PCM / DC music sinks are still absent, so shiv_sting stays
     # in progress. alert_sting.c's four subfeatures are tracked separately: alert sting,
     # stun tone, crossbow HUD and stun cough each own a pure core plus a data-gated sink.
-    "shiv_sting": "in progress", "alert_sting": "ported",
+    "shiv_sting": "in progress", "alert_sting": "completed",
     "alert_sting_stun_tone": "ported",
     "alert_sting_crossbow_hud": "ported",
     "alert_sting_stun_cough": "ported",
@@ -183,7 +195,16 @@ STATUS = {
     # private whizz waves stay behind TO1_BULLET_BY_PCM. The module's other SP feel work
     # (breath / effort vox, ...) is NOT ported, so FEATURES.md splits the module into two
     # rows and only the near-miss one gets this status.
-    "immersion_near_miss": "ported",
+    "immersion_near_miss": "completed",
+    # The four remaining stealth / audio modules now have native sole owners with
+    # pure cores and guarded private-data sinks: bomb-roll (throw-projectile hook,
+    # per-frame impact / roll tracker), death-theme (drone armed on the death-sting
+    # edge, sidechained and cut on respawn), downed-music (four-stage bleed-out
+    # crossfade with the death-sting duck) and downed-vox (downed cadences and
+    # headshot gargles). groan / breath line selection stays inert until the
+    # private faction / look / voice mapping is supplied; see FEATURES.md notes.
+    "bomb_roll": "completed", "death_theme": "completed",
+    "downed_music": "completed", "downed_vox": "completed",
     # The AFK watchdog + the pad-activity dependency are ported (net/match/afk,
     # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
     # counters are still gated, so it is in progress, not ported.
@@ -345,6 +366,37 @@ for r in rows:
             })
         break
 
+# The four remaining stealth / audio owners are hand-curated here as well, so a
+# future regeneration keeps the native-owner descriptions instead of falling back
+# to the short ext comment and the token-guess overlap.
+AUDIO_DETAIL = {
+    "bomb_roll": (
+        "thrown bombs: native impact / bounce / roll waves from the per-frame position "
+        "(DC throw-projectile hook, 12-row tracker, TO1_BOMB_ROLL_PCM)",
+        "audio, hook, data",
+    ),
+    "death_theme": (
+        "death screen drone: TLOU2 SP bed armed on the death-sting edge, crossfade-looped, "
+        "sidechain ducked, cut on respawn (TO1_DEATH_DRONE_PCM)",
+        "audio, data",
+    ),
+    "downed_music": (
+        "downed music: four TLOU2 SP layers crossfaded by the bleed-out fraction, darker "
+        "toward bleed-out, with a death tail and sting duck (TO1_DOWNED_MUSIC_PCM)",
+        "net, audio, data",
+    ),
+    "downed_vox": (
+        "downed players groan / struggle and headshot gargles from engine effort events, "
+        "every client for every downed body (TO1_DOWNED_VOX_DATA)",
+        "net, audio, data",
+    ),
+}
+for r in rows:
+    detail = AUDIO_DETAIL.get(r["base"])
+    if detail:
+        r["feature"], r["deps"] = detail
+        r["overlap"] = OVERLAP[r["base"]]
+
 def cell(s):
     return (s or "—").replace("|", "\\|")
 
@@ -361,7 +413,8 @@ w("Domain / overlap / status maps are curated by hand. Re-run after the ext's mo
 w("**Legend** — `Pri`: P1 first … P5 last. `Deps`: mechanism tags the module uses "
   "(`net`, `audio`, `widget`, `camera`, `pad`, `hook`) plus `data` when it needs generated headers. "
   "`Toggles`: count of `t2r-*.txt` switches the module reads. `Mod overlap`: existing mod code the "
-  "port should extend. `Status`: `not started` / `in progress` / `ported` / `dropped`.\n")
+  "port should extend. `Status`: `not started` / `in progress` / `ported` / `completed` / `dropped`; "
+  "`completed` is the final native-owner state (`ported` remains a legacy alias).\n")
 
 w("## Summary\n")
 by_dom = collections.Counter(r["domain"] for r in rows)

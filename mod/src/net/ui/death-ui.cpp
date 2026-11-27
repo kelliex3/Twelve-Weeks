@@ -39,6 +39,7 @@
 #include "net/match/net-player.hpp"
 #include "net/anim/paired.hpp"
 #include "net/audio/shivsting.hpp"
+#include "net/audio/death-theme.hpp"
 #include "gameplay/melee2013.hpp"
 #include "net/ui/death-sting.hpp"
 #include "sid/sidbase.hpp"
@@ -560,9 +561,13 @@ namespace net::ui::death_ui {
         core::Step(g_state, in, out, nowMs);
         g_lastBlack = out.black;
 
-        // ---- death sting (native PCM sink; no-op when not compiled in) ----
+        // ---- death sting + drone (native PCM sinks; no-op without data) ----
         if (out.stingDue || out.softStingAtEdge) {
             death_sting::Play();
+            // The ext arms its death drone on the same sting edge (including the
+            // shiv / execution victim cue). The owner reads the actual sidechain
+            // itself; stingMs / exec are only used for its one-time log line.
+            net::audio::death_theme::Arm(shivStingMs, execution);
         }
 
         // ---- spectate lobby fields ----------------------------------------
@@ -594,6 +599,10 @@ namespace net::ui::death_ui {
         // Consume the edge note once (newest note wins).
         g_notes.edgeSignalled = false;
     }
+
+    int Phase() noexcept { return g_state.phase; }
+
+    bool Final() noexcept { return g_state.final; }
 
     float Black() noexcept { return g_lastBlack; }
 

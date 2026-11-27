@@ -16,6 +16,7 @@
 #include "gameplay/melee-hit-react.hpp"
 #include "net/match/melee-bridge.hpp"
 #include "music-tier.hpp"
+#include "downed-vox.hpp"
 
 #include <bit>
 #include <cmath>
@@ -193,6 +194,16 @@ namespace net::hooks {
             static_cast<int>(hit.beforeHp), static_cast<int>(hit.afterHp),
             static_cast<int>(ownerHp),
             headshot ? " HEADSHOT" : "", predictedLethal ? " KILL?" : "");
+
+        // ext hs_mark / hs_unmark on the victim of our shot: a head pellet arms the
+        // gargle, a later body pellet cancels it. The owner keys by npcSid and yields
+        // while the ext is loaded, so this never doubles an ext death vocal.
+        if (puppet.npcSid) {
+            if (headshot)
+                net::audio::downed_vox::MarkHeadshot(puppet.npcSid);
+            else
+                net::audio::downed_vox::UnmarkHeadshot(puppet.npcSid);
+        }
 
         PlayerDamageEvent dmg{ weapon, ammo,
                                predictedLethal ? kForceKillDamage : damage,

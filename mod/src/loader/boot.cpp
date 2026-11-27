@@ -42,6 +42,10 @@
 #include "net/audio/stun-tone.hpp"
 #include "net/audio/crossbow-hud.hpp"
 #include "net/audio/stun-cough.hpp"
+#include "net/audio/downed-vox.hpp"
+#include "net/audio/bomb-roll.hpp"
+#include "net/audio/death-theme.hpp"
+#include "net/audio/downed-music.hpp"
 #include "net/audio/music-tier.hpp"
 #include "net/audio/music-sight.hpp"
 #include "net/audio/near-miss.hpp"
@@ -248,6 +252,7 @@ namespace boot {
 		net::match::melee_pullout_bridge::Tick();    // shared F / melee latch + counter edge + wire
 		net::gift::Install();             // native gift stock / hand-out owner (ext wins when loaded)
 		net::gift::Tick();                // stock broadcast, ACK, inventory and prompt feeds
+		net::audio::bomb_roll::Install(); // one-shot throw-projectile hook for bomb impact / roll audio
 		{
 			static bool hooksInstalled = false;
 			if (!hooksInstalled) {
@@ -269,6 +274,7 @@ namespace boot {
 		net::ui::kick_note::Tick(now);      // admin / AFK / packet-loss kick box
 		menu::loadseq::Tick(now);           // TWELVE WEEKS entry sequence (connecting page)
 		net::ui::death_ui::Tick(now);       // victim death screen (ported from tools/ext/death_ui.c)
+		net::audio::death_theme::Tick(now, net::ui::death_ui::Phase(), net::ui::death_ui::Final()); // death drone (cut on respawn / final)
 		net::ui::killfeed::Tick(now);       // icon kill feed (hud-root widgets)
 		net::ui::sbteam::Tick(now);         // place-coloured scoreboard bands (no block swap)
 		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
@@ -285,9 +291,12 @@ namespace boot {
 		net::audio::near_miss::Tick();  // immersion shot-ray whizz -> alert sting (before the sting's delayed play)
 		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
 		net::audio::stun_tone::Tick();  // stun concussion bed / unconfirmed fade (alert_sting.c siblings)
+		net::audio::bomb_roll::Tick();  // watched bomb positions -> impact / roll waves
 		net::audio::crossbow_hud::Tick(); // bolt impact / pulse / pulled-out HUD sounds
 		net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
+		net::audio::downed_vox::Tick(); // downed groans / breaths + headshot gargles (after downed state)
 		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
+		net::audio::downed_music::Tick(now); // adaptive downed layers / death tail / sting duck
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
 		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)

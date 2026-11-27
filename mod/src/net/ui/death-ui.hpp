@@ -718,6 +718,11 @@ namespace net::ui::death_ui {
 
     bool Active() noexcept;
 
+    // Last settled state from the owner, for the death-theme drone: phase 0 idle,
+    // 1 dead, 2 respawned, 3 match over; final = respawn countdown fade-to-black.
+    int  Phase() noexcept;
+    bool Final() noexcept;
+
     // The last computed HUD-under-black fade (0..1). Consumers such as the icon
     // kill feed need the same value the death UI applied that frame.
     float Black() noexcept;

@@ -80,6 +80,14 @@ namespace engine::pcm {
     bool PlayStereoRaw(const Sample* l, const Sample* r, int n, float gain, int rate,
                        Voice& outL, Voice& outR);
 
+    // Same raw stereo pair, but at an arbitrary sample offset and with explicit
+    // left/right gains. The ext's adaptive music starts each stage at a phase-
+    // matched offset and ramps the two channels independently while crossfading.
+    // startFrame is clamped to a valid position inside the wave.
+    bool PlayStereoRawAt(const Sample* l, const Sample* r, int n,
+                         float gainL, float gainR, int rate, double startFrame,
+                         Voice& outL, Voice& outR);
+
     // ---- 3D voices (ext PcmPlayAt2 / sfx_voices_update) ----------------------
 
     // One voice placed in the world: gain + pan come from the source body's live position
@@ -109,6 +117,23 @@ namespace engine::pcm {
     // a 3D voice stores it as its base gain for the next VoicesUpdate(). Use
     // Cut() for a timed fade-out.
     void SetGain(Voice& v, float gain);
+
+    // Raw per-channel target gains for callers that already applied their own
+    // volume (music stings / adaptive music / death drone). No SfxUserVolume is
+    // applied; the mixer ramps to the targets over one block. Source-validated.
+    void SetTargetGainRaw(Voice& v, float gl, float gr);
+
+    // Capture the current raw target gains (ext sidechain duck capture).
+    bool RawGains(const Voice& v, float& gl, float& gr);
+
+    // Current playback position in source samples, -1 when the handle is stale.
+    // Used for beat-aligned music stage changes and loop-wrap fades.
+    double Position(const Voice& v);
+
+    // Read-only sidechain peak (ext dth_foreground): scans the next 80 ms of
+    // every live 2D voice longer than half a second, skipping the supplied
+    // source pointers. `ignore` may be nullptr when ignoreCount == 0.
+    float ForegroundPeak(const Sample* const* ignore, int ignoreCount);
 
     // Fade the voice out over ms (0 = stop now) if it is still live, then clear the handle.
     void Cut(Voice& v, int ms);

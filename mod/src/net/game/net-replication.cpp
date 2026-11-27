@@ -59,6 +59,10 @@
 #include "stun-tone.hpp"
 #include "crossbow-hud.hpp"
 #include "stun-cough.hpp"
+#include "downed-vox.hpp"
+#include "bomb-roll.hpp"
+#include "death-theme.hpp"
+#include "downed-music.hpp"
 #include "player-status.hpp"
 #include "music-tier.hpp"
 #include "music-sight.hpp"
@@ -1101,6 +1105,21 @@ namespace net::replication {
 
         const char* weaponName = NdGameSdk::Sidbase::StringIdToStringInternal(weaponSID);
 
+        // Ext death-vocal arm sites: a headshot death is a forced, immediate gargle
+        // on our own body (the paired Death-enter / execution-beg path) and a short
+        // 90 ms delayed gargle on a puppet, forced when the kill lands inside an
+        // execution so it does not depend on a recent head-pellet mark.
+        if (headshot) {
+            if (victimSlot == mySlot) {
+                net::audio::downed_vox::ArmHeadshot(SID("player"), true, 0);
+            }
+            else {
+                const uint64_t victimSid = NetPlayers::BySlot(victimSlot).npcSid;
+                const bool exec = gameplay::melee::PuppetFrozenForExecution(victimSlot);
+                net::audio::downed_vox::ArmHeadshot(victimSid, exec, exec ? 0 : 90);
+            }
+        }
+
         //SPAWN AMMO ON KILL - only for the clien who just killed an enemy, and if it wasn't a suicide
         if (haveKiller && killerSlot == mySlot && victimSlot != mySlot) {
             SpawnItemFromKill(killerSlot, victimSlot, weaponSID);
@@ -1769,7 +1788,15 @@ namespace net::replication {
             uint64_t fromVec = MEMORY::ALLOC_VECTOR({ evt.fromPos[0], evt.fromPos[1], evt.fromPos[2] });
             uint64_t toVec = MEMORY::ALLOC_VECTOR({ evt.toPos[0],  evt.toPos[1],  evt.toPos[2] });
 
+            // The bomb-roll owner hooks this DC function itself, but a peer's
+            // slot is only known here: publish it for the hook, and register the
+            // returned handle as a fallback when that hook could not be installed.
+            const int bombKind = net::audio::bomb_roll::KindFromSid(evt.throwableSID);
+            net::audio::bomb_roll::SetNextFeedSlot(static_cast<int>(senderSlot));
             uint64_t projectileSID = DC::Call<"throw-projectile">(fromVec, toVec, evt.throwableSID, -1.0f);
+            net::audio::bomb_roll::SetNextFeedSlot(-1);
+            if (bombKind && projectileSID)
+                net::audio::bomb_roll::Watch(projectileSID, bombKind, static_cast<int>(senderSlot));
 
             uintptr_t projectile = DcManager::LookupObject(projectileSID);
             if (projectile) {
@@ -1849,6 +1876,17 @@ namespace net::replication {
             L.lastDamageWeapon = evt.weaponSID;
             L.lastDamageHead = evt.headshot != 0;
             L.lastDamageAt = NowSec();
+
+            // ext incoming-gun-hit path: a live head pellet marks our own body for
+            // the headshot gargle; a body pellet unmarks it. The damage window
+            // mirrors the ext's guarded 0 < dmg < 200 check.
+            if (evt.damage > 0.0f && evt.damage < 200.0f) {
+                const uint64_t self = SID("player");
+                if (evt.headshot)
+                    net::audio::downed_vox::MarkHeadshot(self);
+                else
+                    net::audio::downed_vox::UnmarkHeadshot(self);
+            }
 
             if (evt.lethalClaim && L.firstLethalSlot < 0) {
                 L.firstLethalSlot = static_cast<int>(senderSlot);
@@ -2295,6 +2333,10 @@ namespace net::replication {
         net::audio::stun_tone::Reset();
         net::audio::crossbow_hud::Reset();
         net::audio::stun_cough::Reset();
+        net::audio::downed_vox::Reset();
+        net::audio::bomb_roll::Reset();
+        net::audio::death_theme::Reset();
+        net::audio::downed_music::Reset();
         net::audio::music_hold::Reset();
         net::audio::exec_music::Reset();
         net::audio::shivsting::Reset();
