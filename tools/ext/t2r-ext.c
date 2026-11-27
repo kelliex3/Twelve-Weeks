@@ -39683,6 +39683,47 @@ static void keep_topup_tick(void) {
     }
     if (!open) g_keep_topup_until = 0;
 }
+// Spawn reserve top-up. set-total-ammo on a gun's ammo pool inside the spawn routine does not take: the log showed "spawn: ammo-revolver
+// reserve -> 3 (upgrade level 1)" and "skills: spawn ammo-revolver reserve 1 -> 8 (Gunslinger 2)" while the revolver still spawned with the
+// give's 7, and "ammo-pistol reserve -> 1" read back as 3 by skills_on_spawn one call later. So the upgrade level, booster, Gunslinger and
+// Second Chance reserves were all lost and every gun kept winmm's give amount. Each rule's wanted reserve is recorded per pool at the spawn
+// and reached with player-inventory-add-item-quantity (the ammo pickup's call, as upgrade_ammo_grant / keep_topup_tick) every 10 frames for
+// 4 s until it holds. Only adds: a reserve already at or above the wanted count is left alone.
+static struct { uint64_t pool; int want; } g_spawn_res[4];
+static int g_spawn_nres;
+static uint64_t g_spawn_res_until;
+static void spawn_res_want(uint64_t pool, int want) {
+    g_spawn_res_until = g_t60 + S60(4.0f);
+    for (int i = 0; i < g_spawn_nres; i++) if (g_spawn_res[i].pool == pool) { g_spawn_res[i].want = want; return; }
+    if (g_spawn_nres < 4) { g_spawn_res[g_spawn_nres].pool = pool; g_spawn_res[g_spawn_nres].want = want; g_spawn_nres++; }
+}
+// the reserve this spawn already asked for in the pool (the inventory readback right after set-total-ammo is not it), else fallback
+static int spawn_res_of(uint64_t pool, int fallback) {
+    for (int i = 0; i < g_spawn_nres; i++) if (g_spawn_res[i].pool == pool) return g_spawn_res[i].want;
+    return fallback;
+}
+static void spawn_res_tick(void) {
+    if (!g_spawn_res_until) return;
+    if (g_t60 >= g_spawn_res_until || match_substate() != 6) {
+        for (int i = 0; i < g_spawn_nres; i++)
+            if (g_spawn_res[i].want > 0 && (int)inv_qty(g_spawn_res[i].pool) < g_spawn_res[i].want)
+                xlog("spawn reserve: %llx still %d of %d after 4 s", (unsigned long long)g_spawn_res[i].pool, (int)inv_qty(g_spawn_res[i].pool), g_spawn_res[i].want);
+        g_spawn_res_until = 0; g_spawn_nres = 0; return;
+    }
+    if (g_frame % 10) return;
+    int open = 0;
+    for (int i = 0; i < g_spawn_nres; i++) {
+        if (g_spawn_res[i].want <= 0) continue;
+        uint64_t q = inv_qty(g_spawn_res[i].pool);
+        if (q == ~0ULL) { open = 1; continue; }
+        int have = (int)q;
+        if (have >= g_spawn_res[i].want) { g_spawn_res[i].want = 0; continue; }
+        open = 1;
+        dc_direct(0x7258db3b9e03e625ULL /* player-inventory-add-item-quantity */, g_spawn_res[i].pool, (uint64_t)(g_spawn_res[i].want - have), 0);
+        xlog("spawn reserve: %llx topped up %d -> %d (want %d)", (unsigned long long)g_spawn_res[i].pool, have, (int)inv_qty(g_spawn_res[i].pool), g_spawn_res[i].want);
+    }
+    if (!open) { g_spawn_res_until = 0; g_spawn_nres = 0; }
+}
 // Female knife, half 2 (see the block at skel_fix): the best-melee weapon is the switchblade. The spawn kit's give is swapped in
 // give_hook; this covers a life whose look was picked after the kit (the look says female only then) - the switchblade is given once
 // per life. Verification lines: HAS_MELEE_WEAPON must stay 0 (a basic melee: durability 0, like abby-unarmed) and the held weapon must
@@ -40260,6 +40301,7 @@ static void spawnkit_hook(void) {
     }
     lo_spawn_expect();                       // the rows' weapon ids (give_hook checks winmm's gives against them)
     g_in_spawn = 1; g_spawn_ngun = 0;
+    g_spawn_nres = 0; g_spawn_res_until = 0;     // a new life: the last spawn's reserve top-up is over
     g_spawnkit_tramp();
     g_spawn_nexpect = 0;
     g_in_spawn = 0;
@@ -40290,6 +40332,7 @@ static void spawnkit_hook(void) {
             uint64_t args[2] = {fnv64(SPAWN_AMMO[k].ammo), (uint64_t)r};
             uint64_t ret[64] = {0};
             g_settotal_orig(ret, 2, args, 0);
+            spawn_res_want(fnv64(SPAWN_AMMO[k].ammo), r);       // set-total-ammo does not take here: spawn_res_tick tops it up
             xlog("spawn: %s reserve -> %d (upgrade level %d)", SPAWN_AMMO[k].ammo, r, lv);
             for (size_t q = 0; q < sizeof WEAPON_STATS / sizeof *WEAPON_STATS; q++)
                 if (fnv64(WEAPON_STATS[q].weapon) == gun) {
@@ -72439,6 +72482,7 @@ __declspec(dllexport) void t2r_tick(void) {
     PF(vx_chain_tick());
     PF(xface_tick());
     PF(keep_topup_tick());
+    PF(spawn_res_tick());                           // spawn reserves (upgrade level, booster, Gunslinger, Second Chance) topped up until they hold
     PF(noside_tick());                              // loadout with no sidearm: the 9mm is taken out again
     PF(b13_tick());                                 // supplybox.c: per-match box state
     PF(cl_tick());                                  // containers.c: container loot

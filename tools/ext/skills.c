@@ -2440,12 +2440,14 @@ static void skills_on_spawn(void) {
             uint64_t g = SPAWN_AMMO[k].gun ? SPAWN_AMMO[k].gun : fnv64(SPAWN_AMMO[k].name);
             if (g == gun) any = SPAWN_AMMO[k].ammo;
         }
-        int have = any ? (int)inv_qty(fnv64(any)) : 0;
+        // the base reserve the spawn asked for, not the readback: set-total-ammo has not taken yet (spawn_res_want, t2r-ext.c)
+        int have = any ? spawn_res_of(fnv64(any), (int)inv_qty(fnv64(any))) : 0;
         if (any && sc > 0) extra += (int)__builtin_ceilf(have * sc);
         if (!any || extra <= 0) continue;
         uint64_t args[2] = {fnv64(any), (uint64_t)(have + extra)};
         uint64_t ret[64] = {0};
         g_settotal_orig(ret, 2, args, 0);
+        spawn_res_want(fnv64(any), have + extra);
         xlog("skills: spawn %s reserve %d -> %d (Gunslinger %d, Second Chance x%.2f)", any, have, have + extra, skl(SK_GUNSLINGER), sc);
     }
     if (skl(SK_LUCKY)) xlog("skill: Lucky Break %d (2013 box modifiers)", skl(SK_LUCKY));
