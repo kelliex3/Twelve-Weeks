@@ -21,6 +21,7 @@
 #include "net/match/downed-state.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/anim/paired.hpp"
+#include "net/audio/pullout-sting.hpp"
 #include "net/game/net-hooks.hpp"
 #include "net/match/net-player.hpp"
 #include "net/online/net-session.hpp"
@@ -281,7 +282,21 @@ namespace net::match::melee_pullout_bridge {
             const float outW = core::Smooth01(
                 static_cast<float>(gSp.outEnd - now) / core::kSpHandBackMs);
             const float w = std::min(inW, outW);
-            const Quaternion wantedRot = QuatYawPitch(pose.yaw, pose.pitch);
+
+            // The pull-out sting is a native g_xcam_fov_mul producer now. On the
+            // victim camera its 0.9498 -> 1 ramp owns the lens (70 -> 73.74 deg
+            // over 2.7 s), exactly where the ext's ctxdown:pu- tracks consume
+            // the global. With the swing sidecar off the procedural pose keeps
+            // its own lens.
+            const float mul = net::audio::pullout_sting::FovMultiplier();
+            const float lens = gSp.role == 2 && mul > 0.0f
+                ? net::audio::pullout_sting::core::kGameFov * mul : pose.fov;
+            // PS32's measured camera-shake-hit-b curve is replayed alongside the
+            // engine clip. Pull-out requests roll=0 / yaw=0, so only the pitch
+            // column is added here (negative = view down in QuatYawPitch).
+            const float pitch = pose.pitch + (gSp.role == 2
+                ? net::audio::pullout_sting::MeasuredShake(now) : 0.0f);
+            const Quaternion wantedRot = QuatYawPitch(pose.yaw, pitch);
             const Vector3 wantedPos{ pose.pos[0], pose.pos[1], pose.pos[2] };
 
             const bool handingBack = now >= gSp.end;
@@ -295,7 +310,7 @@ namespace net::match::melee_pullout_bridge {
                                     from.z + (to.z - from.z) * w };
             CAMERA::SET_CAMERA_POSITION(
                 finalPos, Quaternion::Slerp(fromRot, toRot, w));
-            CAMERA::OVERRIDE_FOV(70.0f + (pose.fov - 70.0f) * w);
+            CAMERA::OVERRIDE_FOV(70.0f + (lens - 70.0f) * w);
         }
 
         // ---- deterministic native pair placement -------------------------------------
@@ -786,6 +801,21 @@ namespace net::match::melee_pullout_bridge {
                    downed::PeerState(static_cast<uint8_t>(slot)) != downed::kStateDown;
         }
 
+        // The pull-out sting's DOF call needs a LIVE puppet handle: the ext
+        // crashed when force-camera-dof-focus was handed a StringId whose
+        // process had already gone. Validate the same object route the engine
+        // uses (ENTITY::DOES_EXIST + LookupObject) at the grab edge; the owner
+        // re-validates every DOF frame in case the puppet respawns mid-drag.
+        uint64_t VerifiedPuppetHandle(int slot)
+        {
+            if (!PeerValid(slot))
+                return 0;
+            const NetPlayer& p = NetPlayers::BySlot(slot);
+            const auto sid = static_cast<StringId64>(p.npcSid);
+            return ENTITY::DOES_EXIST(sid) && DcManager::LookupObject(sid)
+                 ? static_cast<uint64_t>(p.npcSid) : 0;
+        }
+
         float YawFromState(const PlayerNetState& s)
         {
             const float den = 1.0f - 2.0f * (s.rotY * s.rotY + s.rotZ * s.rotZ);
@@ -836,6 +866,7 @@ namespace net::match::melee_pullout_bridge {
                 return;
             const int peer = gVic.slot;
             const uint8_t id = gVic.id;
+            net::audio::pullout_sting::OnTick(ClockMs(), false, false, true);
             gVic = Victim{};   // the supine watch outlives this QTE linger
             PollLos(peer, false);
             if (gSp.role == 2)
@@ -1000,6 +1031,8 @@ namespace net::match::melee_pullout_bridge {
             StartPair(2, gVic.slot, gVic.id,
                       (static_cast<uint64_t>(sender) << 24) | gVic.id,
                       gVic.vicYaw);
+            net::audio::pullout_sting::OnGrab(
+                now, gVic.slot, VerifiedPuppetHandle(gVic.slot));
             TO1_LOG("[pullout-bridge] INTRO from slot=%u id=%u window %llu..%llu",
                     sender, gVic.id,
                     static_cast<unsigned long long>(gVic.w.open),
@@ -1054,6 +1087,11 @@ namespace net::match::melee_pullout_bridge {
                     SwapPair(ok);
                     if (ok)
                         BeginSupine(slot);
+                    net::audio::pullout_sting::OnVerdict(now, ok);
+                    // No victim-side fail-blow timestamp is replicated: use the
+                    // bridge's authored kBlowMs (the attacker applies damage then).
+                    net::audio::pullout_sting::OnOutcome(
+                        now, ok, static_cast<float>(core::kBlowMs) / 1000.0f);
                     TO1_LOG("[pullout-bridge] RES %s slot=%d rel=%u",
                             ok ? "COUNTER" : "FAIL", slot, gVic.press.relMs);
                 }
@@ -1077,6 +1115,7 @@ namespace net::match::melee_pullout_bridge {
         if (g_installed || boot::ExtLoaded())
             return;
         g_installed = true;
+        net::audio::pullout_sting::Reset();
         Log("native pull-out bridge installed");
     }
 
@@ -1094,6 +1133,10 @@ namespace net::match::melee_pullout_bridge {
         TickVictim(now, net::ui::prompt_anim::PressEdge());
         TickSupine();
         TickAttacker(now, trigger);
+        net::audio::pullout_sting::OnTick(
+            now, gVic.on || gVic.decided,
+            downed::IsDown() || engine::local_player::Health() <= 0.0f,
+            net::match::liveness::Live());
         FeedPrompt();
     }
 
@@ -1141,6 +1184,7 @@ namespace net::match::melee_pullout_bridge {
         if (!g_installed)
             return;
         gAtt = Attacker{};
+        net::audio::pullout_sting::Reset();
         CancelSupine();
         gVic = Victim{};
         StopSpCam();

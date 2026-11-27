@@ -9,9 +9,8 @@
 // intfoley.cpp supplies the pair name, move clock, sidecar answers and the
 // explus sink. Tests: mod/tests/intfoley_core_test.cpp.
 //
-// Honest gap: no native intvox timeline / shift producer exists, so the owner
-// passes an inert LineFeed and the clash / duck functions return false until
-// such a producer is added.
+// The native intvox owner feeds this LineFeed once per frame; with an empty
+// feed (the default, e.g. a non-interrogation) every query yields false.
 
 #include "explus-core.hpp"
 

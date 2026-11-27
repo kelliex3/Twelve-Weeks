@@ -15,6 +15,7 @@
 #include "engine/script.hpp" // MENU2 / MenuStack / DC::Call
 #include "engine/widget.hpp" // PageId / Page / SetText
 #include "fac13-core.hpp"
+#include "net/audio/pmsfx.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/online/clan-state.hpp"
 #include "net/ui/pmunlock.hpp"
@@ -423,6 +424,7 @@ namespace net::ui::postmatch {
             const bool ready = net::clan::PmReady(c, net::clan::PostDay(), net::clan::PostLmh0());
             if (entered) {
                 g_pm = PmUi{};
+                net::audio::pmsfx::OnEnter(now);  // NR score page: enter whoosh
                 g_pm.t0 = now + 300;
                 g_pm.hSel = g_pm.hBack = true;
                 g_pm.refill = 10;
@@ -482,7 +484,9 @@ namespace net::ui::postmatch {
                     el = kPmCntAt + cdur;
                     g_pm.t0 = now - static_cast<uint64_t>(el);
                     selUse = false;
+                    net::audio::pmsfx::OnSkip(now);  // fade the count loop on a skip
                 }
+                net::audio::pmsfx::OnTick(now, ready, el, cdur);  // NR: rolling count loop
                 const float pa = el <= 0 ? 0.0f
                     : el >= kPmFade ? 1.0f : static_cast<float>(el) / kPmFade;
                 const float ta = el <= kPmTotAt ? 0.0f
@@ -522,10 +526,12 @@ namespace net::ui::postmatch {
                 if (ready && f >= 1.0f && !g_pm.fin) {
                     g_pm.fin = 1;
                     g_pm.autoAt = g_pm.skipped ? 0 : now + 1200;
+                    net::audio::pmsfx::OnFinish(now);  // count lands + total stamp
                 }
                 if (g_pm.fin && g_pm.autoAt && now >= g_pm.autoAt) selUse = true;
                 if (!selUse || !g_pm.fin) return;
                 g_pm.stage = 2;
+                net::audio::pmsfx::OnPage(now);  // NR: the day result page arrives
                 g_pm.t0 = now + 200;
                 g_pm.started = 1;
                 UiAlpha("anim-group", 1.0f);
@@ -577,6 +583,7 @@ namespace net::ui::postmatch {
             }
             if (g_pm.stage == 2 && pmunlock::Count(c.fac, now) > 0) {
                 g_pm.stage = 3;
+                net::audio::pmsfx::OnPage(now);  // NR: the unlock page arrives
                 g_pm.t0 = now;
                 g_pm.pmLast = true;
                 const int rd = net::clan::PostDay();

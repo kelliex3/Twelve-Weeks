@@ -48,6 +48,7 @@
 #include "net/audio/exec-sp.hpp"
 #include "net/audio/explus.hpp"
 #include "net/audio/intfoley.hpp"
+#include "net/audio/intvox.hpp"
 #include "net/audio/footsteps.hpp"
 #include "net/audio/vox-effort.hpp"
 #include "net/audio/bomb-roll.hpp"
@@ -241,113 +242,153 @@ namespace boot {
 		lastUntil = until;
 	}
 
-	static void FrameTick(SafetyHookContext&) {
-		engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
-		const uint64_t now = ::GetTickCount64();
-		engine::text_input::BeginFrame();  // one hook-free keyboard sampler for chat + friends
-		engine::menu_input::BeginFrame(now);  // one hook-free menu sampler (kick / launch notices)
-		net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
-		net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
-		net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio
-		net::audio::music_sight::Install();   // gated native MusicSlotSeen / Cos samplers
-		engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
-		net::ui::prompt_anim::Tick(now);    // one shared pad / key snapshot for self-drawn prompts
-		net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
-		net::ui::pmunlock::Tick(now);  // match-start unlock snapshot (before the achievement reply)
-		net::match::downed_bridge::Install(); // native sink; yields entirely while the ext is loaded
-		net::match::downed_bridge::Tick();    // downed state + revive reach, after shared input is settled
-		net::match::melee_pullout_bridge::Install(); // native family-5 pull-out owner (ext wins when loaded)
-		net::match::melee_pullout_bridge::Tick();    // shared F / melee latch + counter edge + wire
-		net::gift::Install();             // native gift stock / hand-out owner (ext wins when loaded)
-		net::gift::Tick();                // stock broadcast, ACK, inventory and prompt feeds
-		net::audio::bomb_roll::Install(); // one-shot throw-projectile hook for bomb impact / roll audio
+	// FrameTick is a phase list. Each helper owns one ordered slice of the frame;
+	// when adding an owner, put it in the phase whose ordering it needs (installs
+	// before NetTick, HUD before page owners, audio after its producers, ...)
+	// instead of appending another line to one long body.
+	namespace tick {
+
+		static uint64_t Begin()
+		{
+			engine::frame::Tick();    // g_frame / g_t60 clock (ported from tools/ext/t2r-ext.c)
+			const uint64_t now = ::GetTickCount64();
+			engine::text_input::BeginFrame();  // one hook-free keyboard sampler for chat + friends
+			engine::menu_input::BeginFrame(now);  // one hook-free menu sampler (kick / launch notices)
+			return now;
+		}
+
+		static void InstallNoticeHooksOnce()
 		{
 			static bool hooksInstalled = false;
-			if (!hooksInstalled) {
-				net::match::kick::InstallNoticeHooks();  // native g_kickMs: notice kick dedupe
-				net::ui::kick_note::InstallNoticeHooks();  // the kick box takes over the toast line
-				net::friends13::InstallNoticeHooks();  // route kind 'p' notice lines to friends13
-				hooksInstalled = true;
-			}
+			if (hooksInstalled)
+				return;
+			net::match::kick::InstallNoticeHooks();  // native g_kickMs: notice kick dedupe
+			net::ui::kick_note::InstallNoticeHooks();  // the kick box takes over the toast line
+			net::friends13::InstallNoticeHooks();  // route kind 'p' notice lines to friends13
+			hooksInstalled = true;
 		}
-#ifdef TO1_DEBUG
-		NetMenuTick();            // net debug menu (toggle/input/render)
-#endif
-		NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
-		net::match::skill_sync::Tick(); // MSG_SK_SYNC 0x50 keep-alive (after replication settles slots)
-		net::match::melee_pullout_bridge::PostNetTick(); // SP camera / pair placement after replication
-		net::audio::xcam_bridge::Tick(); // paired-move victim edge -> exec music / shiv sting (ext xcam_start routing)
-		// Native menu / HUD owners. Each yields while the legacy ext is loaded so
-		// the ext cannot push the same page or sample the same click twice.
-		net::ui::launch_notice::Tick(now);  // once-per-run notice under the entry title
-		net::ui::kick_note::Tick(now);      // admin / AFK / packet-loss kick box
-		menu::loadseq::Tick(now);           // TWELVE WEEKS entry sequence (connecting page)
-		net::ui::death_ui::Tick(now);       // victim death screen (ported from tools/ext/death_ui.c)
-		net::audio::death_theme::Tick(now, net::ui::death_ui::Phase(), net::ui::death_ui::Final()); // death drone (cut on respawn / final)
-		net::ui::killfeed::Tick(now);       // icon kill feed (hud-root widgets)
-		net::ui::sbteam::Tick(now);         // place-coloured scoreboard bands (no block swap)
-		net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
-		net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
-		net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
-		net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
-		net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
-		net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
-		net::audio::music_sight::Tick(); // gated native sight / cone samplers (before the tier consumes them)
-		net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
-		gameplay::stun_lock::Tick(::GetTickCount64(), net::player_status::MatchLive()); // stun end / grace
-		BridgeLocalStunAudio();  // native stun start -> confirmation tone + own cough cadence
-		net::audio::shivsting::Tick();  // shiv victim shock sting + drums (ported from tools/ext/shiv_sting.c)
-		net::audio::near_miss::Tick();  // immersion shot-ray whizz -> alert sting (before the sting's delayed play)
-		net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
-		net::audio::stun_tone::Tick();  // stun concussion bed / unconfirmed fade (alert_sting.c siblings)
-		net::audio::bomb_roll::Tick();  // watched bomb positions -> impact / roll waves
-		net::audio::crossbow_hud::Tick(); // bolt impact / pulse / pulled-out HUD sounds
-		net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
-		net::audio::downed_vox::Tick(); // downed groans / breaths + headshot gargles (after downed state)
-		net::audio::exec_beg::Tick(); // victim pleas / shot cuts (ducks exec music before its tick)
-		net::audio::exec_sp::Tick(); // authored SP execution rows / contact timeline (after plea windows)
-		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
-		net::audio::intfoley::Tick(); // interrogation shaking (feeds the shared explus recipes)
-		net::audio::explus::Tick(); // layered execution foley timeline + shared recipes
-		net::audio::footsteps::Tick(); // remote players' authored footstep tiers
-		net::audio::downed_music::Tick(now); // adaptive downed layers / death tail / sting duck
-		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
-		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
-		net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
-		net::friends13::Tick();   // in-game FRIENDS / PARTY panel + party gate (after liveness, before requeue)
-		net::chat::Tick(::GetTickCount64()); // in-game chat (0xC7 peer lines + 0xD8 chat subs)
-		net::social::search_rows::Tick(); // g_srchTab / g_srchName mirror (read-only, observer on mod text writes)
-		net::rank_badge::Tick(::GetTickCount64());  // async 0xBF rank table poll (only while a screen draws a badge)
-		net::name_rim::Tick(::GetTickCount64());    // lead-dev pink name rim (role 4, 150 ms poll)
-		net::clan::Tick();        // 2013 CLAN state (0xE0/0xE1) + g_pm.pending / g_ev.pending producers
-		net::clan::page::Tick();  // 2013 CLAN page data (0xB6/0xB7 sections 1..6)
-		net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
-		net::ui::achieve::Tick(now);     // 0xA9/0xAA/0xAB client half + clanach/cards (yields to ext)
-		net::ui::choose::Tick(now);      // CHOOSE YOUR SIDE widget owner (camera/mixer seams inert)
-		// The stage samples the settled page state first so its freecam can
-		// suppress this frame's CUSTOMIZE / CHALLENGES input (ext czs_tick order).
-		net::ui::customize::stage::Tick(now, net::ui::customize::Active()
-			|| net::ui::customize::challenges::Active(),
-			net::ui::customize::EditingFaction(), net::ui::customize::CurrentSide());
-		net::ui::customize::Tick(now);   // CUSTOMIZE page owner (shared profile, atomic save + NEVT_CUSTOM_LOOK)
-		net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
-		net::ui::customize::compose::Tick(now); // 0x59 outfit cache + composed look2 registry (yields to ext)
-		net::ui::mfnr::Tick(now); // match flow: map vote / boosters / engine LOADING screen
-		menu::sendoff::Tick(now);  // menu send-off: shared horn t=0, birds, fades and clips
-		menu::titlebg::Tick(now);  // title background: Hillcrest camera, FOV and boot cover
-		net::ui::nrui::Tick(now); // shared No Return frame glides (after page writers)
-		net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
-		net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
-		net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
-		engine::vfx::RetryTick();     // queued compute-stream particle retries (ported from tools/ext/t2r-ext.c)
-		engine::pcm::VoicesUpdate();  // live 3D voice follow (ported from tools/ext/t2r-ext.c)
-#ifdef TO1_DEBUG
-		engine::debugdraw::Tick();
-#endif
-		gameplay::barrelcheck::Tick();
 
-		static bool initialized = false;
-		if (!initialized) {
+		static void PreNet(uint64_t now)
+		{
+			net::match::melee_bridge::Install();  // installs the wire / hit / dodge sinks (kEnabled == true)
+			net::match::melee_bridge::Tick();     // hitrel / dodge / hitreact / exchange cores + local dodge press
+			net::audio::xcam_bridge::Init();      // gated dispatch sink for xcam -> exec / shiv audio
+			net::audio::music_sight::Install();   // gated native MusicSlotSeen / Cos samplers
+			engine::pad::Tick();      // virtual pad: learned input bits + injection heartbeat (ported from tools/ext/padinject.c)
+			net::ui::prompt_anim::Tick(now);    // one shared pad / key snapshot for self-drawn prompts
+			net::match::liveness::Tick();  // one shared match-end latch (ext g_wasLive), before all consumers
+			net::ui::pmunlock::Tick(now);  // match-start unlock snapshot (before the achievement reply)
+			net::match::downed_bridge::Install(); // native sink; yields entirely while the ext is loaded
+			net::match::downed_bridge::Tick();    // downed state + revive reach, after shared input is settled
+			net::match::melee_pullout_bridge::Install(); // native family-5 pull-out owner (ext wins when loaded)
+			net::match::melee_pullout_bridge::Tick();    // shared F / melee latch + counter edge + wire
+			net::gift::Install();             // native gift stock / hand-out owner (ext wins when loaded)
+			net::gift::Tick();                // stock broadcast, ACK, inventory and prompt feeds
+			net::audio::bomb_roll::Install(); // one-shot throw-projectile hook for bomb impact / roll audio
+			InstallNoticeHooksOnce();
+		}
+
+		static void Net()
+		{
+#ifdef TO1_DEBUG
+			NetMenuTick();            // net debug menu (toggle/input/render)
+#endif
+			NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
+			net::match::skill_sync::Tick(); // MSG_SK_SYNC 0x50 keep-alive (after replication settles slots)
+			net::match::melee_pullout_bridge::PostNetTick(); // SP camera / pair placement after replication
+			net::audio::xcam_bridge::Tick(); // paired-move victim edge -> exec music / shiv sting (ext xcam_start routing)
+		}
+
+		static void HudAndStun(uint64_t now)
+		{
+			// Native menu / HUD owners. Each yields while the legacy ext is loaded so
+			// the ext cannot push the same page or sample the same click twice.
+			net::ui::launch_notice::Tick(now);  // once-per-run notice under the entry title
+			net::ui::kick_note::Tick(now);      // admin / AFK / packet-loss kick box
+			menu::loadseq::Tick(now);           // TWELVE WEEKS entry sequence (connecting page)
+			net::ui::death_ui::Tick(now);       // victim death screen (ported from tools/ext/death_ui.c)
+			net::audio::death_theme::Tick(now, net::ui::death_ui::Phase(), net::ui::death_ui::Final()); // death drone (cut on respawn / final)
+			net::ui::killfeed::Tick(now);       // icon kill feed (hud-root widgets)
+			net::ui::sbteam::Tick(now);         // place-coloured scoreboard bands (no block swap)
+			net::direct::Tick();      // direct melee path via the Steam helper (ported from tools/ext/netdirect.c)
+			net::notice::Tick();      // server notices (ported from tools/ext/notice.c)
+			net::scopeglint::Tick();  // scope glint (ported from tools/ext/scopeglint.c)
+			net::notify::Tick();      // styled HUD notification (ported from tools/ext/notify.c)
+			net::denynote::Tick();    // picker refusal panel (ported from tools/ext/denynote.c)
+			net::glass::Tick();       // synced breakable glass (ported from tools/ext/glass.c)
+			net::audio::music_sight::Tick(); // gated native sight / cone samplers (before the tier consumes them)
+			net::audio::music_tier::Tick(); // combat music tier STATE (ported from tools/ext/t2r-ext.c)
+			gameplay::stun_lock::Tick(::GetTickCount64(), net::player_status::MatchLive()); // stun end / grace
+			BridgeLocalStunAudio();  // native stun start -> confirmation tone + own cough cadence
+		}
+
+		static void Audio(uint64_t now)
+		{
+			net::audio::shivsting::Tick();  // shiv victim shock sting + drums (ported from tools/ext/shiv_sting.c)
+			net::audio::near_miss::Tick();  // immersion shot-ray whizz -> alert sting (before the sting's delayed play)
+			net::audio::alertsting::Tick(); // alert sting (ported from tools/ext/alert_sting.c)
+			net::audio::stun_tone::Tick();  // stun concussion bed / unconfirmed fade (alert_sting.c siblings)
+			net::audio::bomb_roll::Tick();  // watched bomb positions -> impact / roll waves
+			net::audio::crossbow_hud::Tick(); // bolt impact / pulse / pulled-out HUD sounds
+			net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
+			net::audio::downed_vox::Tick(); // downed groans / breaths + headshot gargles (after downed state)
+			net::audio::exec_beg::Tick(); // victim pleas / shot cuts (ducks exec music before its tick)
+			net::audio::exec_sp::Tick(); // authored SP execution rows / contact timeline (after plea windows)
+			net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
+			net::audio::intvox::Tick(); // interrogation voices (feeds the intfoley line / voice-yield seam)
+			net::audio::intfoley::Tick(); // interrogation shaking (feeds the shared explus recipes)
+			net::audio::explus::Tick(); // layered execution foley timeline + shared recipes
+			net::audio::footsteps::Tick(); // remote players' authored footstep tiers
+			net::audio::downed_music::Tick(now); // adaptive downed layers / death tail / sting duck
+			net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
+		}
+
+		static void Session(uint64_t now)
+		{
+			net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)
+			net::jip::Tick();         // JIP 0xE3 clock report (after afk: carries this frame's idle trailer)
+			net::friends13::Tick();   // in-game FRIENDS / PARTY panel + party gate (after liveness, before requeue)
+			net::chat::Tick(::GetTickCount64()); // in-game chat (0xC7 peer lines + 0xD8 chat subs)
+			net::social::search_rows::Tick(); // g_srchTab / g_srchName mirror (read-only, observer on mod text writes)
+			net::rank_badge::Tick(::GetTickCount64());  // async 0xBF rank table poll (only while a screen draws a badge)
+			net::name_rim::Tick(::GetTickCount64());    // lead-dev pink name rim (role 4, 150 ms poll)
+			net::clan::Tick();        // 2013 CLAN state (0xE0/0xE1) + g_pm.pending / g_ev.pending producers
+			net::clan::page::Tick();  // 2013 CLAN page data (0xB6/0xB7 sections 1..6)
+			net::ui::postmatch::Tick();  // post-match screen latches (ext clan13x / clan-postmatch / clan event / GEAR UP nav / g_mmBack)
+			net::ui::achieve::Tick(now);     // 0xA9/0xAA/0xAB client half + clanach/cards (yields to ext)
+			net::ui::choose::Tick(now);      // CHOOSE YOUR SIDE widget owner (camera/mixer seams inert)
+			// The stage samples the settled page state first so its freecam can
+			// suppress this frame's CUSTOMIZE / CHALLENGES input (ext czs_tick order).
+			net::ui::customize::stage::Tick(now, net::ui::customize::Active()
+				|| net::ui::customize::challenges::Active(),
+				net::ui::customize::EditingFaction(), net::ui::customize::CurrentSide());
+			net::ui::customize::Tick(now);   // CUSTOMIZE page owner (shared profile, atomic save + NEVT_CUSTOM_LOOK)
+			net::ui::customize::challenges::Tick(now); // CUSTOMIZE CHALLENGES page owner (shared save/net/sfx)
+			net::ui::customize::compose::Tick(now); // 0x59 outfit cache + composed look2 registry (yields to ext)
+			net::ui::mfnr::Tick(now); // match flow: map vote / boosters / engine LOADING screen
+			menu::sendoff::Tick(now);  // menu send-off: shared horn t=0, birds, fades and clips
+			menu::titlebg::Tick(now);  // title background: Hillcrest camera, FOV and boot cover
+			net::ui::nrui::Tick(now); // shared No Return frame glides (after page writers)
+			net::requeue::Tick();     // post-match requeue 0xBC poll / WAITING FOR PLAYERS label
+			net::match::backpack::Tick();  // TAB backpack puppet state (ported from tools/ext/backpack.c)
+			net::match::bloodbuild::Tick();  // per-life blood / dirt build-up (ported from tools/ext/bloodbuild.c)
+		}
+
+		static void Late()
+		{
+			engine::vfx::RetryTick();     // queued compute-stream particle retries (ported from tools/ext/t2r-ext.c)
+			engine::pcm::VoicesUpdate();  // live 3D voice follow (ported from tools/ext/t2r-ext.c)
+#ifdef TO1_DEBUG
+			engine::debugdraw::Tick();
+#endif
+			gameplay::barrelcheck::Tick();
+		}
+
+		static void DeferredStartup()
+		{
+			static bool initialized = false;
+			if (initialized)
+				return;
 			gSkelType1Hook = safetyhook::create_inline(
 				(void*)DcManager::SkeletonOverrideAddr1, (void*)hk_IsCharacterType1);
 			gSkelType2Hook = safetyhook::create_inline(
@@ -367,87 +408,130 @@ namespace boot {
 			initialized = true;
 		}
 
-		EnforceFocusLossSettings();
-		engine::framecap::Tick();
+		static void Finalize()
+		{
+			EnforceFocusLossSettings();
+			engine::framecap::Tick();
+		}
+
+	} // namespace tick
+
+	static void FrameTick(SafetyHookContext&)
+	{
+		const uint64_t now = tick::Begin();
+		tick::PreNet(now);
+		tick::Net();
+		tick::HudAndStun(now);
+		tick::Audio(now);
+		tick::Session(now);
+		tick::Late();
+		tick::DeferredStartup();
+		tick::Finalize();
 	}
 
-	bool InitCore(HMODULE gameModule, HMODULE selfModule) {
+	// InitCore reads as a short checklist; fatal gates stay in init::Engine so the
+	// caller's return path is obvious, and the non-fatal installers are named for
+	// what they own.
+	namespace init {
 
-		if (!engine::InitGameInfo(gameModule)) {
-			TO1_LOG("[boot] FATAL: game-info init failed.\n");
-			return false;
-		}
+		static bool Engine(HMODULE gameModule, HMODULE selfModule)
+		{
+			if (!engine::InitGameInfo(gameModule)) {
+				TO1_LOG("[boot] FATAL: game-info init failed.\n");
+				return false;
+			}
 
-		// Read-only final render camera observer (ext icam capture). Hooks f+15, past the
-		// ext's 15-byte prologue detour, so install order vs t2r-ext.dll does not matter;
-		// idempotent inside Install().
-		if (!engine::render_camera::Install())
-			TO1_LOG("[boot] WARNING: render-camera observer not installed; audio/sight keep their fallback camera.\n");
+			// Read-only final render camera observer (ext icam capture). Hooks f+15, past the
+			// ext's 15-byte prologue detour, so install order vs t2r-ext.dll does not matter;
+			// idempotent inside Install().
+			if (!engine::render_camera::Install())
+				TO1_LOG("[boot] WARNING: render-camera observer not installed; audio/sight keep their fallback camera.\n");
 
-		if (!engine::archive::Init(gameModule, selfModule)) {
-			TO1_LOG("[boot] FATAL: embedded psarc init failed.\n");
-			return false;
-		}
+			if (!engine::archive::Init(gameModule, selfModule)) {
+				TO1_LOG("[boot] FATAL: embedded psarc init failed.\n");
+				return false;
+			}
 
-		if (!engine::InitScript(gameModule)) {
-			TO1_LOG("[boot] FATAL: script init failed.\n");
-			return false;
-		}
+			if (!engine::InitScript(gameModule)) {
+				TO1_LOG("[boot] FATAL: script init failed.\n");
+				return false;
+			}
 
-		// The stage's compaction hook is deferred until early ticks have let
-		// ExtLoaded() settle; storing the module here keeps that first tick cheap.
-		net::ui::customize::stage::Install(gameModule);
+			// The stage's compaction hook is deferred until early ticks have let
+			// ExtLoaded() settle; storing the module here keeps that first tick cheap.
+			net::ui::customize::stage::Install(gameModule);
 
-		// The match-flow LOADING hook uses the same settled-tick install; the
-		// module is only stored here so it cannot detour an ext-loaded prologue.
-		net::ui::mfnr::Install(gameModule);
+			// The match-flow LOADING hook uses the same settled-tick install; the
+			// module is only stored here so it cannot detour an ext-loaded prologue.
+			net::ui::mfnr::Install(gameModule);
 
-		if (!engine::InitDebugDraw(gameModule)) {
-			TO1_LOG("[boot] FATAL: debug draw init failed.\n");
-			return false;
-		}
+			if (!engine::InitDebugDraw(gameModule)) {
+				TO1_LOG("[boot] FATAL: debug draw init failed.\n");
+				return false;
+			}
 
 #ifdef TO1_DEBUG
-		if (!engine::debugdraw::Init(gameModule))
-			TO1_LOG("[boot] WARNING: engine debug-prim init-gate patch failed; 3D debug draw unavailable.\n");
+			if (!engine::debugdraw::Init(gameModule))
+				TO1_LOG("[boot] WARNING: engine debug-prim init-gate patch failed; 3D debug draw unavailable.\n");
 #endif
-
-		gPrepareLogoutHook = safetyhook::create_inline(
-			reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1B98130),
-			reinterpret_cast<void*>(hk_PreparePackageForLogout));
-		if (!gPrepareLogoutHook)
-			TO1_LOG("[boot] WARNING: PreparePackageForLogout hook failed; vegetation slot leak fix inactive.\n");
-
-		gInteractiveLogoutLevel = reinterpret_cast<void(__fastcall*)(uintptr_t)>(
-			reinterpret_cast<uintptr_t>(gameModule) + 0x13D75B0);
-		gLevelResetHook = safetyhook::create_inline(
-			reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1E99EA0),
-			reinterpret_cast<void*>(hk_LevelReset));
-		if (!gLevelResetHook)
-			TO1_LOG("[boot] WARNING: Level reset hook failed; vegetation slot release on level free inactive.\n");
-		gFreeBackgroundHook = safetyhook::create_inline(
-			reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1A50620),
-			reinterpret_cast<void*>(hk_FreeBackground));
-		if (!gFreeBackgroundHook)
-			TO1_LOG("[boot] WARNING: Background release hook failed; vegetation slot release on content-layer drop inactive.\n");
-
-		if (!Utility::memory::InitMemoryMap(gameModule)) {
-			TO1_LOG("[boot] FATAL: memory-map table not found.\n");
-			return false;
+			return true;
 		}
 
-		ApplyBootPatches(gameModule);
+		static void LevelCleanupHooks(HMODULE gameModule)
+		{
+			gPrepareLogoutHook = safetyhook::create_inline(
+				reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1B98130),
+				reinterpret_cast<void*>(hk_PreparePackageForLogout));
+			if (!gPrepareLogoutHook)
+				TO1_LOG("[boot] WARNING: PreparePackageForLogout hook failed; vegetation slot leak fix inactive.\n");
 
-		NdGameSdk::Sidbase::InitSidbase(PROJECT_DATA_DIR "/sidbase.bin");
-
-		auto tick = (void*)Utility::FindAndPrintPattern(gameModule, Patterns::CommonGame_CommonGameLoop_GameDebugUpdate);
-		if (!tick) {
-			TO1_LOG("[boot] FATAL: GameDebugUpdate pattern not found.\n");
-			return false;
+			gInteractiveLogoutLevel = reinterpret_cast<void(__fastcall*)(uintptr_t)>(
+				reinterpret_cast<uintptr_t>(gameModule) + 0x13D75B0);
+			gLevelResetHook = safetyhook::create_inline(
+				reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1E99EA0),
+				reinterpret_cast<void*>(hk_LevelReset));
+			if (!gLevelResetHook)
+				TO1_LOG("[boot] WARNING: Level reset hook failed; vegetation slot release on level free inactive.\n");
+			gFreeBackgroundHook = safetyhook::create_inline(
+				reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(gameModule) + 0x1A50620),
+				reinterpret_cast<void*>(hk_FreeBackground));
+			if (!gFreeBackgroundHook)
+				TO1_LOG("[boot] WARNING: Background release hook failed; vegetation slot release on content-layer drop inactive.\n");
 		}
-		gFrameHook = Utility::MakeMidHook(tick, FrameTick,
-			Patterns::CommonGame_CommonGameLoop_GameDebugUpdate.name, TO1_NAME("FrameTick"));
 
-		return static_cast<bool>(gFrameHook);
+		static bool GameData(HMODULE gameModule)
+		{
+			if (!Utility::memory::InitMemoryMap(gameModule)) {
+				TO1_LOG("[boot] FATAL: memory-map table not found.\n");
+				return false;
+			}
+
+			ApplyBootPatches(gameModule);
+			NdGameSdk::Sidbase::InitSidbase(PROJECT_DATA_DIR "/sidbase.bin");
+			return true;
+		}
+
+		static bool FrameHook(HMODULE gameModule)
+		{
+			auto tick = (void*)Utility::FindAndPrintPattern(gameModule, Patterns::CommonGame_CommonGameLoop_GameDebugUpdate);
+			if (!tick) {
+				TO1_LOG("[boot] FATAL: GameDebugUpdate pattern not found.\n");
+				return false;
+			}
+			gFrameHook = Utility::MakeMidHook(tick, FrameTick,
+				Patterns::CommonGame_CommonGameLoop_GameDebugUpdate.name, TO1_NAME("FrameTick"));
+			return static_cast<bool>(gFrameHook);
+		}
+
+	} // namespace init
+
+	bool InitCore(HMODULE gameModule, HMODULE selfModule)
+	{
+		if (!init::Engine(gameModule, selfModule))
+			return false;
+		init::LevelCleanupHooks(gameModule);
+		if (!init::GameData(gameModule))
+			return false;
+		return init::FrameHook(gameModule);
 	}
 }

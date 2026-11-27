@@ -65,6 +65,8 @@
 #include "exec-sp.hpp"
 #include "explus.hpp"
 #include "intfoley.hpp"
+#include "intvox.hpp"
+#include "pmsfx.hpp"
 #include "footsteps.hpp"
 #include "vox-effort.hpp"
 #include "bomb-roll.hpp"
@@ -1607,143 +1609,175 @@ namespace net::replication {
         L.healProgress = 0.0f;
     }
 
-    void Tick()
-    {
-        net::replication::AlwaysRun();
-        float dt = TIME::GET_DELTA_TIME();
+    // Tick is a phase list too: shared clocks -> local death flow -> remote
+    // bodies -> gameplay/HUD -> input restrictions. Keep new per-frame work in
+    // the phase it depends on instead of growing the public body.
+    namespace tick {
 
-        net::vox::Tick(dt);
-        net::player::Tick(dt);
-        net::netsmooth::bridge::Tick();
-
-        UpdateKillFeed();
-        UpdateListenMode();
-
-        const bool dead = PLAYER::IS_IN_STATE(SID("Death"));
-        const bool haveLives = TheMatch().BlueLives() > 0;
-        const bool scoreboard = net::gui2::ScoreboardShowing();
-        auto& L = LocalState();
-
-        if (dead && !L.wasDead && !L.respawnTimer.Running() && !scoreboard) {
-            ReportOwnDeath();
-            net::audio::crossbow_hud::NoteClear(false);  // ext xb_clear("dead")
-            SendCrossbowBolt(0, L.lastDamagerSlot, false);
-            if (haveLives) StartRespawnCountdown();
-            else           EnterElimSpectate();
+        static float Begin()
+        {
+            AlwaysRun();
+            return TIME::GET_DELTA_TIME();
         }
 
-        if (dead && !haveLives && L.respawnTimer.Running() && !scoreboard)
-            EnterElimSpectate();
+        static void Shared(float dt)
+        {
+            net::vox::Tick(dt);
+            net::player::Tick(dt);
+            net::netsmooth::bridge::Tick();
 
-        if (!dead && L.elimSpec)
-            ExitElimSpectate();
+            UpdateKillFeed();
+            UpdateListenMode();
+        }
 
-        L.wasDead = dead;
-        UpdateHealVox(dead);
-        UpdateRespawnCountdown(dt);
-        UpdateRespawnPending(dt);
-        UpdateSpectateCamera(dt);
-        TickPing(dt);
+        static void LocalDeath(float dt)
+        {
+            const bool dead = PLAYER::IS_IN_STATE(SID("Death"));
+            const bool haveLives = TheMatch().BlueLives() > 0;
+            const bool scoreboard = net::gui2::ScoreboardShowing();
+            auto& L = LocalState();
 
-        DC::Call<"send-event">(SID("disable-auto-holster"), SID("player"), MEMORY::NEW_BOXED_VALUE(BoxedValueType::kF32, 1.00f));
-        DC::Call<"player-disable-explosion-state">();
+            if (dead && !L.wasDead && !L.respawnTimer.Running() && !scoreboard) {
+                ReportOwnDeath();
+                net::audio::crossbow_hud::NoteClear(false);  // ext xb_clear("dead")
+                SendCrossbowBolt(0, L.lastDamagerSlot, false);
+                if (haveLives) StartRespawnCountdown();
+                else           EnterElimSpectate();
+            }
 
-        for (NetPlayer& p : NetPlayers::Remotes()) {
-            NetSetSlotStreamAlive(p.netSlot,
-                p.spawned && p.hasState && !p.animDetached &&
-                (NowSec() - p.lastPacketTime) < kAliveStaleSeconds);
+            if (dead && !haveLives && L.respawnTimer.Running() && !scoreboard)
+                EnterElimSpectate();
 
-            // Release the held body once BOTH reasons have cleared: our own move no longer owns
-            // it, and the victim has stopped reporting the melee action they were dying into.
-            // The second is what a bystander waits on -- inMelee goes false the frame the
-            // victim's own half ends, so the ragdoll lands exactly where they saw it.
-            if (s_deathPending[p.netSlot]) {
-                if (std::isfinite(dt) && dt > 0.0f) s_deathPendingAge[p.netSlot] += dt;
+            if (!dead && L.elimSpec)
+                ExitElimSpectate();
 
-                const bool stillAnimating =
-                    s_deathAnimated[p.netSlot] && p.hasState && p.State().inMelee != 0 &&
-                    (NowSec() - p.lastPacketTime) < kAliveStaleSeconds &&
-                    s_deathPendingAge[p.netSlot] < kAnimatedDeathHoldSec;
+            L.wasDead = dead;
+            UpdateHealVox(dead);
+            UpdateRespawnCountdown(dt);
+            UpdateRespawnPending(dt);
+            UpdateSpectateCamera(dt);
+            TickPing(dt);
 
-                if (!gameplay::melee::PuppetFrozenForExecution(p.netSlot) && !stillAnimating) {
+            DC::Call<"send-event">(SID("disable-auto-holster"), SID("player"), MEMORY::NEW_BOXED_VALUE(BoxedValueType::kF32, 1.00f));
+            DC::Call<"player-disable-explosion-state">();
+        }
+
+        static void Remotes(float dt)
+        {
+            for (NetPlayer& p : NetPlayers::Remotes()) {
+                NetSetSlotStreamAlive(p.netSlot,
+                    p.spawned && p.hasState && !p.animDetached &&
+                    (NowSec() - p.lastPacketTime) < kAliveStaleSeconds);
+
+                // Release the held body once BOTH reasons have cleared: our own move no longer owns
+                // it, and the victim has stopped reporting the melee action they were dying into.
+                // The second is what a bystander waits on -- inMelee goes false the frame the
+                // victim's own half ends, so the ragdoll lands exactly where they saw it.
+                if (s_deathPending[p.netSlot]) {
+                    if (std::isfinite(dt) && dt > 0.0f) s_deathPendingAge[p.netSlot] += dt;
+
+                    const bool stillAnimating =
+                        s_deathAnimated[p.netSlot] && p.hasState && p.State().inMelee != 0 &&
+                        (NowSec() - p.lastPacketTime) < kAliveStaleSeconds &&
+                        s_deathPendingAge[p.netSlot] < kAnimatedDeathHoldSec;
+
+                    if (!gameplay::melee::PuppetFrozenForExecution(p.netSlot) && !stillAnimating) {
+                        s_deathPending[p.netSlot] = false;
+                        s_deathAnimated[p.netSlot] = false;
+                        TO1_LOG("[MELEE] slot%d death animation over -- running the deferred puppet death\n",
+                            p.netSlot);
+                        // Reclaim FIRST. A puppet we released for our own finisher already has
+                        // dead=true from that predicted kill, and Die() opens with
+                        // `if (isLocal || dead) return;` -- so without this the deferred death is a
+                        // silent no-op and the body never drops. ReclaimFromEngine self-guards: if
+                        // the engine really did kill it, dead stays true and Die() correctly does
+                        // nothing.
+                        p.ReclaimFromEngine();
+                        if (!p.dead) p.Die();
+                    }
+                }
+
+                if (!p.spawned && p.hasState && !p.dead) {
                     s_deathPending[p.netSlot] = false;
                     s_deathAnimated[p.netSlot] = false;
-                    TO1_LOG("[MELEE] slot%d death animation over -- running the deferred puppet death\n",
-                        p.netSlot);
-                    // Reclaim FIRST. A puppet we released for our own finisher already has
-                    // dead=true from that predicted kill, and Die() opens with
-                    // `if (isLocal || dead) return;` -- so without this the deferred death is a
-                    // silent no-op and the body never drops. ReclaimFromEngine self-guards: if
-                    // the engine really did kill it, dead stays true and Die() correctly does
-                    // nothing.
-                    p.ReclaimFromEngine();
-                    if (!p.dead) p.Die();
+                    s_deathPendingAge[p.netSlot] = 0.0f;
+                    AutoSpawnRemote(p);
                 }
-            }
 
-            if (!p.spawned && p.hasState && !p.dead) {
-                s_deathPending[p.netSlot] = false;
-                s_deathAnimated[p.netSlot] = false;
-                s_deathPendingAge[p.netSlot] = 0.0f;
-                AutoSpawnRemote(p);
-            }
-
-            if (p.dead && p.hasState && p.State().health > 0.0f &&
-                !TheMatch().slotState[p.netSlot].dead &&
-                !gameplay::melee::PuppetFrozenForExecution(p.netSlot) &&
-                (NowSec() - p.lastPacketTime) < kAliveStaleSeconds &&
-                p.dyingSinceMs && (GetTickCount64() - p.dyingSinceMs) > kDesyncRecoverMs) {
-                const PlayerNetState& rs = p.State();
-                if (AllFinite(&rs.posX, 3) && IsUnitQuat(&rs.rotX)) {
-                    TO1_LOG("[NET] slot%d desync: a corpse here, but they report %.0f hp -- resyncing\n",
-                        p.netSlot, rs.health);
-                    p.Respawn(Vector3{ rs.posX, rs.posY, rs.posZ },
-                        Quaternion{ rs.rotX, rs.rotY, rs.rotZ, rs.rotW });
-                    continue;
+                if (p.dead && p.hasState && p.State().health > 0.0f &&
+                    !TheMatch().slotState[p.netSlot].dead &&
+                    !gameplay::melee::PuppetFrozenForExecution(p.netSlot) &&
+                    (NowSec() - p.lastPacketTime) < kAliveStaleSeconds &&
+                    p.dyingSinceMs && (GetTickCount64() - p.dyingSinceMs) > kDesyncRecoverMs) {
+                    const PlayerNetState& rs = p.State();
+                    if (AllFinite(&rs.posX, 3) && IsUnitQuat(&rs.rotX)) {
+                        TO1_LOG("[NET] slot%d desync: a corpse here, but they report %.0f hp -- resyncing\n",
+                            p.netSlot, rs.health);
+                        p.Respawn(Vector3{ rs.posX, rs.posY, rs.posZ },
+                            Quaternion{ rs.rotX, rs.rotY, rs.rotZ, rs.rotW });
+                        continue;
+                    }
                 }
+
+                // A corpse gets no replication at all
+                if (p.dead) { p.TickDeath(); continue; }
+                if (p.spawned && p.Exists())
+                    ApplyRemote(p, dt);
+            }
+        }
+
+        static void GameplayAndHud(float dt)
+        {
+            net::engine::ApplyWeaponSkeleton(NetPlayers::LocalPtr());
+            //  for (NetPlayer& p : NetPlayers::Remotes())
+            //      if (p.spawned && p.Exists())
+            //          net::engine::ApplyWeaponSkeleton(p.Ptr());
+
+            UpdateTeamHighlight();
+            gameplay::perks::Tick(dt);
+            gameplay::melee::Tick(dt);
+
+            // HUD
+            if (!s_debugMenuOpen && !TIME::IS_GAME_PAUSED() && !net::gui2::PauseMenuOpen() && !net::gui2::ScoreboardShowing()) {
+                net::gui2::Spawn();
+                net::gui2::RefreshWidgets();
+                const uint64_t hudNow = ::GetTickCount64();
+                net::ui::radar_box::BeginFrame(hudNow);  // resolve t2rRbx widgets, clear this frame's blips
+                if (!net::ui::killfeed::Active()) DrawKillFeed();
+                net::ui::killfeed::Draw();  // icon row names, drawn under the HUD widgets
+                DrawRadar();
+                net::ui::radar_box::EndFrame(hudNow);    // place crate / arc widgets from those blips
+                net::ui::prompt_producer::Tick(hudNow);  // native Show() feeds (dodge window, supply box)
+                net::ui::prompt_anim::Draw(hudNow);      // self-drawn key prompts (no winmm hook)
+                net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
+                net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
+            }
+        }
+
+        static void Controls()
+        {
+            const bool mnk = DC::Call<"is-mnk-primary-input-device?">();
+            for (NetPlayer& p : NetPlayers::Remotes()) {
+                if (!p.spawned || !p.npcSid || p.EngineOwned()) continue;
+                if (mnk) DC::Call<"player-disable-aim-assist-on-object">(p.npcSid);
+                else     DC::Call<"player-enable-aim-assist-on-object">(p.npcSid);
             }
 
-            // A corpse gets no replication at all
-            if (p.dead) { p.TickDeath(); continue; }
-            if (p.spawned && p.Exists())
-                ApplyRemote(p, dt);
+            // disable gameplay controls while in menus
+            if (net::gui2::PauseMenuOpen() || MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/backpack-menu")))
+                DC::Call<"joypad-disable-all-commands-except">(SID("menu-back"), SID("menu-select"), SID("menu-left"), SID("menu-up"), SID("menu-right"), SID("menu-down"), SID("menu-up-hold"), SID("menu-down-hold"), SID("menu-select-vc"));
         }
 
-        net::engine::ApplyWeaponSkeleton(NetPlayers::LocalPtr());
-        //  for (NetPlayer& p : NetPlayers::Remotes())
-        //      if (p.spawned && p.Exists())
-        //          net::engine::ApplyWeaponSkeleton(p.Ptr());
+    } // namespace tick
 
-        UpdateTeamHighlight();
-        gameplay::perks::Tick(dt);
-        gameplay::melee::Tick(dt);
-
-        // HUD
-        if (!s_debugMenuOpen && !TIME::IS_GAME_PAUSED() && !net::gui2::PauseMenuOpen() && !net::gui2::ScoreboardShowing()) {
-            net::gui2::Spawn();
-            net::gui2::RefreshWidgets();
-            const uint64_t hudNow = ::GetTickCount64();
-            net::ui::radar_box::BeginFrame(hudNow);  // resolve t2rRbx widgets, clear this frame's blips
-            if (!net::ui::killfeed::Active()) DrawKillFeed();
-            net::ui::killfeed::Draw();  // icon row names, drawn under the HUD widgets
-            DrawRadar();
-            net::ui::radar_box::EndFrame(hudNow);    // place crate / arc widgets from those blips
-            net::ui::prompt_producer::Tick(hudNow);  // native Show() feeds (dodge window, supply box)
-            net::ui::prompt_anim::Draw(hudNow);      // self-drawn key prompts (no winmm hook)
-            net::notify::Draw();   // styled notification text (the widgets are driven by notify::Tick)
-            net::afk::Draw();      // anti-AFK warning (ported from tools/ext/afk.c)
-        }
-
-        const bool mnk = DC::Call<"is-mnk-primary-input-device?">();
-        for (NetPlayer& p : NetPlayers::Remotes()) {
-            if (!p.spawned || !p.npcSid || p.EngineOwned()) continue;
-            if (mnk) DC::Call<"player-disable-aim-assist-on-object">(p.npcSid);
-            else     DC::Call<"player-enable-aim-assist-on-object">(p.npcSid);
-        }
-
-        // disable gameplay controls while in menus
-        if (net::gui2::PauseMenuOpen() || MENU2::IS_PAGE_ON_STACK(MenuStack::hudMenuStack, SID("to1/backpack-menu")))
-            DC::Call<"joypad-disable-all-commands-except">(SID("menu-back"), SID("menu-select"), SID("menu-left"), SID("menu-up"), SID("menu-right"), SID("menu-down"), SID("menu-up-hold"), SID("menu-down-hold"), SID("menu-select-vc"));
+    void Tick()
+    {
+        const float dt = tick::Begin();
+        tick::Shared(dt);
+        tick::LocalDeath(dt);
+        tick::Remotes(dt);
+        tick::GameplayAndHud(dt);
+        tick::Controls();
     }
 
     auto listGetAt = GameFn<uintptr_t(__fastcall*)(uintptr_t, int)>(0x1E236A0);
@@ -2281,119 +2315,153 @@ namespace net::replication {
         }
     }
 
+    // ResetRuntime is grouped by lifetime: local replication scratch, gameplay
+    // owners, session/UI owners, audio owners, then the authoritative match
+    // clocks. Keep the call order -- several owners read the freshly cleared
+    // local state, while the match clocks are cleared only after all of them.
+    namespace reset {
+
+        static void LocalRuntime()
+        {
+            memset(s_deathPending, 0, sizeof(s_deathPending));
+            memset(s_deathAnimated, 0, sizeof(s_deathAnimated));
+            memset(s_deathPendingAge, 0, sizeof(s_deathPendingAge));   // no latch survives a session
+            auto& L = LocalState();
+            L.respawnTimer.Clear();
+            L.respawnLastSec = -1;
+            L.wasDead = false;
+            L.healProgress = 0.0f;
+            L.healPeak = 0.0f;
+            net::gui2::ClearMatch();
+            s_matchSyncAccum = 0.0f;
+            s_pingAccum = 0.0f;
+            g_local = LocalCapture{};
+        }
+
+        static void GameplayOwners()
+        {
+            gameplay::perks::Reset();
+            gameplay::melee::Reset();
+            gameplay::slowdown::Reset();
+            net::vox::Reset();
+            net::afk::Reset();
+            net::jip::Reset();
+            net::friends13::Reset();
+            net::chat::Reset();
+            ::engine::text_input::Reset();
+        }
+
+        static void SessionOwners()
+        {
+            net::social::search_rows::Reset();
+            net::rank_badge::Reset();
+            net::name_rim::Reset();
+            net::match::kick::Reset();
+            net::ui::kick_note::Reset();
+            net::ui::launch_notice::ResetRuntime();  // keeps the once-per-run latch
+            menu::loadseq::Reset();
+            net::ui::killfeed::Reset();
+            net::ui::prompt_anim::Reset();
+            net::ui::prompt_producer::Reset();
+            net::ui::radar_box::Reset();
+            net::ui::sbteam::Reset();
+            net::match::melee_bridge::Reset();
+            net::match::melee_pullout_bridge::Reset();
+            net::match::downed_bridge::Reset();
+            net::gift::Reset();
+            net::match::skill_sync::Reset();
+            net::netsmooth::bridge::ResetAll();
+            net::match::liveness::Reset();
+            net::clan::Reset();
+            net::clan::page::Reset();
+            net::ui::postmatch::Reset();
+            net::ui::achieve::Reset();
+            net::ui::pmunlock::Reset();     // match-start unlock grid / UNLOCKS stage
+            net::ui::choose::Reset();
+            net::ui::customize::Reset();
+            net::ui::customize::challenges::Reset();
+            net::ui::customize::compose::Reset();
+            net::ui::customize::stage::Reset();
+            net::ui::nrui::Reset();        // shared frame glides / cached layouts
+            net::ui::mfnr::Reset();        // MAP VOTE page / 0xEA poll state
+            menu::sendoff::Reset();        // shared-horn send-off birds / fades / voices
+            menu::titlebg::Reset();        // title background camera / boot cover
+            net::ui::death_ui::Reset();
+            net::requeue::Reset();
+            net::direct::Reset();
+        }
+
+        static void AudioOwners()
+        {
+            net::audio::music_tier::Reset();
+            net::audio::music_sight::Reset();
+            ::engine::render_camera::Reset();
+            net::audio::near_miss::Reset();
+            net::audio::alertsting::Reset();  // alert-sting quiet / gap / delayed-play clocks
+            net::audio::stun_tone::Reset();
+            net::audio::crossbow_hud::Reset();
+            net::audio::stun_cough::Reset();
+            net::audio::downed_vox::Reset();
+            net::audio::exec_beg::Reset();
+            net::audio::exec_sp::Reset();
+            net::audio::intvox::Reset();
+            net::audio::intfoley::Reset();
+            net::audio::pmsfx::Reset();
+            net::audio::explus::Reset();
+            net::audio::footsteps::Reset();
+            net::audio::effort::Reset();
+            net::audio::bomb_roll::Reset();
+            net::audio::death_theme::Reset();
+            net::audio::downed_music::Reset();
+            net::audio::music_hold::Reset();
+            net::audio::exec_music::Reset();
+            net::audio::shivsting::Reset();
+            net::audio::xcam_bridge::Reset();
+            gameplay::stun_lock::Reset();
+        }
+
+        static void MatchAuthority()
+        {
+            kListenModeDurability = 1.0f;
+
+            net::patch::FlushMaterialPatchQueue();
+
+            auto& L = LocalState();
+            L.killerSlot = -1;
+            s_specActive = false;
+            L.elimSpec = false;
+            L.elimSpecTime = 0.0f;
+            L.specTargetSlot = -1;
+            L.specOrphan = 0.0f;
+            L.specStuckLogged = false;
+            s_blueElimFor = 0.0f;
+            s_redElimFor = 0.0f;
+            for (auto& s : TheMatch().slotState) s.respawnGrace = 0.0f;
+
+            L.respawnPending = false;
+            L.respawnPendingSec = 0.0f;
+            for (auto& s : TheMatch().slotState) s.grantCooldown = 0.0f;
+            for (auto& s : TheMatch().slotState) s.dead = false;
+
+            L.firstLethalSlot = -1;
+            L.firstLethalWeapon = 0;
+            L.firstLethalHead = false;
+            L.lastDamagerSlot = -1;
+            L.lastDamageWeapon = 0;
+            L.lastDamageHead = false;
+            L.lastDamageAt = -1000.0f;
+            TheMatch().nowSec = 0.0f;
+        }
+
+    } // namespace reset
+
     void ResetRuntime()
     {
-        memset(s_deathPending, 0, sizeof(s_deathPending));
-        memset(s_deathAnimated, 0, sizeof(s_deathAnimated));
-        memset(s_deathPendingAge, 0, sizeof(s_deathPendingAge));   // no latch survives a session
-        auto& L = LocalState();
-        L.respawnTimer.Clear();
-        L.respawnLastSec = -1;
-        L.wasDead = false;
-        L.healProgress = 0.0f;
-        L.healPeak = 0.0f;
-        net::gui2::ClearMatch();
-        s_matchSyncAccum = 0.0f;
-        s_pingAccum = 0.0f;
-        g_local = LocalCapture{};
-
-        gameplay::perks::Reset();
-        gameplay::melee::Reset();
-        gameplay::slowdown::Reset();
-        net::vox::Reset();
-        net::afk::Reset();
-        net::jip::Reset();
-        net::friends13::Reset();
-        net::chat::Reset();
-        ::engine::text_input::Reset();
-        net::social::search_rows::Reset();
-        net::rank_badge::Reset();
-        net::name_rim::Reset();
-        net::match::kick::Reset();
-        net::ui::kick_note::Reset();
-        net::ui::launch_notice::ResetRuntime();  // keeps the once-per-run latch
-        menu::loadseq::Reset();
-        net::ui::killfeed::Reset();
-        net::ui::prompt_anim::Reset();
-        net::ui::prompt_producer::Reset();
-        net::ui::radar_box::Reset();
-        net::ui::sbteam::Reset();
-        net::match::melee_bridge::Reset();
-        net::match::melee_pullout_bridge::Reset();
-        net::match::downed_bridge::Reset();
-        net::gift::Reset();
-        net::match::skill_sync::Reset();
-        net::netsmooth::bridge::ResetAll();
-        net::match::liveness::Reset();
-        net::clan::Reset();
-        net::clan::page::Reset();
-        net::ui::postmatch::Reset();
-        net::ui::achieve::Reset();
-        net::ui::pmunlock::Reset();     // match-start unlock grid / UNLOCKS stage
-        net::ui::choose::Reset();
-        net::ui::customize::Reset();
-        net::ui::customize::challenges::Reset();
-        net::ui::customize::compose::Reset();
-        net::ui::customize::stage::Reset();
-        net::ui::nrui::Reset();        // shared frame glides / cached layouts
-        net::ui::mfnr::Reset();        // MAP VOTE page / 0xEA poll state
-        menu::sendoff::Reset();        // shared-horn send-off birds / fades / voices
-        menu::titlebg::Reset();        // title background camera / boot cover
-        net::ui::death_ui::Reset();
-        net::requeue::Reset();
-        net::direct::Reset();
-        net::audio::music_tier::Reset();
-        net::audio::music_sight::Reset();
-        ::engine::render_camera::Reset();
-        net::audio::near_miss::Reset();
-        net::audio::alertsting::Reset();  // alert-sting quiet / gap / delayed-play clocks
-        net::audio::stun_tone::Reset();
-        net::audio::crossbow_hud::Reset();
-        net::audio::stun_cough::Reset();
-        net::audio::downed_vox::Reset();
-        net::audio::exec_beg::Reset();
-        net::audio::exec_sp::Reset();
-        net::audio::intfoley::Reset();
-        net::audio::explus::Reset();
-        net::audio::footsteps::Reset();
-        net::audio::effort::Reset();
-        net::audio::bomb_roll::Reset();
-        net::audio::death_theme::Reset();
-        net::audio::downed_music::Reset();
-        net::audio::music_hold::Reset();
-        net::audio::exec_music::Reset();
-        net::audio::shivsting::Reset();
-        net::audio::xcam_bridge::Reset();
-        gameplay::stun_lock::Reset();
-
-        kListenModeDurability = 1.0f;
-
-        net::patch::FlushMaterialPatchQueue();
-
-        L.killerSlot = -1;
-        s_specActive = false;
-        L.elimSpec = false;
-        L.elimSpecTime = 0.0f;
-        L.specTargetSlot = -1;
-        L.specOrphan = 0.0f;
-        L.specStuckLogged = false;
-        s_blueElimFor = 0.0f;
-        s_redElimFor = 0.0f;
-        for (auto& s : TheMatch().slotState) s.respawnGrace = 0.0f;
-
-        L.respawnPending = false;
-        L.respawnPendingSec = 0.0f;
-        for (auto& s : TheMatch().slotState) s.grantCooldown = 0.0f;
-        for (auto& s : TheMatch().slotState) s.dead = false;
-
-        L.firstLethalSlot = -1;
-        L.firstLethalWeapon = 0;
-        L.firstLethalHead = false;
-        L.lastDamagerSlot = -1;
-        L.lastDamageWeapon = 0;
-        L.lastDamageHead = false;
-        L.lastDamageAt = -1000.0f;
-        TheMatch().nowSec = 0.0f;
+        reset::LocalRuntime();
+        reset::GameplayOwners();
+        reset::SessionOwners();
+        reset::AudioOwners();
+        reset::MatchAuthority();
     }
 
 }

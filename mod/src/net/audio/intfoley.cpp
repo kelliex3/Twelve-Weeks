@@ -25,7 +25,7 @@ namespace net::audio::intfoley {
         constexpr char kExOff[]   = "t2r-no-exec-foley-plus.txt";
 
         core::State    g_state;
-        core::LineFeed g_line;                 // inert until intvox is ported
+        core::LineFeed g_line;                 // fed by net::audio::intvox
         uint32_t       g_uid = 0;
         double         g_t0 = 0.0;
         bool           g_logged = false;

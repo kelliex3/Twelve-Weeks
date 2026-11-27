@@ -6,17 +6,17 @@
 // paired-move, sidecar and explus sinks stay in intfoley.cpp. No new network
 // message.
 //
-// Who calls it: boot::FrameTick() calls Tick() every frame;
-// net-replication.cpp calls Reset() on a level / session reset. The voice clash
-// / victim-line feeds are inert until a native intvox producer exists; the
-// SetLine() API is the seam for that future producer.
+// Who calls it: boot::FrameTick() calls Tick() every frame (after intvox has
+// fed the line); net-replication.cpp calls Reset() on a level / session reset.
+// native intvox feeds SetLine() once per frame, so the voice clash / victim
+// line guards now yield while either body is speaking.
 
 #include "intfoley-core.hpp"
 
 namespace net::audio::intfoley {
 
-    // Inert intvox feed. The native tree has no intvox timeline / intwarp shift,
-    // so the default (on = false) keeps every voice yield answer false.
+    // The intvox line feed. An empty feed (on = false) keeps every voice yield
+    // answer false, exactly like a move with no voice line.
     void SetLine(const core::LineFeed& line);
 
     void Tick();

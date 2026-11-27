@@ -181,8 +181,25 @@ OVERLAP = {
     "bloodbuild": "net/match/bloodbuild.cpp, engine/clipfx.cpp, engine/vfx.cpp, "
                   "gameplay/ctxdown.cpp, gameplay/melee2013.cpp",
     "clipfx": "engine/clipfx.cpp",
-    # No overlap: pinned so the heuristic's "sting" token does not match the new audio modules.
-    "pullout_sting": "",
+    # Pinned so the heuristic's "sting" token does not match every audio module.
+    "pullout_sting": ("net/audio/pullout-sting-core.hpp, net/audio/pullout-sting-pcm.hpp, "
+                      "net/audio/pullout-sting.{hpp,cpp}, "
+                      "net/match/melee-pullout-bridge.cpp, net/audio/music-hold.hpp, "
+                      "net/audio/vox-effort-core.hpp, net/match/net-player.hpp, "
+                      "engine/script.cpp, engine/pcm.cpp, tests/pullout_sting_core_test.cpp"),
+    "intfoley": ("net/audio/intfoley-core.hpp, net/audio/intfoley.{hpp,cpp}, "
+                 "net/audio/intvox.hpp, net/audio/explus-core.hpp, "
+                 "net/audio/explus.cpp, net/anim/paired.hpp, loader/boot.cpp, "
+                 "net/game/net-replication.cpp, tests/intfoley_core_test.cpp"),
+    "intvox": ("net/audio/intvox-core.hpp, net/audio/intvox-data.hpp, "
+               "net/audio/intvox.{hpp,cpp}, net/audio/intfoley.hpp, "
+               "net/audio/vox-effort-core.hpp, net/match/net-player.hpp, "
+               "net/ui/customize-compose.cpp, gameplay/melee2013.cpp, "
+               "net/anim/paired.hpp, loader/boot.cpp, net/game/net-replication.cpp, "
+               "tests/intvox_core_test.cpp, scripts/gen-intvox-data.py"),
+    "pmsfx": ("net/audio/pmsfx-core.hpp, net/audio/pmsfx-data.hpp, "
+              "net/audio/pmsfx.{hpp,cpp}, net/ui/postmatch-screens.cpp, "
+              "net/game/net-replication.cpp, engine/pcm.cpp, tests/pmsfx_core_test.cpp"),
 }
 
 # Porting status, curated by hand: the per-feature workflow adds the module here once its
@@ -220,16 +237,22 @@ STATUS = {
     # fallback with native female effort-SID overrides, while the gun / finisher
     # producers and the private VXG tables are still absent.
     "exec_beg": "completed", "exec_music": "completed",
-    # execsp / explus / footsteps / intfoley are now native sole owners too: each
-    # has a pure core, a boot::FrameTick / net::replication::ResetRuntime owner and
-    # guarded private-data sinks. The generated timelines / PCM blobs are absent
-    # in this tree (the TO1_*_DATA builds stay inert). Peer-skill (MSG_SK_SYNC
-    # 0x50), slowdown, ground / vertical gait and female effort-SID feeds are
-    # now native producers for footsteps / explus / execsp / exec_beg; intfoley's
-    # SetLine producer seam is inert until intvox is ported. FEATURES.md notes
-    # the remaining gaps; the core rules and recipe / voice seams are complete.
+    # execsp / explus / footsteps / intfoley / intvox / pmsfx / pullout_sting are
+    # now native sole owners: each has a pure core and a live producer / owner.
+    # Generated timelines / PCM blobs are still absent in this tree (the
+    # TO1_*_DATA / TO1_*_PCM builds stay inert). Peer-skill (MSG_SK_SYNC 0x50),
+    # slowdown, ground / vertical gait and female effort-SID feeds are native
+    # producers for footsteps / explus / execsp / exec_beg; intvox feeds
+    # intfoley's SetLine seam, pmsfx hooks the native post-match page, and the
+    # native pull-out bridge drives pullout_sting with a verified puppet handle.
+    # Pullout also owns g_xcam_fov_mul, replays the measured PS32 shake curve
+    # beside the engine clip, and gates its riser / decay behind
+    # TO1_PULLOUT_STING_PCM. FEATURES.md notes the private-data gaps; the core
+    # rules and recipe / voice seams are complete.
     "execsp": "completed", "explus": "completed",
     "footsteps": "completed", "intfoley": "completed",
+    "intvox": "completed", "pmsfx": "completed",
+    "pullout_sting": "completed",
     # skills.c's MSG_SK_SYNC 0x50 producer is native (active-loadout rows,
     # effective Agility byte, ext validation and freshness), but the rest of the
     # 2013 survival-skill effects are still not ported, so the module stays in
