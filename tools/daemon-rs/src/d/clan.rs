@@ -84,6 +84,11 @@ pub static CLAN_REBOOK: LazyLock<Mutex<HashSet<(String, String)>>> = LazyLock::n
 pub static CLAN_DONE: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 /// daemon.py:~2020 CLAN_DUE: token -> time its pending report is finalised when no match end arrived
 pub static CLAN_DUE: LazyLock<Mutex<IndexMap<String, f64>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
+/// 11-27: (token, mid) whose clan day write failed (live: "database is locked" lost ~10 % of days, the client showed NO WORD FROM THE CAMP and
+/// its re-sends were acknowledged as already booked). Value: (tries so far, late-join bonus, late-join multiplier) - the bonus / multiplier
+/// were taken from MM on the first try, a retry reuses them; career stats / parts record / match stats are not booked a second time.
+pub static CLAN_RETRY: LazyLock<Mutex<HashMap<(String, String), (u32, i64, f64)>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub const CLAN_RETRY_MAX: u32 = 8;
 pub static CLAN_SCHED: AtomicBool = AtomicBool::new(false);
 /// daemon.py:2297 CLAN_LAST_MATCH: token -> last mid it was in
 pub static CLAN_LAST_MATCH: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -920,7 +925,10 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
         dlog!("CLAN day", tag(token), "mid", mid, "already booked - ignored (no second parts record)");
         return Ok(());
     }
-    book_career_stats(token, &counts); // website career totals (booked once per match)
+    let retry = CLAN_RETRY.lock().get(&clan_tk(token, mid)).copied(); // Some = an earlier try of this day failed its write
+    if retry.is_none() {
+        book_career_stats(token, &counts); // website career totals (booked once per match)
+    }
     let mut late: i64 = 0;
     let mut mult0: f64 = 1.0;
     if rebook {
@@ -971,7 +979,7 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
     if !fair.is_empty() {
         dlog!("CLAN fair", tag(token), "mid", mid, "protected day:", fair, "- no losses; inside an event window it does not count as a day");
     }
-    if !left {
+    if !left && retry.is_none() {
         if let Err(e) = db::with_write(|c| {
             c.execute("UPDATE players SET parts_total = parts_total + ?, parts_n = parts_n + 1 WHERE token = ?", rusqlite::params![parts, token])?;
             Ok(())
@@ -980,7 +988,7 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
         }
     }
     CLAN_CREDITED.lock().insert(clan_tk(token, mid));
-    {
+    if retry.is_none() {
         // the per-match player stats of the clan page's RAIDS tab: this player's own award counts
         let gn = get_name(token);
         let nm = if !gn.is_empty() { gn } else { token_name(token).filter(|n| !n.is_empty()).unwrap_or_else(|| "?".to_string()) };
@@ -994,9 +1002,9 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
             dlog!("CLAN match stats failed", e); // only the stats page; the clan day never depends on it
         }
     }
-    let mult = if rebook { mult0 } else { MM.late_mult_take(token, mid) };
+    let mult = if rebook { mult0 } else if let Some((_, _, m)) = retry { m } else { MM.late_mult_take(token, mid) };
     if !left {
-        late = if rebook { late } else { MM.late_bonus_take(token, mid) };
+        late = if rebook { late } else if let Some((_, b, _)) = retry { b } else { MM.late_bonus_take(token, mid) };
         if late != 0 {
             parts += late;
             dlog!("CLAN late-join bonus", tag(token), format!("+{} parts", late));
@@ -1008,7 +1016,8 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
     let ach_win: Option<Option<bool>> = CLAN_WIN.lock().get(&clan_tk(token, mid)).copied(); // (clan_match_facts pops it below)
     let ach_late = late != 0 || mult > 1.0;
     let cmap: cl::Counts = counts.iter().map(|(k, v)| (*k, *v)).collect();
-    let (before, st, r) = db::with_write(|c| {
+    let late_raw = if left { 0 } else { late }; // (what a retry reuses: the bonus without the parts it was added to)
+    let day = db::with_write(|c| {
         let before = Some(cl::load(c, &clan_key_r(c, token)?)?);
         let key = clan_key_r(c, token)?;
         let bottles = if left { 0 } else { counts.get(&33).copied().unwrap_or(0).clamp(0, 200).max(0) };
@@ -1056,7 +1065,49 @@ pub fn clan_finalize(token: &str) -> DbR<()> {
             }
         }
         Ok((before, st, r))
-    })?;
+    });
+    let (before, st, r) = match day {
+        Ok(v) => {
+            CLAN_RETRY.lock().remove(&clan_tk(token, mid));
+            v
+        }
+        Err(e) => {
+            // the day did not book (the transaction rolled back): put the report back and try again, instead of leaving the match marked
+            // done (that answered every re-send with "already booked" and the day was lost)
+            let tries = retry.map(|r| r.0).unwrap_or(0) + 1;
+            if tries > CLAN_RETRY_MAX {
+                CLAN_RETRY.lock().remove(&clan_tk(token, mid));
+                dlog!("CLAN day LOST", tag(token), "mid", mid, "parts", parts, format!("- the write failed {} times, last: {}", tries, e));
+                return Err(e);
+            }
+            CLAN_RETRY.lock().insert(clan_tk(token, mid), (tries, late_raw, mult));
+            CLAN_CREDITED.lock().remove(&clan_tk(token, mid));
+            {
+                let mut d = CLAN_DONE.lock();
+                if d.get(token).is_some_and(|m| m == mid) {
+                    d.remove(token);
+                }
+            }
+            {
+                let _g = CLANLOCK.lock();
+                CLAN_PENDING.lock().entry(token.to_string()).or_insert(p);
+            }
+            let wait = 2.0 * tries as f64;
+            CLAN_DUE.lock().insert(token.to_string(), clock::now() + wait);
+            let start = {
+                let _g = CLANLOCK.lock();
+                !CLAN_SCHED.swap(true, Ordering::SeqCst)
+            };
+            if start && !TEST_TIMERS_ON.load(Ordering::Relaxed) {
+                let _ = std::thread::Builder::new().name("clan-scheduler".into()).stack_size(256 * 1024).spawn(|| {
+                    crate::heap::set_kind_name("clan-scheduler");
+                    clan_scheduler()
+                });
+            }
+            dlog!("CLAN day write failed", tag(token), "mid", mid, "parts", parts, format!("- try {} of {}, again in {} s: {}", tries, CLAN_RETRY_MAX, wait, e));
+            return Ok(());
+        }
+    };
     dlog!("CLAN day", tag(token), "mid", mid, "parts", parts, if left { "left" } else { "" }, "->", r.as_ref().map(py::pyrepr).unwrap_or_else(|| "None".to_string()), "state", cl::state_text(&st));
     let win = match ach_win {
         Some(Some(b)) => Some(b),
@@ -1414,6 +1465,7 @@ pub fn k2_reset() {
     CLAN_WIN.lock().clear();
     CLAN_MOVED.lock().clear();
     CLAN_REBOOK.lock().clear();
+    CLAN_RETRY.lock().clear();
     CLAN_DONE.lock().clear();
     CLAN_DUE.lock().clear();
     CLAN_LAST_MATCH.lock().clear();
