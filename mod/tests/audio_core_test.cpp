@@ -1,8 +1,10 @@
 // Standalone harness for the pure shiv / exec / music-hold / stun / xcam cores (no game headers):
 //   g++ -std=c++17 -Wall -Wextra -Werror -pedantic -I mod/src/gameplay -I mod/src/net/audio
 //       mod/tests/audio_core_test.cpp mod/src/gameplay/stun-lock.cpp
-//       mod/src/net/audio/music-hold.cpp mod/src/net/audio/exec-music.cpp
-//       mod/src/net/audio/xcam.cpp -o /tmp/audio_core_test && /tmp/audio_core_test
+//       mod/src/net/audio/music-hold.cpp mod/src/net/audio/xcam.cpp
+//       -o /tmp/audio_core_test && /tmp/audio_core_test
+// exec music is now exercised by its own owner-free core test (exec_music_core_test.cpp);
+// its concrete owner pulls game headers and is not linked here.
 // (the music-tier value helpers are inline in its header; no game header is pulled in)
 
 #include "stun-lock.hpp"
@@ -27,19 +29,6 @@ namespace {
         uint64_t current = 0;
         uint64_t PlayMusic(uint64_t sid) override { played = sid; return 0; }
         uint64_t CurrentMusic() override { return current; }
-        void Log(const char*) override {}
-    };
-
-    struct ExecSink final : net::audio::exec_music::Sink {
-        int cuts = 0, starts = 0, cueCuts = 0;
-        int lastPick = -1, lastFade = 0;
-        double lastSeek = 0.0;
-        bool live = false;
-        void MusicCut() override { ++cuts; }
-        void StartCue(int pick, double seek, float) override
-        { ++starts; lastPick = pick; lastSeek = seek; live = true; }
-        bool CueLive() const override { return live; }
-        void CutCue(int fadeMs) override { ++cueCuts; lastFade = fadeMs; }
         void Log(const char*) override {}
     };
 
@@ -115,47 +104,61 @@ namespace {
 
     void TestExecMusic()
     {
+        // The concrete owner is tested by exec_music_core_test.cpp; this legacy
+        // harness keeps a compact check of the same pure rules without game headers.
         using namespace net::audio::exec_music;
-        net::audio::music_hold::Reset();
-        Reset();
-        ExecSink sink;
-        SetSink(&sink);
+        using namespace net::audio::exec_music::core;
 
-        Start(1000.0, 2.5f, 0);   // hit 2.44 lands on the death screen at 2.653 s
-        assert(PendingAt() > 1000 && PendingAt() < 1400);
-        assert(net::audio::music_hold::HoldUntil() == PendingAt() + kCapMs + kResumeMs);
-        assert(!Pending(1050));
-        const uint64_t at = PendingAt();
-        Tick(at, false);               // not in a running match: no cue starts
-        assert(!Playing() && sink.starts == 0);
-        Tick(at, true);
-        assert(Playing() && sink.starts == 1 && sink.lastPick == 0 && sink.cuts == 1);
-        assert(sink.lastSeek == 0.0);
-        assert(net::audio::music_hold::HoldUntil() == at + kCapMs + kResumeMs);
+        State s;
+        const uint64_t hold = Start(s, 1000, 2.5f, 0, 0);
+        assert(s.pendingAt > 1000 && s.pendingAt < 1400);
+        assert(hold == s.pendingAt + kCapMs + kResumeMs);
+        assert(s.pendingCut);
 
-        Reset();
-        net::audio::music_hold::Reset();
-        sink = ExecSink{};
-        Start(1000.0, 2.0f, 0);    // hit is late: join mid-cue
-        assert(PendingAt() == 1000);
-        Tick(1000, true);
-        assert(Playing() && sink.lastSeek > 0.28 && sink.lastSeek < 0.29);
-        Tick(1000 + kCapMs - 1, true);
-        assert(!Fading());
-        Tick(1000 + kCapMs, true);
-        assert(Fading() && sink.cueCuts == 1 && sink.lastFade == 300);
+        Input in;
+        in.nowMs = s.pendingAt;
+        in.inPlay = false;
+        Output out = Tick(s, in);    // not in a running match: no cue starts
+        assert(!out.startCue && s.pendingAt == 0);
 
-        Reset();
-        net::audio::music_hold::Reset();
-        sink = ExecSink{};
-        Start(1000.0, 2.5f, 0);
-        Fade(1100, "aborted");     // a pending cue never starts after a fade
-        assert(PendingAt() == 0);
-        Tick(5000, true);
-        assert(sink.starts == 0);
-        SetSink(nullptr);
-        Reset();
-        net::audio::music_hold::Reset();
+        Start(s, 1000, 2.5f, 0, 0);
+        in.nowMs = s.pendingAt;
+        in.inPlay = true;
+        in.cueLive = true;
+        out = Tick(s, in);
+        assert(out.startCue && out.cue == 0 && out.seek == 0.0 && out.cutOld);
+        CommitStart(s, in.nowMs, true);
+        assert(s.haveVoice && s.t0 == in.nowMs);
+
+        in.cueLive = true;
+        in.nowMs = s.t0 + kCapMs - 1;
+        assert(!Tick(s, in).cutCue);
+        in.nowMs = s.t0 + kCapMs;
+        assert(Tick(s, in).cutCue && s.fading);
+
+        Reset(s);
+        Start(s, 1000, 2.0f, 0, 0);  // hit is late: join mid-cue
+        assert(s.pendingAt == 1000 && s.seek > 0.28 && s.seek < 0.29);
+        in.nowMs = 1000;
+        out = Tick(s, in);
+        assert(out.startCue && out.seek == s.seek);
+        CommitStart(s, in.nowMs, true);
+
+        Reset(s);
+        Start(s, 1000, 2.5f, 0, 0);
+        Fade(s, 1100);               // a pending cue never starts after a fade
+        assert(s.pendingAt == 0);
+        assert(!Tick(s, in).startCue);
+
+        // duck baseline capture / restore (ext eb_music_duck)
+        Reset(s);
+        const float raw[2][2] = { { 0.85f, 0.0f }, { 0.0f, 0.85f } };
+        const bool live[2] = { true, true };
+        DuckOutput duck = DuckStep(s.duck, 0.35f, raw, live);
+        assert(duck.apply && duck.gains[0][0] < 0.30f && duck.gains[1][1] < 0.30f);
+        duck = DuckStep(s.duck, 1.0f, raw, live);
+        assert(duck.apply && duck.gains[0][0] == 0.85f && duck.gains[1][1] == 0.85f);
+        Reset(s);
     }
 
     void TestXcam()

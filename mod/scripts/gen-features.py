@@ -167,6 +167,14 @@ OVERLAP = {
     "downed_vox": ("net/audio/downed-vox-core.hpp, net/audio/downed-vox-data.hpp, "
                    "net/audio/downed-vox.{hpp,cpp}, loader/boot.cpp, net/game/net-hooks.cpp, "
                    "net/game/net-replication.cpp, tests/downed_vox_core_test.cpp"),
+    "exec_beg": ("net/audio/exec-beg-core.hpp, net/audio/exec-beg-data.hpp, "
+                 "net/audio/exec-beg.{hpp,cpp}, net/audio/exec-music.hpp, "
+                 "net/audio/downed-vox.hpp, net/audio/xcam-bridge.cpp, loader/boot.cpp, "
+                 "net/game/net-replication.cpp, tests/exec_beg_core_test.cpp"),
+    "exec_music": ("net/audio/exec-music-core.hpp, net/audio/exec-music-pcm.hpp, "
+                   "net/audio/exec-music.{hpp,cpp}, net/audio/music-hold.*, "
+                   "net/audio/xcam-bridge.cpp, loader/boot.cpp, "
+                   "net/game/net-replication.cpp, tests/exec_music_core_test.cpp"),
     "afk": "net/match/afk.cpp, engine/pad.cpp",
     "padinject": "engine/pad.cpp (activity only)",
     "bloodbuild": "net/match/bloodbuild.cpp, engine/clipfx.cpp, engine/vfx.cpp, "
@@ -205,6 +213,12 @@ STATUS = {
     # private faction / look / voice mapping is supplied; see FEATURES.md notes.
     "bomb_roll": "completed", "death_theme": "completed",
     "downed_music": "completed", "downed_vox": "completed",
+    # exec_music is now a concrete native PCM owner (the xcam bridge picks the
+    # cue and SetDuck exposes the duck seam to exec_beg). exec_beg owns the plea
+    # state machine; the paired-melee feed is live on the engine effort-event
+    # fallback, while the gun / finisher producers and the private VXG tables
+    # are still absent.
+    "exec_beg": "completed", "exec_music": "completed",
     # The AFK watchdog + the pad-activity dependency are ported (net/match/afk,
     # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
     # counters are still gated, so it is in progress, not ported.
@@ -389,6 +403,16 @@ AUDIO_DETAIL = {
         "downed players groan / struggle and headshot gargles from engine effort events, "
         "every client for every downed body (TO1_DOWNED_VOX_DATA)",
         "net, audio, data",
+    ),
+    "exec_beg": (
+        "execution begging: the victim's adrenaline plea cut by the shot, bullet-hit "
+        "grunts, silence on the death shot (engine effort events / gated VXG records)",
+        "audio, data",
+    ),
+    "exec_music": (
+        "execution victim music: five TLOU2 cues picked on the paired-move edge, "
+        "phase-matched to the death screen, faded and held around the cue",
+        "audio, data",
     ),
 }
 for r in rows:

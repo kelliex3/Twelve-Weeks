@@ -43,6 +43,7 @@
 #include "net/audio/crossbow-hud.hpp"
 #include "net/audio/stun-cough.hpp"
 #include "net/audio/downed-vox.hpp"
+#include "net/audio/exec-beg.hpp"
 #include "net/audio/bomb-roll.hpp"
 #include "net/audio/death-theme.hpp"
 #include "net/audio/downed-music.hpp"
@@ -295,6 +296,7 @@ namespace boot {
 		net::audio::crossbow_hud::Tick(); // bolt impact / pulse / pulled-out HUD sounds
 		net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
 		net::audio::downed_vox::Tick(); // downed groans / breaths + headshot gargles (after downed state)
+		net::audio::exec_beg::Tick(); // victim pleas / shot cuts (ducks exec music before its tick)
 		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
 		net::audio::downed_music::Tick(now); // adaptive downed layers / death tail / sting duck
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)

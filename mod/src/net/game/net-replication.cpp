@@ -60,6 +60,7 @@
 #include "crossbow-hud.hpp"
 #include "stun-cough.hpp"
 #include "downed-vox.hpp"
+#include "exec-beg.hpp"
 #include "bomb-roll.hpp"
 #include "death-theme.hpp"
 #include "downed-music.hpp"
@@ -2334,6 +2335,7 @@ namespace net::replication {
         net::audio::crossbow_hud::Reset();
         net::audio::stun_cough::Reset();
         net::audio::downed_vox::Reset();
+        net::audio::exec_beg::Reset();
         net::audio::bomb_roll::Reset();
         net::audio::death_theme::Reset();
         net::audio::downed_music::Reset();

@@ -3,6 +3,7 @@
 #include "xcam-bridge.hpp"
 
 #include "boot.hpp"
+#include "exec-beg.hpp"
 #include "exec-music.hpp"
 #include "shivsting.hpp"
 #include "xcam.hpp"
@@ -75,6 +76,18 @@ namespace net::audio::xcam_bridge {
                         killS = mv.killS;
                 }
             }
+            // The same once-per-move edge feeds the victim's plea state. The
+            // owner ignores kinds it has no native producer for (gun / finisher).
+            exec_beg::PairedStart plea;
+            plea.uid = ps.uid;
+            plea.role = ps.role;
+            plea.kind = ps.kind;
+            plea.attSlot = ps.att;
+            plea.vicSlot = ps.vic;
+            plea.vicEnt = ps.entVic;
+            plea.move = ps.move;
+            plea.killS = ps.killS;
+            exec_beg::OnPairedStart(plea);
             OnCameraStart(ps.role, name, killS, upgraded);
         }
 
