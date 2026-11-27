@@ -783,7 +783,9 @@ document.addEventListener("click", async e => {
   const ncan = t.closest("[data-ncancel]");
   if (ncan) { const r = await post("/api/shutdown-cancel", {}); flash(r.ok ? "Restart cancelled." : "Nothing scheduled.", !r.ok); S.last.body = null; return refresh(true); }
   const go_ = t.closest("[data-go]");
-  if (go_ && !t.closest("a, button, input, select")) return go(go_.dataset.go);   // (a link / button inside a clickable row does its own thing)
+  // (a link / button INSIDE a clickable row does its own thing; a button that is itself the data-go element navigates)
+  const ctl = t.closest("a, button, input, select");
+  if (go_ && (!ctl || ctl === go_ || !go_.contains(ctl))) return go(go_.dataset.go);
   const hd = t.closest("[data-handled]");
   if (hd) { const r = await post("/api/report-handled", { code: hd.dataset.handled, handled: hd.dataset.to === "1" }); if (!r.ok) flash(r.error, true); return refresh(true); }
   const fl = t.closest("[data-file]");
