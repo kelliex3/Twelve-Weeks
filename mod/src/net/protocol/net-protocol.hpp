@@ -250,6 +250,12 @@ enum NetEventType : uint8_t {
     NEVT_GIFT_STOCK = 0x56,   // [u8 roomMask & 0xF]       to 0xff
     NEVT_GIFT_ACK   = 0x57,   // [u8 1 taken / 0 refused]  receiver -> giver
 
+    // ext MSG_SK_SYNC 0x50 (tools/ext/skills.h): the sender's four 2013 skill
+    // rows plus its EFFECTIVE Agility level, pinned to the ext's exact byte so
+    // an ext client and a native client keep the same peer-skill feed.
+    //   [u8 id x4][u8 level x4][u8 agility <= 3]       broadcast, ~1.9 s
+    NEVT_SKILLS     = 0x50,
+
     // CUSTOMIZE outfit (tools/ext/customize_compose.c MSG_CUSTOM_LOOK), pinned to the
     // ext's exact byte. Body is customize-core.hpp `core::Msg()`: [u8 ver][u16 table id]
     // [u8 counter][2 x ([u8 sex][7 x u8 worn index])] -- kMsgLen bytes, broadcast.

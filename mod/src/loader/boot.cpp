@@ -21,6 +21,7 @@
 #include "menu/sendoff.hpp"
 #include "menu/titlebg.hpp"
 #include "gameplay/barrel-check.hpp"
+#include "gameplay/slowdown.hpp"
 #include "gameplay/stun-lock.hpp"
 #include "net/ui/notice.hpp"
 #include "net/ui/kick-note.hpp"
@@ -44,6 +45,11 @@
 #include "net/audio/stun-cough.hpp"
 #include "net/audio/downed-vox.hpp"
 #include "net/audio/exec-beg.hpp"
+#include "net/audio/exec-sp.hpp"
+#include "net/audio/explus.hpp"
+#include "net/audio/intfoley.hpp"
+#include "net/audio/footsteps.hpp"
+#include "net/audio/vox-effort.hpp"
 #include "net/audio/bomb-roll.hpp"
 #include "net/audio/death-theme.hpp"
 #include "net/audio/downed-music.hpp"
@@ -60,6 +66,7 @@
 #include "net/match/melee-bridge.hpp"
 #include "net/match/melee-pullout-bridge.hpp"
 #include "net/match/downed-bridge.hpp"
+#include "net/match/skill-sync.hpp"
 #include "net/gift/gift.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/social/friends13.hpp"
@@ -267,6 +274,7 @@ namespace boot {
 		NetMenuTick();            // net debug menu (toggle/input/render)
 #endif
 		NetTick();                // the entire MP driver (also ticks t2r-ext via UpdateMenu)
+		net::match::skill_sync::Tick(); // MSG_SK_SYNC 0x50 keep-alive (after replication settles slots)
 		net::match::melee_pullout_bridge::PostNetTick(); // SP camera / pair placement after replication
 		net::audio::xcam_bridge::Tick(); // paired-move victim edge -> exec music / shiv sting (ext xcam_start routing)
 		// Native menu / HUD owners. Each yields while the legacy ext is loaded so
@@ -297,7 +305,11 @@ namespace boot {
 		net::audio::stun_cough::Tick(); // our stun cough cadence + peer puppet coughs
 		net::audio::downed_vox::Tick(); // downed groans / breaths + headshot gargles (after downed state)
 		net::audio::exec_beg::Tick(); // victim pleas / shot cuts (ducks exec music before its tick)
+		net::audio::exec_sp::Tick(); // authored SP execution rows / contact timeline (after plea windows)
 		net::audio::exec_music::Tick(::GetTickCount64(), net::player_status::MatchLive()); // victim cue timing
+		net::audio::intfoley::Tick(); // interrogation shaking (feeds the shared explus recipes)
+		net::audio::explus::Tick(); // layered execution foley timeline + shared recipes
+		net::audio::footsteps::Tick(); // remote players' authored footstep tiers
 		net::audio::downed_music::Tick(now); // adaptive downed layers / death tail / sting duck
 		net::audio::bladesfx::PendingTick();  // blade cue post-delay (ported from tools/ext/blade_sfx.h)
 		net::afk::Tick();         // anti-AFK watchdog (ported from tools/ext/afk.c)

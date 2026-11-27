@@ -289,6 +289,50 @@ namespace {
         assert(!s.scrOn && Count(r, CueKind::kHeadshot) == 1);
     }
 
+    void TestScheduledMeleePleas()
+    {
+        const Fixture f;
+        const VoxTable t = f.Table();
+        MeleeBegin mb;
+        mb.ent = 0xDD;
+        mb.pair = 0;
+        mb.seed = 0x1234;
+        mb.moveMs = 0.0;
+        State s;
+        assert(BeginMelee(s, mb, false, false, false, true)); // events: no private table
+        Result r;
+        assert(ScheduleMeleePlea(s, r, t, 0.0, 1200.0, 1500.0, kMeleePleaSalt));
+        assert(s.nplea == 1 && s.plea[0].start == 1200.0 && s.plea[0].cut == 1500.0);
+        assert(Count(r, CueKind::kSpeakEvent) == 0); // scheduled, not spoken yet
+        assert(!CoversGun(s, 0.0));                 // the window starts when it speaks
+
+        r = Tick(s, Input(100, 1199, t));
+        assert(Count(r, CueKind::kSpeakEvent) == 0);
+        r = Tick(s, Input(200, 1201, t));
+        assert(Count(r, CueKind::kSpeakEvent) == 1 && s.plea[0].said);
+        assert(CoversGun(s, 1100.0) && !CoversGun(s, 1600.0));
+        CommitSpeak(s, true);
+        r = Tick(s, Input(300, 1501, t));
+        assert(Count(r, CueKind::kStop) == 1 && s.plea[0].stopped);
+
+        // A second EST_BEG row follows the same clock and cut rule.
+        assert(ScheduleMeleePlea(s, r, t, 1501.0, 2500.0, 2933.0, 7u + 13u));
+        r = Tick(s, Input(400, 2501, t));
+        assert(Count(r, CueKind::kSpeakEvent) == 1);
+        CommitSpeak(s, true);
+        r = Tick(s, Input(500, 2934, t));
+        assert(Count(r, CueKind::kStop) == 1);
+
+        // A late start drops the row without speaking it; no stale stop either.
+        assert(ScheduleMeleePlea(s, r, t, 2934.0, 3300.0, 3500.0, 33u));
+        r = Tick(s, Input(600, 3700, t));
+        assert(Count(r, CueKind::kSpeakEvent) == 0 && Count(r, CueKind::kStop) == 0);
+        assert(s.plea[2].said && s.plea[2].stopped);
+
+        ClearMeleePleas(s);
+        assert(s.nplea == 0 && s.plea[0].rec == -1);
+    }
+
 } // namespace
 
 int main()
@@ -299,6 +343,7 @@ int main()
     TestClampsAndStops();
     TestCheckFallback();
     TestMeleeAndScream();
+    TestScheduledMeleePleas();
     std::puts("EXEC_BEG_CORE_TEST_OK");
     return 0;
 }

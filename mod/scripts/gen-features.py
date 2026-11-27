@@ -134,7 +134,8 @@ OVERLAP = {
     "killfeed": "net/ui/kill-feed.cpp",
     "backpack": "net/match/backpack.cpp, engine/backpack-prop.cpp, engine/armor-rig.cpp",
     "death_ui": "net/ui/net-gui2.cpp", "rankbadge": "net/ui/net-gui2.cpp",
-    "skills": "gameplay/perks/*", "supplybox": "net/match/net-player.cpp",
+    "skills": "gameplay/perks/*, net/match/skill-sync-core.hpp, net/match/skill-sync.{hpp,cpp}, net/gift/gift-core.hpp, net/protocol/net-protocol.hpp, loader/boot.cpp, net/game/net-replication.cpp, tests/skill_sync_core_test.cpp",
+    "supplybox": "net/match/net-player.cpp",
     "medkits": "net/match/net-player.cpp", "itemspots": "net/match/net-player.cpp",
     "containers": "net/match/net-player.cpp", "stockpickup": "net/match/net-player.cpp",
     "gearup13": "gameplay/loadout/*", "loadseq": "menu/net-menu.cpp",
@@ -216,9 +217,24 @@ STATUS = {
     # exec_music is now a concrete native PCM owner (the xcam bridge picks the
     # cue and SetDuck exposes the duck seam to exec_beg). exec_beg owns the plea
     # state machine; the paired-melee feed is live on the engine effort-event
-    # fallback, while the gun / finisher producers and the private VXG tables
-    # are still absent.
+    # fallback with native female effort-SID overrides, while the gun / finisher
+    # producers and the private VXG tables are still absent.
     "exec_beg": "completed", "exec_music": "completed",
+    # execsp / explus / footsteps / intfoley are now native sole owners too: each
+    # has a pure core, a boot::FrameTick / net::replication::ResetRuntime owner and
+    # guarded private-data sinks. The generated timelines / PCM blobs are absent
+    # in this tree (the TO1_*_DATA builds stay inert). Peer-skill (MSG_SK_SYNC
+    # 0x50), slowdown, ground / vertical gait and female effort-SID feeds are
+    # now native producers for footsteps / explus / execsp / exec_beg; intfoley's
+    # SetLine producer seam is inert until intvox is ported. FEATURES.md notes
+    # the remaining gaps; the core rules and recipe / voice seams are complete.
+    "execsp": "completed", "explus": "completed",
+    "footsteps": "completed", "intfoley": "completed",
+    # skills.c's MSG_SK_SYNC 0x50 producer is native (active-loadout rows,
+    # effective Agility byte, ext validation and freshness), but the rest of the
+    # 2013 survival-skill effects are still not ported, so the module stays in
+    # progress.
+    "skills": "in progress",
     # The AFK watchdog + the pad-activity dependency are ported (net/match/afk,
     # engine/pad); the JIP 0xE3 report path, g_srvTestFlags and the bot-injection
     # counters are still gated, so it is in progress, not ported.

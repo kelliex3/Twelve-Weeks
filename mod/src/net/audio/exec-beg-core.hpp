@@ -31,6 +31,7 @@ namespace net::audio::exec_beg::core {
     inline constexpr int      kMeleeMaxDur = 1100;  // ext EBM_MAXDUR
     inline constexpr int      kFinisherMaxDur = 800;// ext EBF_MAXDUR
     inline constexpr int      kMeleePleaSalt = 7;   // ext execsp.c's first plea salt
+    inline constexpr int      kMaxMeleePleas = 3;   // ext execsp.c g_es.beg[3]
 
     // ext EB_EV: effort-event fallbacks per kind. Empty entries end the list.
     inline constexpr const char* const kEffortEvents[8][3] = {
@@ -205,7 +206,7 @@ namespace net::audio::exec_beg::core {
         int      limb        = -1;
         bool     lastHead    = false;
         int      pkind       = static_cast<int>(VoiceKind::kPistol);
-        int      fac         = -1;      // -1 = unknown (no native mapping)
+        int      fac         = -1;      // -1 = unknown (no native VXG faction / look mapping)
         int      female      = -1;
         int      voice       = -1;
         uint32_t seed        = 0;
@@ -229,6 +230,19 @@ namespace net::audio::exec_beg::core {
         double   mwTo        = 0.0;
         bool     ducked      = false;   // eb_music_duck's static `ducked`
         uint32_t activeUid   = 0;       // paired-move dedupe key (owner-owned)
+
+        // execsp.c's EST_BEG rows schedule up to three short pleas on the move
+        // clock (ebm_pick -> start = cut - duration * 0.72, floored by the row's
+        // earliest start); Tick() speaks one at its start and cuts it at the blow.
+        struct MeleePlea {
+            int    rec     = -1;
+            double start   = 0.0;
+            double cut     = 0.0;
+            bool   said    = false;
+            bool   stopped = false;
+        };
+        MeleePlea plea[kMaxMeleePleas];
+        int       nplea = 0;
     };
 
     struct Cue {
@@ -439,6 +453,38 @@ namespace net::audio::exec_beg::core {
         s.mwTo = to + 60.0;
     }
 
+    inline void ClearMeleePleas(State& s) noexcept
+    {
+        s.nplea = 0;
+        for (int i = 0; i < kMaxMeleePleas; ++i)
+            s.plea[i] = {};
+    }
+
+    // ext execsp.c's EST_BEG rows: pick a short take with ebm_pick's salt, then
+    // schedule it to start `dur * 0.72` before the blow but never before the
+    // row's authored earliest start. The DC call happens in Tick(), not here,
+    // so a joined-late run can skip a stale row exactly like the ext.
+    inline bool ScheduleMeleePlea(State& s, Result& r, const VoxTable& t,
+                                  double ems, double earliestMs, double cutMs,
+                                  uint32_t salt) noexcept
+    {
+        (void)r;
+        if (!s.on || s.nplea >= kMaxMeleePleas || cutMs <= ems)
+            return false;
+        const int prev = s.nplea > 0 ? s.plea[s.nplea - 1].rec : -1;
+        const int rec = s.events ? -1
+            : Pick(t, s.seed, s.fac, s.female, s.voice, 0, prev, salt,
+                   s.keepScream, kMeleeMaxDur);
+        const double dur = (rec >= 0 && t.Dur(rec) > 0)
+            ? static_cast<double>(t.Dur(rec)) : 600.0;
+        double start = cutMs - dur * 0.72;
+        if (start < earliestMs)
+            start = earliestMs;
+        s.plea[s.nplea] = { rec, start, cutMs, false, false };
+        ++s.nplea;
+        return true;
+    }
+
     // ---- per-frame rules ------------------------------------------------------
 
     inline bool DuckWanted(const State& s, double ems) noexcept
@@ -447,6 +493,19 @@ namespace net::audio::exec_beg::core {
             return false;
         return ems >= static_cast<double>(s.begAt) - 100.0
             && ems <= static_cast<double>(s.shot[s.nshot - 1]) + 350.0;
+    }
+
+    // ext eb_covers_gun: the plea / grunts hold the victim's voice. A melee
+    // setup (no shots) covers only while its scheduled take's boost window is
+    // live; a gun setup covers from shortly before the plea onwards.
+    inline bool CoversGun(const State& s, double ems) noexcept
+    {
+        if (!s.on)
+            return false;
+        if (s.nshot <= 0)
+            return s.mwTo > 0.0
+                && ems >= s.mwFrom - 150.0 && ems <= s.mwTo;
+        return ems >= static_cast<double>(s.begAt) - 150.0;
     }
 
     inline bool BoostWanted(const State& s, double ems, bool pleaBoostOff,
@@ -537,6 +596,28 @@ namespace net::audio::exec_beg::core {
             s.on = false;
             return r;
         }
+
+        // execsp EST_BEG: speak at the scheduled start (late rows are dropped),
+        // stop at the blow. This shares the same single voice slot as the gun
+        // plea, so the stop cue only fires when a line actually started.
+        for (int i = 0; i < s.nplea; ++i) {
+            State::MeleePlea& p = s.plea[i];
+            if (!p.said && ems >= p.start) {
+                p.said = true;
+                if (ems - p.start < 250.0 && ems < p.cut - 60.0) {
+                    EmitSpeak(s, r, in.table, in.nowMs,
+                              static_cast<int>(VoiceKind::kBeg), p.rec);
+                    SetMeleeWindow(s, ems, p.cut);
+                }
+                else
+                    p.stopped = true;
+            }
+            if (p.said && !p.stopped && ems >= p.cut) {
+                p.stopped = true;
+                EmitStop(s, r);
+            }
+        }
+
         if (!s.begDone && ems >= static_cast<double>(s.begAt)) {
             s.begDone = true;
             if (ems - static_cast<double>(s.begAt) < 350.0

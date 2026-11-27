@@ -33,6 +33,7 @@
 #include "gameplay/melee-hit-react.hpp"
 #include "gameplay/melee-dodge.hpp"
 #include "net/match/downed-bridge.hpp"
+#include "net/match/skill-sync.hpp"
 #include "net/match/match-liveness.hpp"
 #include "net/game/net-smooth-bridge.hpp"
 #include "net/social/friends13.hpp"
@@ -61,6 +62,11 @@
 #include "stun-cough.hpp"
 #include "downed-vox.hpp"
 #include "exec-beg.hpp"
+#include "exec-sp.hpp"
+#include "explus.hpp"
+#include "intfoley.hpp"
+#include "footsteps.hpp"
+#include "vox-effort.hpp"
 #include "bomb-roll.hpp"
 #include "death-theme.hpp"
 #include "downed-music.hpp"
@@ -74,6 +80,7 @@
 #include "shivsting.hpp"
 #include "xcam-bridge.hpp"
 #include "gameplay/stun-lock.hpp"
+#include "gameplay/slowdown.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -2151,6 +2158,13 @@ namespace net::replication {
             break;
         }
 
+        // ext MSG_SK_SYNC 0x50: peer skill rows / effective Agility. Pinned to
+        // the ext's byte, so an ext client keeps its own feed during cutover.
+        case NEVT_SKILLS: {
+            net::match::skill_sync::OnEvent(senderSlot, type, data, size);
+            break;
+        }
+
         // ---- reserved ext melee opcodes ---------------------------------------------------
         // One live bridge fans these out to the ported cores; its still-gated branches (MV3,
         // PSYNC) no-op, so an ext client on the wire keeps its own behaviour (no cutover).
@@ -2285,6 +2299,7 @@ namespace net::replication {
 
         gameplay::perks::Reset();
         gameplay::melee::Reset();
+        gameplay::slowdown::Reset();
         net::vox::Reset();
         net::afk::Reset();
         net::jip::Reset();
@@ -2307,6 +2322,7 @@ namespace net::replication {
         net::match::melee_pullout_bridge::Reset();
         net::match::downed_bridge::Reset();
         net::gift::Reset();
+        net::match::skill_sync::Reset();
         net::netsmooth::bridge::ResetAll();
         net::match::liveness::Reset();
         net::clan::Reset();
@@ -2336,6 +2352,11 @@ namespace net::replication {
         net::audio::stun_cough::Reset();
         net::audio::downed_vox::Reset();
         net::audio::exec_beg::Reset();
+        net::audio::exec_sp::Reset();
+        net::audio::intfoley::Reset();
+        net::audio::explus::Reset();
+        net::audio::footsteps::Reset();
+        net::audio::effort::Reset();
         net::audio::bomb_roll::Reset();
         net::audio::death_theme::Reset();
         net::audio::downed_music::Reset();

@@ -109,6 +109,10 @@ namespace engine::pcm {
     // live position. Call once per frame (boot::FrameTick). ext sfx_voices_update.
     void VoicesUpdate();
 
+    // Number of live mixer voices (ext ep_voices_busy). The owners' layer
+    // budgets need it; read-only and lock-protected.
+    int ActiveVoices();
+
     // The handle still plays its source (ext: g_mixv[slot].on && .src == src).
     bool Live(const Voice& v);
 

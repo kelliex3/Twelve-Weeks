@@ -32,7 +32,7 @@ namespace net::match::downed_bridge {
 
     namespace {
 
-        constexpr float   kReviveSecs   = 5.0f;  // no native skill-level source yet
+        constexpr float   kReviveSecs   = 5.0f;  // no Reviver level feed wired into this bridge yet
         constexpr float   kReviveReach  = 2.5f;
         constexpr float   kReviveKeep   = 3.5f;
         constexpr uint64_t kDeathWindowFrames = 90;

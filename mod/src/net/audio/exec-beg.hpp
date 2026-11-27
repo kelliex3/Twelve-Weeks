@@ -17,12 +17,12 @@
 //
 // Honest gaps: there is no native GUNEXEC_PAIRS / GUNEXEC_AIM / gx_shot_sched()
 // or third-party state, so the gun timeline is state-only until that producer
-// exists. There is no faction / look -> voice mapping, so the private VXG take
-// tables cannot select a record: the live paired-melee feed uses the engine's
-// named effort events instead (the ext's refusal fallback), and gun / finisher
-// record paths stay inert. female effort-SID selection is unavailable, so the
-// engine's default gender take is used. The sidecars are read-only and the
-// private vox_beg.h tables stay behind TO1_EXEC_BEG_DATA.
+// exists. There is no faction / look -> VXG voice mapping, so the private VXG
+// take tables cannot select a record: the live paired-melee feed uses the
+// engine's named effort events (the ext's refusal fallback), with female
+// speakers overridden by net::audio::effort::EffortSid(); gun / finisher
+// record paths stay inert. The sidecars are read-only and the private
+// vox_beg.h tables stay behind TO1_EXEC_BEG_DATA.
 //
 // boot::ExtLoaded() yields every entry point; state resets with the match.
 
@@ -65,6 +65,17 @@ namespace net::audio::exec_beg {
         bool            lastHead    = false;
     };
 
+    // execsp.c's EST_BEG rows. The exec_sp owner arms these instead of the
+    // single immediate plea when the pair has authored plea times. `ems` is the
+    // execsp clock at the begin call; `earliestMs` / `cutMs` are that row's
+    // earliest start and the blow that cuts it; `salt` is ebm_pick's row salt.
+    struct MeleePleaFeed {
+        double   ems        = 0.0;
+        double   earliestMs = 0.0;
+        double   cutMs      = 0.0;
+        uint32_t salt       = 0;
+    };
+
     // ps31 finisher gasp feed (also inert until a producer and mapping exist).
     struct FinisherFeed {
         uint64_t ent    = 0;
@@ -76,12 +87,22 @@ namespace net::audio::exec_beg {
         const char* why = nullptr;
     };
 
-    void OnPairedStart(const PairedStart& start);
+    // `armPlea` is false only for pairs whose authored execsp EST_BEG rows will
+    // be scheduled by exec_sp instead of the single kill-frame plea.
+    void OnPairedStart(const PairedStart& start, bool armPlea = true);
+    // Add a scheduled EST_BEG plea to the active melee run. Does nothing when
+    // exec_beg has no run (or the private table refused the take).
+    bool ScheduleMeleePlea(const MeleePleaFeed& feed);
     bool BeginGun(const GunFeed& feed);
     void FinGasp(const FinisherFeed& feed);
     void Tick();
     void Reset();
 
     bool Active() noexcept;
+    // ext eb_covers_gun / eb_covers: the voice held by a plea (or by execsp's
+    // SP victim timeline) so the other audio layers can duck. `ems` is this
+    // owner's move clock in ms.
+    bool CoversGun(double ems) noexcept;
+    bool Covers(double ems) noexcept;
 
 } // namespace net::audio::exec_beg

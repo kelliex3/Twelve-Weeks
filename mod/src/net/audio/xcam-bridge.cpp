@@ -5,6 +5,8 @@
 #include "boot.hpp"
 #include "exec-beg.hpp"
 #include "exec-music.hpp"
+#include "exec-sp.hpp"
+#include "explus.hpp"
 #include "shivsting.hpp"
 #include "xcam.hpp"
 
@@ -62,6 +64,8 @@ namespace net::audio::xcam_bridge {
             const char* name = "melee-finisher";   // ext's fallback for an un-named move
             float killS = ps.killS;
             bool upgraded = false;
+            int  pair = -1;
+            bool bluntOk = false;
             if (ps.kind == net::anim::paired::kCtxdown) {
                 name = "ctxdown";
             }
@@ -70,14 +74,20 @@ namespace net::audio::xcam_bridge {
                 if (mi >= 0) {
                     const gameplay::melee2013::Move& mv = gameplay::melee2013::At(mi);
                     name = mv.name;
+                    pair = mi;
+                    // Coarse stand-in for ext mhfx_class(): the 2013 table's
+                    // pipe quadrant is the only blunt-class node this producer
+                    // carries. A future weapon-class producer can refine it.
+                    bluntOk = (mv.kind == gameplay::melee2013::kPipe);
                     upgraded = (mv.kind == gameplay::melee2013::kPipeMod);
                     // The native victim bridge passes 0; the ext used the authored kill frame.
                     if (killS <= 0.0f)
                         killS = mv.killS;
                 }
             }
-            // The same once-per-move edge feeds the victim's plea state. The
-            // owner ignores kinds it has no native producer for (gun / finisher).
+            // The same once-per-move edge feeds the victim's plea state. When
+            // execsp has authored EST_BEG rows, exec_beg opens the voice run
+            // but leaves the plea timing to exec_sp's scheduled feeds.
             exec_beg::PairedStart plea;
             plea.uid = ps.uid;
             plea.role = ps.role;
@@ -87,7 +97,34 @@ namespace net::audio::xcam_bridge {
             plea.vicEnt = ps.entVic;
             plea.move = ps.move;
             plea.killS = ps.killS;
-            exec_beg::OnPairedStart(plea);
+            exec_beg::OnPairedStart(plea, !exec_sp::HasPleas(name));
+            if (ps.kind == net::anim::paired::kMeleeExec && pair >= 0) {
+                exec_sp::MeleeFeed feed;
+                feed.uid = ps.uid;
+                feed.pair = pair;
+                feed.name = name;
+                feed.attEnt = ps.entAtt;
+                feed.vicEnt = ps.entVic;
+                feed.t0 = net::anim::paired::Ms();
+                feed.moveMs = feed.t0;
+                feed.bluntOk = bluntOk;
+                exec_sp::OnPairedStart(feed);
+            }
+            // The gun-exec rows need ext's GUNEXEC_PAIRS / GUNEXEC_AIM producer,
+            // which has no native equivalent yet; with pair = -1 Begin() declines
+            // those rows instead of guessing a timeline.
+            if (ps.kind == net::anim::paired::kGunExec
+                || ps.kind == net::anim::paired::kMeleeExec) {
+                explus::PairFeed plus;
+                plus.kind = ps.kind == net::anim::paired::kGunExec ? 0 : 1;
+                plus.pair = pair;
+                plus.name = name;
+                plus.t0 = net::anim::paired::Ms();
+                plus.uid = ps.uid;
+                plus.attEnt = ps.entAtt;
+                plus.vicEnt = ps.entVic;
+                explus::OnPairedStart(plus);
+            }
             OnCameraStart(ps.role, name, killS, upgraded);
         }
 

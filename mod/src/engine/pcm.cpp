@@ -711,6 +711,18 @@ namespace engine::pcm {
         return v;
     }
 
+    int ActiveVoices()
+    {
+        if (g_mixState.load(std::memory_order_acquire) != 1)
+            return 0;
+        std::lock_guard<std::mutex> lk(g_mixLock);
+        int n = 0;
+        for (int v = 0; v < kVoices; ++v)
+            if (g_mixv[v].on)
+                ++n;
+        return n;
+    }
+
     void VoicesUpdate()
     {
         int any = 0;

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 // Pure rules for tools/ext/gift.c. No engine / net headers: the bridge supplies
@@ -29,24 +30,25 @@ namespace net::gift::core {
     inline constexpr float kReceiverXZ = 5.0f;
     inline constexpr float kReceiverY = 3.0f;
 
-    // Crafter level of the ACTIVE custom loadout in the launcher's saved JSON
+    // The ACTIVE custom loadout row in the launcher's saved JSON
     // (t2r-loadout-launcher.json; the game-owned t2r-loadout.json has the same
-    // shape). 0 = absent, pre-made pick, or unknown. Kept here as a pure scan
-    // so the native bridge's only skill-level source is testable on its own.
-    inline int CrafterLevelFromJson(std::string_view s) noexcept
+    // shape). Empty for an absent file, a pre-made "class" pick or an
+    // unparsable active index. Shared by the Crafter gift producer and the
+    // skill-sync producer so both read the same four skill rows.
+    inline std::string_view ActiveCustomLoadout(std::string_view s) noexcept
     {
         const size_t active = s.find("\"active\"");
         if (active == std::string_view::npos)
-            return 0;
+            return {};
         const size_t aEnd = s.find('}', active);
         // Match the KEY: the active pick itself has `"kind":"custom"`.
         const size_t custom = s.find("\"custom\":", active);
         if (aEnd == std::string_view::npos || custom == std::string_view::npos ||
             aEnd > custom)
-            return 0;
+            return {};
         // A pre-made "class" pick has no serialized skill rows.
         if (s.find("\"class\"", active) < aEnd)
-            return 0;
+            return {};
 
         size_t idx = 0;
         const size_t iPos = s.find("\"i\"", active);
@@ -72,15 +74,20 @@ namespace net::gift::core {
         for (size_t k = 0; k < idx && obj != std::string_view::npos; ++k)
             obj = s.find("\"small\"", obj + 1);
         if (obj == std::string_view::npos)
-            return 0;
+            return {};
         const size_t next = s.find("\"small\"", obj + 1);
-        const std::string_view row = s.substr(
-            obj, (next == std::string_view::npos ? s.size() : next) - obj);
+        return s.substr(obj, (next == std::string_view::npos ? s.size() : next) - obj);
+    }
 
-        const size_t craft = row.find("\"SK_CRAFTER\"");
-        if (craft == std::string_view::npos)
+    // Level of one named skill (e.g. "SK_CRAFTER") in that row; 0 = unknown.
+    inline int SkillLevelFromJson(std::string_view row, std::string_view id) noexcept
+    {
+        if (id.empty())
             return 0;
-        const size_t lv = row.find("\"lv\"", craft);
+        const size_t at = row.find('"' + std::string(id) + '"');
+        if (at == std::string_view::npos)
+            return 0;
+        const size_t lv = row.find("\"lv\"", at);
         if (lv == std::string_view::npos)
             return 0;
         const size_t colon = row.find(':', lv);
@@ -91,6 +98,18 @@ namespace net::gift::core {
         if (p >= row.size() || row[p] < '1' || row[p] > '3')
             return 0;
         return row[p] - '0';
+    }
+
+    inline int SkillLevelFromJson(std::string_view row, const char* id) noexcept
+    {
+        return id ? SkillLevelFromJson(row, std::string_view(id)) : 0;
+    }
+
+    // Crafter II / III level of the ACTIVE custom loadout. 0 = unknown, which
+    // maps to the conservative Crafter II (every 3rd) cadence.
+    inline int CrafterLevelFromJson(std::string_view s) noexcept
+    {
+        return SkillLevelFromJson(ActiveCustomLoadout(s), "SK_CRAFTER");
     }
 
     inline constexpr bool ValidKind(int kind) noexcept

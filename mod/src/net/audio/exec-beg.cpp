@@ -5,6 +5,7 @@
 #include "exec-beg.hpp"
 
 #include "exec-beg-data.hpp"
+#include "exec-sp.hpp"
 
 #include "boot.hpp"
 #include "downed-vox.hpp"
@@ -16,6 +17,7 @@
 #include "net/anim/paired.hpp"
 #include "net/game/player-status.hpp"
 #include "net/protocol/net-protocol.hpp"
+#include "vox-effort.hpp"
 
 #include <windows.h>
 
@@ -100,7 +102,9 @@ namespace net::audio::exec_beg {
                 const char* name = core::kEffortEvents[cue.voiceKind][i];
                 if (!name)
                     break;
-                const uint64_t sid = SID(name);
+                const uint64_t effort = ::net::audio::effort::EffortSid(
+                    cue.ent, ::net::audio::effort::core::Kind::kPain);
+                const uint64_t sid = effort ? effort : SID(name);
                 const uint64_t r = DC::Call<"say">(cue.ent, sid, 2, 0);
                 TO1_LOG("[EXECBEG] effort event %s on %llx -> %llx\n",
                         name, static_cast<unsigned long long>(cue.ent),
@@ -180,7 +184,7 @@ namespace net::audio::exec_beg {
 
     } // namespace
 
-    void OnPairedStart(const PairedStart& start)
+    void OnPairedStart(const PairedStart& start, bool armPlea)
     {
         if (ExtOwns() || Off() || MeleeOff() || !start.vicEnt
             || start.vicEnt == ~0ULL)
@@ -227,10 +231,12 @@ namespace net::audio::exec_beg {
         float killS = start.killS > 0.0f
             ? start.killS : gameplay::melee2013::At(pair).killS;
         const double cutMs = killS > 0.0 ? static_cast<double>(killS) * 1000.0 : 700.0;
+        if (!armPlea)
+            return;                     // exec_sp owns this pair's EST_BEG rows
         core::Result r;
-        // No native execsp EST_BEG rows: the move's kill frame is the only blow
-        // moment available, so one short plea is armed at the start and cut
-        // there (the ext's effect with its first row at the first blow).
+        // No authored EST_BEG rows for this pair: the move's kill frame is the
+        // only blow moment available, so one short plea is armed at the start
+        // and cut there (the ext's effect with its first row at the first blow).
         core::BeginMeleePlea(g_state, r, data::Table(), GetTickCount64(),
                              0.0, cutMs, core::kMeleePleaSalt);
         Handle(r);
@@ -239,6 +245,18 @@ namespace net::audio::exec_beg {
                 static_cast<unsigned long long>(start.vicEnt),
                 gameplay::melee2013::At(pair).name ? gameplay::melee2013::At(pair).name : "?",
                 cutMs);
+    }
+
+    bool ScheduleMeleePlea(const MeleePleaFeed& feed)
+    {
+        if (ExtOwns() || !g_state.on || g_state.nshot > 0)
+            return false;
+        core::Result r;
+        if (!core::ScheduleMeleePlea(g_state, r, data::Table(), feed.ems,
+                                     feed.earliestMs, feed.cutMs, feed.salt))
+            return false;
+        Handle(r);
+        return true;
     }
 
     bool BeginGun(const GunFeed& feed)
@@ -302,10 +320,11 @@ namespace net::audio::exec_beg {
         uint64_t sid = 0;
         if (rec >= 0 && !g_state.events)
             sid = data::Line(rec);
+        if (!sid)
+            sid = ::net::audio::effort::EffortSid(
+                feed.ent, ::net::audio::effort::core::Kind::kPain);
         if (!sid) {
-            // Same engine fallback as the ext when no short take is available.
-            // The female effort SID (fem_effort_sid) is not ported, so the
-            // native's default gender take is used here.
+            // Same engine fallback as the ext when no authored take answers.
             sid = SID("vox-eff-gen-begs-for-life-stun");
         }
         const uint64_t r = DC::Call<"say">(feed.ent, sid, 2, 0);
@@ -362,6 +381,20 @@ namespace net::audio::exec_beg {
         if (ExtOwns())
             return false;
         return g_state.on;
+    }
+
+    bool CoversGun(double ems) noexcept
+    {
+        if (ExtOwns())
+            return false;
+        return core::CoversGun(g_state, ems);
+    }
+
+    bool Covers(double ems) noexcept
+    {
+        if (ExtOwns())
+            return false;
+        return CoversGun(ems) || exec_sp::HoldsVictimVoice();
     }
 
 } // namespace net::audio::exec_beg
