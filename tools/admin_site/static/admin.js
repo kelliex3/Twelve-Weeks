@@ -200,8 +200,9 @@ function viewChat(d) {
 
 function viewPlayers(on, all) {
   let h = on.source === "log" ? note("Live feed not active: names come from the log, session data is approximate. Kick and ping need the daemon build with the admin listener (daemon restart).") : "";
-  h += `<div class="sec"><h3>ONLINE NOW (${on.players.length})</h3>${onlineTable(on)}</div>`;
+  // bans first: the online list can be hundreds of rows long
   if (all.bans) h += bansTable(all.bans);
+  h += `<div class="sec"><h3>ONLINE NOW (${on.players.length})</h3>${onlineTable(on)}</div>`;
   h += `<div class="sec"><h3>ALL PLAYERS (${all.shown}${S.q ? " matching" : ""})${all.hidden ? ` <span class="faint">${all.hidden} never-played installs hidden - search to find them</span>` : ""}</h3>`;
   if (!all.players.length) return h + '<div class="empty">NO PLAYER FOUND</div></div>';
   h += '<div class="tbl" style="--cols:minmax(110px,1.3fr) 158px minmax(130px,1.2fr) 64px 50px 60px 100px 70px 62px"><div class="tr th"><span>NAME</span><span>STEAM ID</span><span>CLAN</span><span>MATCHES</span><span>WINS</span><span>LOSSES</span><span>LAST SEEN</span><span>BUILD</span><span></span></div>';
