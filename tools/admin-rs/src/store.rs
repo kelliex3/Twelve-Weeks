@@ -2079,6 +2079,17 @@ impl Admin {
             }
             out.push(json!({"at": ts, "kind": kind, "minutes": minutes, "by": by, "reason": reason}));
         }
+        // the slur filter's automatic mutes: one per strike (1 day, 7 days, 30 days), from automod.json
+        let keys: HashSet<String> = mute_keys(g).into_iter().collect();
+        for a in self.automod().into_iter().filter(|a| keys.contains(&a.key)) {
+            for (i, t) in a.strikes.iter().enumerate() {
+                let l = timeutil::localtime(*t);
+                let at = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", l.year, l.month, l.day, l.hour, l.min, l.sec);
+                mutes += 1;
+                out.push(json!({"at": at, "kind": "AUTO MUTE", "minutes": AUTO_MUTE_MIN[i.min(2)], "by": "slur filter", "reason": format!("slur in chat (strike {})", i + 1)}));
+            }
+        }
+        out.sort_by(|a, b| a["at"].as_str().unwrap_or("").cmp(b["at"].as_str().unwrap_or("")));
         out.reverse();
         json!({"bans": bans, "mutes": mutes, "notices": notes, "everForGood": forever, "longestBanMin": longest, "list": out})
     }
@@ -2569,7 +2580,25 @@ static REPORT_FETCH_LOCK: Mutex<()> = Mutex::new(());
 pub struct Muted {
     order: Vec<(String, f64)>,
     idx: HashMap<String, usize>,
+    /// keys whose mute is the daemon's automatic slur mute (automod.json), with its reason
+    auto: HashMap<String, String>,
+    /// automod.json's shown name per key (for accounts the player list does not know)
+    names: HashMap<String, String>,
 }
+
+/// One automod.json entry (the daemon's automatic slur filter): the account key, the end of its automatic mute, the reason the
+/// player reads, and the strike times (each strike muted them: 1 day, 7 days, 30 days).
+pub struct AutoMute {
+    pub key: String,
+    pub until: f64,
+    pub why: String,
+    pub strikes: Vec<f64>,
+    /// the shown name the daemon noted at the strike
+    pub name: String,
+}
+
+/// the daemon's automatic mute lengths per strike (social.rs SLUR_MUTE_S), in minutes
+const AUTO_MUTE_MIN: [f64; 3] = [1440.0, 7.0 * 1440.0, 30.0 * 1440.0];
 
 impl Muted {
     pub fn has(&self, k: &str) -> bool {
@@ -2592,9 +2621,29 @@ impl Admin {
         }
     }
 
+    /// automod.json next to the database (the daemon writes it whole, by rename): every account the slur filter struck.
+    pub fn automod(&self) -> Vec<AutoMute> {
+        let Some(Value::Object(d)) = self.read_json("automod.json") else { return Vec::new() };
+        d.into_iter()
+            .filter_map(|(k, v)| {
+                let o = v.as_object()?;
+                let f = |x: Option<&Value>| x.and_then(Value::as_f64).unwrap_or(0.0);
+                let mut strikes: Vec<f64> = o.get("s").and_then(Value::as_array).map(|a| a.iter().map(|t| f(Some(t))).filter(|t| *t > 0.0).collect()).unwrap_or_default();
+                strikes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                Some(AutoMute {
+                    key: k,
+                    until: f(o.get("until")),
+                    why: o.get("why").and_then(Value::as_str).unwrap_or("").to_string(),
+                    strikes,
+                    name: o.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+                })
+            })
+            .collect()
+    }
+
     pub fn muted_keys(&self) -> Muted {
         let now = timeutil::now();
-        let mut m = Muted { order: Vec::new(), idx: HashMap::new() };
+        let mut m = Muted { order: Vec::new(), idx: HashMap::new(), auto: HashMap::new(), names: HashMap::new() };
         for line in self.mutes_lines() {
             if let Some((k, until, _)) = mute_parse(&line) {
                 if mute_live(until, now) {
@@ -2608,22 +2657,58 @@ impl Admin {
                 }
             }
         }
+        // the slur filter's automatic mutes count as mutes too (the daemon refuses their chat the same way); the longer one wins
+        for a in self.automod() {
+            if a.until <= now {
+                continue;
+            }
+            if !a.name.is_empty() {
+                m.names.insert(a.key.clone(), a.name.clone());
+            }
+            match m.idx.get(&a.key) {
+                Some(&i) => {
+                    let u = m.order[i].1;
+                    if u > 0.0 && a.until > u {
+                        m.order[i].1 = a.until;
+                        m.auto.insert(a.key.clone(), a.why.clone());
+                    }
+                }
+                None => {
+                    m.idx.insert(a.key.clone(), m.order.len());
+                    m.order.push((a.key.clone(), a.until));
+                    m.auto.insert(a.key.clone(), a.why.clone());
+                }
+            }
+        }
         m
     }
 
-    /// Null or {"until", "left" (s, -1 = for good), "reason", "line"} for a player group.
+    /// Null or {"until", "left" (s, -1 = for good), "reason", "line", "auto"} for a player group: the admin site's mute (mutes.txt) or
+    /// the slur filter's automatic one (automod.json, "auto": true, "strikes"), the longer of the two.
     pub fn mute_state(&self, g: &Group) -> Value {
         let keys: HashSet<String> = mute_keys(g).into_iter().collect();
         let now = timeutil::now();
+        let mut file: Option<Value> = None;
+        let mut file_until = 0.0;
         for line in self.mutes_lines() {
             if let Some((k, until, note)) = mute_parse(&line) {
                 if keys.contains(&k) && mute_live(until, now) {
                     let reason = note.split_once("reason:").map(|(_, r)| r.trim()).unwrap_or("");
-                    return json!({"until": until as i64, "left": if until <= 0.0 { -1 } else { (until - now) as i64 }, "reason": reason, "line": line.trim()});
+                    file_until = until;
+                    file = Some(json!({"until": until as i64, "left": if until <= 0.0 { -1 } else { (until - now) as i64 }, "reason": reason, "line": line.trim(), "auto": false}));
+                    break;
                 }
             }
         }
-        Value::Null
+        let auto = self.automod().into_iter().filter(|a| keys.contains(&a.key) && a.until > now).max_by(|a, b| a.until.partial_cmp(&b.until).unwrap_or(std::cmp::Ordering::Equal));
+        match (file, auto) {
+            (Some(f), Some(a)) if file_until > 0.0 && a.until > file_until => {
+                json!({"until": a.until as i64, "left": (a.until - now) as i64, "reason": a.why, "line": "", "auto": true, "strikes": a.strikes.len(), "alsoAdmin": f})
+            }
+            (Some(f), _) => f,
+            (None, Some(a)) => json!({"until": a.until as i64, "left": (a.until - now) as i64, "reason": a.why, "line": "", "auto": true, "strikes": a.strikes.len()}),
+            (None, None) => Value::Null,
+        }
     }
 
     fn mutes_write(&self, lines: &[String]) -> Result<(), String> {
@@ -2652,7 +2737,11 @@ impl Admin {
             Some(m) if (0.0..=10.0 * 365.0 * 1440.0).contains(&m) => m,
             _ => return Ok(json!({"ok": false, "error": "bad duration"})),
         };
-        let (reason, who, name) = (clean_ban(reason, 160), clean_ban(who, 60), clean_ban(&g.display, 60));
+        let (reason, who, name) = (clean_ban(reason, 120), clean_ban(who, 60), clean_ban(&g.display, 60));
+        if reason.is_empty() {
+            // the game shows the reason to the muted player in chat
+            return Ok(json!({"ok": false, "error": "a mute needs a reason (the player sees it in chat)"}));
+        }
         let now = timeutil::now();
         let until = if minutes != 0.0 { (now + minutes * 60.0) as i64 } else { 0 };
         let l = timeutil::localtime(now);
@@ -2697,14 +2786,35 @@ impl Admin {
             return Ok(json!({"ok": false, "error": "no such player"}));
         };
         let ks: HashSet<String> = mute_keys(g).into_iter().collect();
+        let now = timeutil::now();
+        let auto: Vec<String> = self.automod().into_iter().filter(|a| ks.contains(&a.key) && a.until > now).map(|a| a.key).collect();
         let _guard = self.file_lock.lock().unwrap_or_else(|e| e.into_inner());
         let lines = self.mutes_lines();
         let keep: Vec<String> = lines.iter().filter(|l| !mute_parse(l).map(|e| ks.contains(&e.0)).unwrap_or(false)).cloned().collect();
-        if keep.len() == lines.len() {
+        let had_file = keep.len() != lines.len();
+        if !had_file && auto.is_empty() {
             return Ok(json!({"ok": false, "error": "not muted"}));
         }
-        self.mutes_write(&keep)?;
-        self.audit(&format!("UNMUTE {} ({}) by {}", g.display, ks.iter().cloned().collect::<Vec<_>>().join(","), if who.is_empty() { "?" } else { who }));
+        if had_file {
+            self.mutes_write(&keep)?;
+        }
+        // the slur filter's automatic mute lives in the daemon (automod.json is its own file): the daemon lifts it
+        let mut auto_err = String::new();
+        if !auto.is_empty() {
+            let r = self.notice_call("/automod/clear", json!({"keys": auto}));
+            if !r.get("ok").map(py::truthy).unwrap_or(false) {
+                auto_err = r.get("error").map(py::to_str).unwrap_or_else(|| "the server did not answer".into());
+            }
+        }
+        let keys = ks.iter().cloned().collect::<Vec<_>>().join(",");
+        let who = if who.is_empty() { "?" } else { who };
+        if !auto_err.is_empty() {
+            if had_file {
+                self.audit(&format!("UNMUTE {} ({}) by {}", g.display, keys, who));
+            }
+            return Ok(json!({"ok": false, "name": g.display, "error": format!("the automatic slur mute could not be lifted ({}); it ends by itself", auto_err)}));
+        }
+        self.audit(&format!("UNMUTE {} ({}) by {}{}", g.display, keys, who, if auto.is_empty() { "" } else { " (automatic mute)" }));
         Ok(json!({"ok": true, "name": g.display}))
     }
 
@@ -2785,8 +2895,8 @@ impl Admin {
         for (k, until) in &muted.order {
             let p = idx.get(k);
             let left = if *until <= 0.0 { -1 } else { (until - now) as i64 };
-            mutes.push((left, json!({"pid": p.map(|p| p.0.as_str()).unwrap_or(""), "name": p.map(|p| p.1.as_str()).unwrap_or(k.as_str()),
-                                     "until": *until as i64, "left": left})));
+            mutes.push((left, json!({"pid": p.map(|p| p.0.as_str()).unwrap_or(""), "name": p.map(|p| p.1.as_str()).or(muted.names.get(k).map(String::as_str)).unwrap_or(k.as_str()),
+                                     "until": *until as i64, "left": left, "auto": muted.auto.contains_key(k), "reason": muted.auto.get(k)})));
         }
         mutes.sort_by_key(|m| (m.0 != -1, m.0));
         let mutes: Vec<Value> = mutes.into_iter().map(|m| m.1).collect();

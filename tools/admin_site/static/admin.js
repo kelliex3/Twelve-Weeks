@@ -63,7 +63,8 @@ function flash(msg, bad) {
   document.body.appendChild(d);
   setTimeout(() => d.remove(), 4500);
 }
-function confirmBox(title, html, okLabel, danger) {
+// check (optional): called on OK; a non-empty answer is shown in the box and keeps it open (a required field left empty)
+function confirmBox(title, html, okLabel, danger, check) {
   return new Promise(res => {
     $("#m-title").textContent = title;
     $("#m-body").innerHTML = html;
@@ -73,7 +74,19 @@ function confirmBox(title, html, okLabel, danger) {
     const done = v => { m.hidden = true; m.onclick = null; document.removeEventListener("keydown", key, true); res(v); };
     const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); } };
     document.addEventListener("keydown", key, true);
-    m.onclick = e => { const b = e.target.closest("[data-m]"); if (b) done(b.dataset.m === "yes"); else if (e.target === m) done(false); };
+    m.onclick = e => {
+      const b = e.target.closest("[data-m]");
+      if (b && b.dataset.m === "yes" && check) {
+        const bad = check();
+        if (bad) {
+          let n = $("#m-check");
+          if (!n) { n = document.createElement("div"); n.id = "m-check"; n.className = "note bad"; n.style.marginTop = "8px"; $("#m-body").appendChild(n); }
+          n.textContent = bad;
+          return;
+        }
+      }
+      if (b) done(b.dataset.m === "yes"); else if (e.target === m) done(false);
+    };
     setTimeout(() => $("#m-foot [data-m=no]").focus(), 0);
   });
 }
@@ -183,7 +196,7 @@ function viewChat(d) {
   let h = "";
   if (d.mutes && d.mutes.length) {
     h += `<div class="sec"><h3>MUTED NOW (${d.mutes.length})</h3><div class="tbl" style="--cols:minmax(140px,1fr) 160px 90px"><div class="tr th"><span>PLAYER</span><span>TIME</span><span></span></div>`;
-    for (const m of d.mutes) h += `<div class="tr${m.pid ? " click" : ""}"${m.pid ? ` data-go="player/${esc(m.pid)}"` : ""}><span>${esc(m.name)}</span><span class="dim">${esc(muteLeft(m.left))}</span><span>${muteBtn(m.pid, m.name, true)}</span></div>`;
+    for (const m of d.mutes) h += `<div class="tr${m.pid ? " click" : ""}"${m.pid ? ` data-go="player/${esc(m.pid)}"` : ""}><span>${esc(m.name)}${m.auto ? ' <span class="pill warn" title="${esc(m.reason || "automatic slur mute")}">AUTO</span>' : ""}</span><span class="dim">${esc(muteLeft(m.left))}</span><span>${muteBtn(m.pid, m.name, true)}</span></div>`;
     h += "</div></div>";
   }
   h += `<div class="sec"><h3>${d.player ? "CHAT OF " + esc(d.player) : "CHAT"} <span class="faint">match, team, party and lobby lines, newest first, kept 14 days. Friend messages are private and never shown.</span></h3>`;
@@ -258,7 +271,7 @@ function viewPlayer(p) {
   const wr = dec ? Math.round(p.wins / dec * 100) + "%" : "-";
   let h = '<button class="back" data-go="players">&lt; PLAYERS</button>';
   h += `<div class="match" style="margin-top:10px"><div class="mh"><b>${esc(p.name)}</b><span>${p.online ? statePill(p.online.state) : '<span class="faint">OFFLINE</span>'} ${p.clan ? facPill(p.clan.factionName) : ""} ${p.canKick ? `<button class="btn sm danger" data-kick="${esc(p.online.pid)}" data-name="${esc(p.name)}">FORCE KICK</button>` : ""} ${muteBtn(p.id, p.name, !!p.mute)} ${banBtn(p.id, p.name, !!p.ban)} ${noticeBtn(p.id, p.name)} <button class="btn sm" data-go="chat/${esc(p.id)}">CHAT</button></span></div>`;
-  if (p.mute) h += note("MUTED " + muteLeft(p.mute.left) + (p.mute.reason ? ": " + p.mute.reason : ""), true);
+  if (p.mute) h += note((p.mute.auto ? "AUTO MUTED (slur filter) " : "MUTED ") + muteLeft(p.mute.left) + (p.mute.reason ? ": " + p.mute.reason : ""), true);
   if (p.ban) h += note("BANNED " + banLeft(p.ban.left) + (p.ban.reason ? ": " + p.ban.reason : "") + "  (bans.txt: " + p.ban.line + ")", true);
   const nowMid = p.online && p.online.match ? String(p.online.match) : "";   // the daemon's live row names the match the player is in
   if (nowMid) {
@@ -486,11 +499,11 @@ function viewPreports(d) {
   if (!d.reports.length) return h + '<div class="empty">NO PLAYER REPORTS</div></div>';
   return h + prepTable(d.reports) + "</div>";
 }
-const SANC = { BAN: ["BANNED", "bad"], UNBAN: ["UNBANNED", "ok"], "BAN ENDED": ["BAN ENDED", "dim"], MUTE: ["MUTED", "warn"], UNMUTE: ["UNMUTED", "ok"], "NOTICE TO": ["NOTICE", "dim"] };
+const SANC = { BAN: ["BANNED", "bad"], UNBAN: ["UNBANNED", "ok"], "BAN ENDED": ["BAN ENDED", "dim"], MUTE: ["MUTED", "warn"], UNMUTE: ["UNMUTED", "ok"], "NOTICE TO": ["NOTICE", "dim"], "AUTO MUTE": ["AUTO MUTED", "warn"] };
 function sancLen(x) { return x.minutes === null ? "for good" : typeof x.minutes === "number" ? dur(x.minutes * 60) : ""; }
 function sanctionsBlock(s, title) {
   if (!s) return "";
-  let h = `<div class="sec"><h3>${title || "MODERATION HISTORY"} <span class="faint">(admin site bans, mutes and notices, newest first)</span></h3>`;
+  let h = `<div class="sec"><h3>${title || "MODERATION HISTORY"} <span class="faint">(admin site bans, mutes and notices, and the slur filter's automatic mutes, newest first)</span></h3>`;
   if (!s.list.length) return h + '<div class="empty">NO BANS, MUTES OR NOTICES RECORDED</div></div>';
   h += '<div class="facts" style="margin:0 0 10px">' + fact("BANS", s.bans, s.everForGood ? "one was for good" : s.longestBanMin ? "longest " + dur(s.longestBanMin * 60) : "") + fact("MUTES", s.mutes) + fact("NOTICES", s.notices) + "</div>";
   h += '<div class="tbl" style="--cols:140px 110px 90px 170px 1fr"><div class="tr th"><span>WHEN</span><span>ACTION</span><span>LENGTH</span><span>BY</span><span>REASON</span></div>';
@@ -512,7 +525,7 @@ function viewPreport(r) {
   h += `<div class="row-in" style="margin-top:10px;gap:8px;display:flex;flex-wrap:wrap">${r.targetId ? muteBtn(r.targetId, tname, !!r.mute) + " " + banBtn(r.targetId, tname, !!r.ban) + " " + noticeBtn(r.targetId, tname) + ` <button class="btn sm" data-go="chat/${esc(r.targetId)}">THEIR CHAT</button>` : ""}` +
     `${r.reporterId ? ` <button class="btn sm" data-pnotice="${esc(r.reporterId)}" data-name="${esc(r.reporterName || "")}" data-text="Thanks for your report ${esc(r.code)}. We are looking into it.">NOTICE TO REPORTER</button>` : ""}` +
     `${r.mid ? ` <button class="btn sm" data-logq="${esc(r.mid)}">SERVER LOG OF THIS MATCH</button>` : ""}</div></div>`;
-  if (r.mute) h += note("MUTED NOW " + muteLeft(r.mute.left) + (r.mute.reason ? ": " + r.mute.reason : ""), true);
+  if (r.mute) h += note((r.mute.auto ? "AUTO MUTED NOW (slur filter) " : "MUTED NOW ") + muteLeft(r.mute.left) + (r.mute.reason ? ": " + r.mute.reason : ""), true);
   if (r.ban) h += note("BANNED NOW " + banLeft(r.ban.left) + (r.ban.reason ? ": " + r.ban.reason : ""), true);
   h += `<div class="sec"><h3>WHAT THE REPORTER WROTE</h3><pre class="txt">${esc(r.text || "(no text)")}</pre></div>`;
   h += sanctionsBlock(r.targetSanctions, "MODERATION HISTORY OF " + esc(String(tname || "").toUpperCase()));
@@ -842,7 +855,8 @@ document.addEventListener("click", async e => {
     setTimeout(() => { const i = $("#mute-reason"); if (i) i.focus(); }, 30);
     const ok = await confirmBox("MUTE PLAYER", `Mute <b>${esc(name)}</b> in chat?<br>Their party and lobby lines and friend messages are refused; the game shows them YOU ARE MUTED instead of opening the chat (from the next client update).` +
       `<label style="display:block;margin-top:8px">For:<select id="mute-dur" style="margin-top:4px;width:100%">${MUTE_DUR.map(([m, n]) => `<option value="${m}" ${m === 1440 ? "selected" : ""}>${n}</option>`).join("")}</select></label>` +
-      `<label style="display:block;margin-top:8px">Reason (shown to them):<input id="mute-reason" type="text" maxlength="160" autocomplete="off" style="margin-top:4px;width:100%"></label>`, "MUTE " + name.toUpperCase().slice(0, 18), true);
+      `<label style="display:block;margin-top:8px">Reason (needed; the game shows it to them in chat):<input id="mute-reason" type="text" maxlength="120" autocomplete="off" style="margin-top:4px;width:100%"></label>`, "MUTE " + name.toUpperCase().slice(0, 18), true,
+      () => (($("#mute-reason") || {}).value || "").trim() ? "" : "Write the reason: the player sees it in chat.");
     if (!ok) return;
     const r = await post("/api/mute", { id: mute.dataset.mute, minutes: parseFloat(($("#mute-dur") || {}).value || "1440"), reason: ($("#mute-reason") || {}).value || "" });
     flash(r.ok ? `${r.name || name} muted ${r.until ? "until " + when(r.until) : "for good"}` : "Mute failed: " + (r.error || "unknown"), !r.ok);
