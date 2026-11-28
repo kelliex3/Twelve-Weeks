@@ -339,6 +339,14 @@ pub fn db_guard() -> String {
     if !std::path::Path::new(path).exists() {
         return "no db yet".into();
     }
+    // PRAGMA quick_check of a large t2r.db can take tens of seconds on a busy host, and TCP only listens after it. A planned restart
+    // (the deploy script) leaves <db>.skipcheck: one start without the check.
+    // A crash restart has no such file and checks as before.
+    let skip = format!("{}.skipcheck", path);
+    if std::path::Path::new(&skip).exists() {
+        let _ = std::fs::remove_file(&skip);
+        return "skipped (planned restart, <db>.skipcheck)".into();
+    }
     if db_ok(path, true) {
         return "ok".into();
     }

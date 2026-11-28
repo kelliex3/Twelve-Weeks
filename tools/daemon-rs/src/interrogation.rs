@@ -390,6 +390,21 @@ impl Interrogation {
         Some(self.progress(r, 0).max(self.progress(r, 1)))
     }
 
+    /// (JIP progress rule): how far the leading team is, 0..1 (intel progress / need; 1 once a team is full). None = not an
+    /// Interrogation match / not recorded / ended.
+    pub fn lead_frac(&self, mid: &str) -> Option<f64> {
+        let g = self.inner.lock();
+        let r = g.matches.get(mid)?;
+        if r.ended.is_some() {
+            return None;
+        }
+        if r.full_at.is_some() || self.need <= 0 {
+            return Some(1.0);
+        }
+        let lead = self.progress(r, 0).max(self.progress(r, 1));
+        Some((lead as f64 / self.need as f64).clamp(0.0, 1.0))
+    }
+
     // py: interrogation.py:165 intel_full
     fn intel_full(&self, r: &mut Rec, team: i64) -> bool {
         if self.progress(r, team) < self.need {

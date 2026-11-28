@@ -38,6 +38,22 @@ pub static JIP: LazyLock<bool> = LazyLock::new(|| crate::env_is1("T2R_JIP", true
 pub static ENGINE_SLOTS: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_ENGINE_SLOTS", 8i64));
 pub static MATCH_SIZE: LazyLock<i64> = LazyLock::new(|| std::cmp::min(crate::env_parse("T2R_MATCH_SIZE", 8i64), *ENGINE_SLOTS));
 pub static MIN_PLAYERS: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_MIN_PLAYERS", std::cmp::min(2, *MATCH_SIZE)));
+/// Full 4 v 4 matches first. A search (or a post-match lobby) does not step its wanted size below this until its
+/// oldest player waited the max wait (fast rule T2R_FAST_MAX_WAIT, else T2R_MAX_WAIT) or nobody else is online; then
+/// T2R_MIN_PLAYERS. Default = T2R_MIN_PLAYERS (as before).
+pub static FILL_FLOOR: LazyLock<i64> =
+    LazyLock::new(|| crate::env_parse("T2R_FILL_FLOOR", *MIN_PLAYERS).clamp(*MIN_PLAYERS, std::cmp::max(*MIN_PLAYERS, *MATCH_SIZE)));
+/// Join in progress only into a match less than this far along (the furthest of its clock, the team lives used and the
+/// Interrogation lead). A player going back into its own match is not limited. 0 = off (default: the Python parity runs);
+/// run-daemon.sh sets 0.6.
+pub static JIP_MAX_PROG: LazyLock<f64> = LazyLock::new(|| crate::env_parse("T2R_JIP_MAX_PROG", 0.0f64));
+/// Join in progress before new matches: a short-handed running match can wait minutes while searchers sit in lobbies of several players,
+/// because only searchers alone in their lobby were offered a running match. 1 = a searcher in a
+/// lobby that is still below the fill floor is offered running matches too, and a joiner's match choice prefers the short-handed team
+/// first, then the closest ping to the host, then the fuller match. 0 = off (default: the Python parity runs); run-daemon.sh sets 1.
+pub static JIP_FIRST: LazyLock<bool> = LazyLock::new(|| crate::env_str("T2R_JIP_FIRST", "0") == "1");
+/// ping band width (ms to the host) for that choice: joiners prefer the match whose host is in their lowest band
+pub static JIP_PING_BAND: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_JIP_PING_BAND", 40i64).max(1));
 pub static LIVES_START: LazyLock<i64> = LazyLock::new(|| if crate::env_str("T2R_TEST_LIVES2", "") == "1" { 40 } else { 20 });
 pub static SECOND_MATCH_MIN: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_SECOND_MATCH_MIN", 6i64));
 pub static RELAY_MATCH_MAX: LazyLock<i64> = LazyLock::new(|| crate::env_parse("T2R_RELAY_MAX", 4i64));
@@ -778,6 +794,8 @@ pub struct Bans {
     pub reason: HashMap<String, String>,
 }
 pub static BANS: LazyLock<Mutex<Bans>> = LazyLock::new(|| Mutex::new(Bans::default()));
+/// +1 on every (re)load of bans.txt: the ban sweep (admin::ban_sweep_tick) kicks the online players the new list covers
+pub static BANS_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn py_isdigit(e: &str) -> bool {
     !e.is_empty() && e.chars().all(|c| c.is_ascii_digit())
@@ -971,6 +989,7 @@ pub fn _bans_load() {
         b.pid = pids;
         b.reason = reason;
     }
+    BANS_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     dlog!("BANS loaded", ni, "steam id(s),", nn, "name(s),", nh, "hwid(s),", nt, "token(s),", np, "ip / range(s),", nd, "identity id(s) from", &*BAN_PATH);
 }
 

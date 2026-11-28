@@ -1594,6 +1594,7 @@ pub fn status_loop() {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(10));
         n += 1;
+        crate::d::admin::ban_sweep_tick(); // (bans.txt changed: kick the online players it covers)
         if n % 6 == 0 {
             let tr = crate::heap::trim(); // (glibc: freed memory back to the kernel, once a minute)
             dlog!("MEM", format!("{}{}", crate::heap::line(), tr)); // (Rust only, once a minute: live heap vs RSS)

@@ -425,7 +425,7 @@ impl MMState {
     // py: daemon.py:5462 fast_want
     pub fn fast_want(&self, ready: &[String], online: &HashSet<String>, quiet: f64, now: f64) -> (i64, &'static str) {
         let step = if *FAST_STEP > 0.0 { *FAST_STEP } else { *FILL_WAIT };
-        let mut want = if step > 0.0 { std::cmp::max(*MIN_PLAYERS, *MATCH_SIZE - float_floordiv(quiet, step) as i64) } else { *MIN_PLAYERS };
+        let mut want = if step > 0.0 { std::cmp::max(*FILL_FLOOR, *MATCH_SIZE - float_floordiv(quiet, step) as i64) } else { *FILL_FLOOR };
         let mut why = "step";
         let mut inm: HashSet<&String> = HashSet::new();
         for (mid, pl) in &self.matches {
@@ -542,7 +542,26 @@ impl MMState {
             let (x, y) = (self.queue.get(a).copied().unwrap_or(now), self.queue.get(b).copied().unwrap_or(now));
             x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal)
         });
+        // A party member that searches while a mate does not search at all (its party lead stayed on
+        // the menu) can never start, and a lobby only launches when every member is ready. In a shared lobby it held every other member
+        // back without a log line (one live lobby waited ~9 min this way). Such a member
+        // stays out of the book until its whole party searches. (A mate that searches but is held for a moment - requeue, a late poll -
+        // does not count: the party keeps its lobby.)
+        let party_off: HashSet<String> = sorted_pub
+            .iter()
+            .filter(|t| PARTIES.pid(t).and_then(|p| held.get(&p)).is_some_and(|miss| miss.iter().any(|m| !self.queue.contains_key(m))))
+            .cloned()
+            .collect();
         for t in &sorted_pub {
+            if party_off.contains(t) {
+                if let Some(lid) = self.book.lobby_of(t).map(|s| s.to_string()) {
+                    let unit = book_unit(t);
+                    if self.book.members(&lid).iter().any(|m| !unit.contains(m)) {
+                        self.book.remove(t, "its party is not searching (a party mate is not in the search) - out of the lobby until it is", Some(now), 0.0);
+                    }
+                }
+                continue;
+            }
             if self.book.lobby_of(t).is_some() {
                 self.book.back(t);
                 continue;
@@ -613,7 +632,24 @@ impl MMState {
         for olid in order {
             let Some(lb) = self.book.get(&olid).cloned() else { continue }; // (the Python loop reads the live lobby: an earlier pass step may have emptied it)
             let mem = lb.members.clone();
-            if mem.is_empty() || !lb.away.is_empty() || lb.hold || now < lb.wait_until || mem.iter().any(|t| !rset.contains(t)) {
+            if mem.is_empty() || !lb.away.is_empty() || lb.hold || now < lb.wait_until {
+                continue;
+            }
+            let nr: Vec<String> = mem.iter().filter(|t| !rset.contains(*t)).cloned().collect();
+            if !nr.is_empty() {
+                // This wait had no log line; say who the lobby waits for (once per 60 s per lobby and set of names)
+                if mem.len() >= 2 {
+                    if self.party_split_log.len() > 500 {
+                        self.party_split_log.clear();
+                    }
+                    let mut key = vec!["~not-ready".to_string()];
+                    key.extend(nr.iter().cloned());
+                    let k = (lb.lid.clone(), key);
+                    if self.party_split_log.get(&k).copied().unwrap_or(0.0) < now - 60.0 {
+                        self.party_split_log.insert(k, now);
+                        dlog!("LOBBY-BOOK: lobby", lb.lid, "waits for member(s) not ready yet", tags(&nr), "of", tags(&mem));
+                    }
+                }
                 continue;
             }
             // 11-25 R-5ZCJ: a party starts together. A searching mate of a member that is not in this lobby: no start; a mate sitting in
@@ -741,7 +777,7 @@ impl MMState {
             }
         }
         let quiet = now - lb.map(|l| l.last_join).unwrap_or(self.last_arrival);
-        let mut want = if *FILL_WAIT > 0.0 { std::cmp::max(*MIN_PLAYERS, *MATCH_SIZE - float_floordiv(quiet, *FILL_WAIT) as i64) } else { *MIN_PLAYERS };
+        let mut want = if *FILL_WAIT > 0.0 { std::cmp::max(*FILL_FLOOR, *MATCH_SIZE - float_floordiv(quiet, *FILL_WAIT) as i64) } else { *FILL_FLOOR };
         if fill_rule() == "fast" {
             want = self.fast_want(&ready, online, quiet, now).0;
         } else if *MAX_WAIT > 0.0 && !ready.is_empty() && now - self.queue.get(&ready[0]).copied().unwrap_or(now) >= *MAX_WAIT {
@@ -749,7 +785,7 @@ impl MMState {
         }
         let want0 = want;
         if !lob.is_empty() {
-            want = *MIN_PLAYERS;
+            want = std::cmp::min(want0, *FILL_FLOOR);
         }
         let single = lb.map(|l| book_single_unit(&l.members)).unwrap_or(true);
         if *JIP && !self.matches.is_empty() && (ready.len() as i64) < *MATCH_SIZE && lob.is_empty() && single {
@@ -969,7 +1005,7 @@ impl MMState {
         if throttle(&mut self.wait_logged, now, 20.0) {
             let fr = fill_rule();
             let stp = if fr == "fast" && *FAST_STEP > 0.0 { *FAST_STEP } else { *FILL_WAIT };
-            let nxt = if stp > 0.0 && want > *MIN_PLAYERS { stp - py::fmod(quiet, stp) } else { 0.0 };
+            let nxt = if stp > 0.0 && want > *FILL_FLOOR { stp - py::fmod(quiet, stp) } else { 0.0 };
             let nq: Vec<String> = self.queue.keys().filter(|t| !ready.contains(*t)).cloned().collect();
             let nxt_s = if nxt != 0.0 { format!("next step-down in {} s", fmt0(nxt)) } else { "at the minimum".to_string() };
             let mut tail: Vec<String> = Vec::new();
@@ -981,10 +1017,10 @@ impl MMState {
             }
             let head = format!("{}", tail.join(" "));
             if tail.is_empty() {
-                dlog!("QUEUE-WAIT", "rule", fr, "ready", tags(&ready), "want", want, format!("(min {}, size {})", *MIN_PLAYERS, *MATCH_SIZE),
+                dlog!("QUEUE-WAIT", "rule", fr, "ready", tags(&ready), "want", want, format!("(min {}, floor {}, size {})", *MIN_PLAYERS, *FILL_FLOOR, *MATCH_SIZE),
                     format!("quiet {} s", fmt0(quiet)), nxt_s, "| queued not ready:", tags(&nq));
             } else {
-                dlog!("QUEUE-WAIT", "rule", fr, "ready", tags(&ready), "want", want, format!("(min {}, size {})", *MIN_PLAYERS, *MATCH_SIZE),
+                dlog!("QUEUE-WAIT", "rule", fr, "ready", tags(&ready), "want", want, format!("(min {}, floor {}, size {})", *MIN_PLAYERS, *FILL_FLOOR, *MATCH_SIZE),
                     format!("quiet {} s", fmt0(quiet)), nxt_s, "| queued not ready:", tags(&nq), head);
             }
         }

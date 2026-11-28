@@ -24,6 +24,25 @@ fn score_gt(a: &Score, b: &Score) -> bool {
     a.3 > b.3
 }
 
+// JIP_FIRST offers running matches to many more searchers each pass (lobby members too): the team-choice notes of jip_pick
+// would repeat for every searcher x match every second. One note per (match, searcher) per 60 s; without JIP_FIRST every note as before.
+static JIP_NOTE: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+fn jip_note_ok(mid: &str, token: &str, now: f64) -> bool {
+    if !*JIP_FIRST {
+        return true;
+    }
+    let mut m = JIP_NOTE.lock();
+    if m.len() > 4000 {
+        m.retain(|_, t| now - *t < 60.0);
+    }
+    let k = (mid.to_string(), token.to_string());
+    if m.get(&k).is_some_and(|t| now - *t < 60.0) {
+        return false;
+    }
+    m.insert(k, now);
+    true
+}
+
 fn name_or_player(t: &str) -> String {
     let n = get_name(t);
     if n.is_empty() {
@@ -189,6 +208,15 @@ impl MMState {
                     }
                 }
             }
+            // Join in progress only while the match is less than JIP_MAX_PROG done (clock, lives used, Interrogation lead)
+            if !back && *JIP_MAX_PROG > 0.0 {
+                let (p, _) = join_progress(Some(ck), lv, 0, now);
+                let p = p.max(INT.lead_frac(&mid).unwrap_or(0.0));
+                if p >= *JIP_MAX_PROG {
+                    why_not.push(format!("{}: {} % done (join in progress only below {} %)", mid, py::fixed(100.0 * p, 0), py::fixed(100.0 * *JIP_MAX_PROG, 0)));
+                    continue;
+                }
+            }
             if !back && *LOBBY_KEEP && *REQUEUE {
                 let kept: Vec<String> = self.rq.kept(&mid, None).into_iter().filter(|k| k != token && !pl.contains(k)).collect();
                 if !kept.is_empty() && active.len() as i64 + need + kept.len() as i64 > *MATCH_SIZE {
@@ -304,13 +332,13 @@ impl MMState {
                     if (cnt[rtu] + 1 - cnt[1 - rtu] <= lim2 || rnote.starts_with("together")) && has_slot {
                         want = Some(rt);
                         forced = false;
-                        dlog!("JIP", mid, format!("joiner {} -> team {} by admin rule ({})", tag(token), rt, rnote));
+                        if jip_note_ok(&mid, token, now) { dlog!("JIP", mid, format!("joiner {} -> team {} by admin rule ({})", tag(token), rt, rnote)); }
                     } else {
                         let why = if !has_slot { "no free slot".to_string() } else { format!("it would be {} v {}", cnt[0] + (rt == 0) as i64, cnt[1] + (rt == 1) as i64) };
-                        dlog!("JIP", mid, format!("admin rule for {} wants team {} but {} - balance instead", tag(token), rt, why));
+                        if jip_note_ok(&mid, token, now) { dlog!("JIP", mid, format!("admin rule for {} wants team {} but {} - balance instead", tag(token), rt, why)); }
                     }
                 } else if !rnote.is_empty() {
-                    dlog!("JIP", mid, format!("admin rules for {} cannot be met ({}) - balance instead", tag(token), rnote));
+                    if jip_note_ok(&mid, token, now) { dlog!("JIP", mid, format!("admin rules for {} cannot be met ({}) - balance instead", tag(token), rnote)); }
                 }
             }
             if want.is_none() && mv.is_none() {
@@ -322,7 +350,7 @@ impl MMState {
                         if (l.0 - l.1).abs() >= 3 && cnt[lose as usize] + need - cnt[1 - lose as usize] <= std::cmp::max(1, need) && has_slot {
                             want = Some(lose);
                             forced = need > 1;
-                            dlog!("JIP", mid, format!("joiner -> losing team {} (lives {} v {}, players {} v {})", lose, l.0, l.1, cnt[0], cnt[1]));
+                            if jip_note_ok(&mid, token, now) { dlog!("JIP", mid, format!("joiner -> losing team {} (lives {} v {}, players {} v {})", lose, l.0, l.1, cnt[0], cnt[1])); }
                         }
                     }
                 }
@@ -340,8 +368,10 @@ impl MMState {
                     let weak: i64 = if tot[0] < tot[1] { 0 } else { 1 };
                     if free.iter().any(|i| (*i as i64) % 2 == weak) || (pl.len() < *ENGINE_SLOTS as usize && (pl.len() as i64) % 2 == weak) {
                         want = Some(weak);
-                        dlog!("JIP", mid, format!("joiner {} ({}) -> weaker team {} (rating {} v {}, players {} v {})", tag(token), py::fixed(sk[token], 2), weak,
-                            py::fixed(tot[0], 2), py::fixed(tot[1], 2), cnt[0], cnt[1]));
+                        if jip_note_ok(&mid, token, now) {
+                            dlog!("JIP", mid, format!("joiner {} ({}) -> weaker team {} (rating {} v {}, players {} v {})", tag(token), py::fixed(sk[token], 2), weak,
+                                py::fixed(tot[0], 2), py::fixed(tot[1], 2), cnt[0], cnt[1]));
+                        }
                     }
                 }
             }
@@ -412,7 +442,15 @@ impl MMState {
                 let jr = mm_region(token);
                 same = if jr.as_deref().is_some_and(|r| hostmig::MM_REGIONS.contains(&r)) && jr == mm_region(&host) { 1 } else { 0 };
             }
-            let score: Score = (tier, same, if tier == 1 { active.len() as i64 } else { 0 }, ck.0);
+            let mut score: Score = (tier, same, if tier == 1 { active.len() as i64 } else { 0 }, ck.0);
+            if tier == 1 && *JIP_FIRST {
+                // JIP_FIRST: short-handed team first (a 2 v 1 before a 3 v 3), then the lowest ping band to the host (a joiner far from the host
+                // lags every fight; same region counts inside the band), then the fuller match (finish a 4 v 4), then the time left
+                let tgt = team_in(&mid, slot as i64, None).clamp(0, 1) as usize;
+                let gap = (cnt[1 - tgt] - cnt[tgt]).clamp(0, 3);
+                let band = _ping_gate(token, &host, now).map(|p| p / *JIP_PING_BAND).unwrap_or(2).min(9);
+                score = (tier, gap, (9 - band) * 100 + same * 10 + active.len() as i64, ck.0);
+            }
             if best.as_ref().is_none_or(|b| score_gt(&score, &b.0)) {
                 best = Some((score, mid.clone(), slot));
             }
@@ -446,9 +484,15 @@ impl MatchMaker {
             ready.sort_by(|a, b| g.queue[a].partial_cmp(&g.queue[b]).unwrap_or(std::cmp::Ordering::Equal));
             let mut ready = g.rq_filter(ready, now, false);
             if book_on() {
+                // JIP_FIRST: a member of a lobby still below the fill floor is offered a running match too (the lobby would start a
+                // small match or keep waiting; a short-handed running match needs it now). A lobby at the floor starts its own match.
                 ready.retain(|t| match g.book.lobby_of(t) {
                     None => true,
-                    Some(lid) => g.book.get(lid).map(|l| book_single_unit(&l.members)).unwrap_or(true),
+                    Some(lid) => g
+                        .book
+                        .get(lid)
+                        .map(|l| book_single_unit(&l.members) || (*JIP_FIRST && (l.members.len() as i64) < *FILL_FLOOR))
+                        .unwrap_or(true),
                 });
             }
             ready

@@ -52,6 +52,8 @@ struct Final {
 struct Inner {
     seq: i64,
     texts: BTreeMap<i64, Text>,
+    // admin site personal notices: id -> (token, text); only that player's polls show them
+    personal: BTreeMap<i64, (String, Text)>,
     shutdown: Option<Shutdown>,
     final_: Option<Final>,
 }
@@ -87,7 +89,7 @@ impl Notices {
     }
 
     pub fn with_clock(now: Box<dyn Fn() -> f64 + Send + Sync>) -> Notices {
-        Notices { now, inner: Mutex::new(Inner { seq: 0, texts: BTreeMap::new(), shutdown: None, final_: None }) }
+        Notices { now, inner: Mutex::new(Inner { seq: 0, texts: BTreeMap::new(), personal: BTreeMap::new(), shutdown: None, final_: None }) }
     }
 
     fn next_id(g: &mut Inner) -> i64 {
@@ -124,10 +126,49 @@ impl Notices {
         Some(i)
     }
 
+    /// A personal notice (admin site): free text shown only to the players whose token is in `tokens`, `seconds` on screen (2..600),
+    /// waiting up to `minutes` (1..1440) for a player who is offline now. Each token (one person can have several installs) gets its own row
+    /// and id; the first id is returned.
+    pub fn add_personal(&self, tokens: &[String], text: &str, seconds: f64, minutes: f64) -> Option<i64> {
+        let text = clean_d(text);
+        if text.is_empty() || tokens.is_empty() {
+            return None;
+        }
+        let now = (self.now)();
+        let show = pmax(2.0, pmin(seconds, 600.0)) as i64;
+        let keep = pmax(show as f64 + 20.0, pmax(1.0, pmin(minutes, (24 * 60) as f64)) * 60.0);
+        let mut g = self.inner.lock();
+        let i = Self::next_id(&mut g);
+        for (k, t) in tokens.iter().enumerate() {
+            let id = if k == 0 { i } else { Self::next_id(&mut g) };
+            g.personal.insert(id, (t.clone(), Text { text: text.clone(), text_pl: String::new(), until: now + keep, show }));
+        }
+        Some(i)
+    }
+
+    /// The personal notices still waiting for `token`: [(id, "t", seconds, text)].
+    pub fn personal_for(&self, token: &str) -> Vec<Item> {
+        let now = (self.now)();
+        let mut g = self.inner.lock();
+        g.personal.retain(|_, (_, t)| t.until > now);
+        g.personal.iter().filter(|(_, (tk, _))| tk == token).map(|(i, (_, t))| (*i, "t", t.show, t.text.clone())).collect()
+    }
+
+    /// The admin list of personal notices: [{"id","token","text","seconds","endsAt"}] (steady clock endsAt).
+    pub fn personal_list(&self) -> Vec<Value> {
+        let now = (self.now)();
+        let mut g = self.inner.lock();
+        g.personal.retain(|_, (_, t)| t.until > now);
+        g.personal.iter().map(|(i, (tk, t))| json!({"id": i, "token": tk, "text": t.text, "seconds": t.show, "endsAt": t.until})).collect()
+    }
+
     // py: notices.py:75 clear
     pub fn clear(&self, nid: i64) -> bool {
         let mut g = self.inner.lock();
         if g.texts.remove(&nid).is_some() {
+            return true;
+        }
+        if g.personal.remove(&nid).is_some() {
             return true;
         }
         if g.shutdown.as_ref().map(|s| s.id == nid).unwrap_or(false) {

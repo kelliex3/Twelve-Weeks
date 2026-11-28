@@ -1454,9 +1454,24 @@ impl Social {
                 Some(x) => py_float(x).unwrap_or(0.0),
                 None => 0.0,
             };
-            out.insert(key, (until, strip(why).to_string()));
+            out.insert(key, (until, Self::shown_why(strip(why))));
         }
         Some(out)
+    }
+
+    /// What the player reads of a mutes.txt / voicebans.txt note: the text after "reason:" (the admin site writes
+    /// "<name> - admin site <date> by <admin> | reason: <why>"); an admin site line without a reason shows nothing; a hand-written
+    /// note without "reason:" shows as written.
+    fn shown_why(note: &str) -> String {
+        let low = note.to_lowercase();
+        if let Some(i) = low.find("reason:") {
+            let ci = low[..i].chars().count();
+            return strip(&note.chars().skip(ci + 7).collect::<String>()).to_string();
+        }
+        if low.contains(" - admin site ") {
+            return String::new();
+        }
+        note.to_string()
     }
 
     /// `_mutes_now().get(who)` / `_vbans_now().get(who)`: the file re-read when its write time changes (checked at most every MUTE_RELOAD_S).
@@ -1693,6 +1708,29 @@ impl Social {
         if let Err(ex) = r {
             self.log(&["SOCIAL automod write error", &crate::pyfmt::os_error_repr(&ex)]);
         }
+    }
+
+    /// Admin site UNMUTE: the automatic slur mute of these accounts ends now (the strikes stay, so a next slur still counts up).
+    /// Returns how many running automatic mutes were lifted.
+    pub fn auto_clear(&self, keys: &[String]) -> usize {
+        let now = self.h.now();
+        let mut s = self.st.lock();
+        let mut n = 0;
+        {
+            let d = self.auto_load(&mut s);
+            for k in keys {
+                if let Some(e) = d.get_mut(k).and_then(|v| v.as_object_mut()) {
+                    if fget(e, "until") > now {
+                        e.insert("until".into(), json!(0));
+                        n += 1;
+                    }
+                }
+            }
+        }
+        if n > 0 {
+            self.auto_save(&s);
+        }
+        n
     }
 
     // py: social.py:814 Social._auto_left

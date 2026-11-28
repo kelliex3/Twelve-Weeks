@@ -966,6 +966,85 @@ pub fn afk_report_ok(token: &str, idle_s: i64, flags: u8) -> bool {
     true
 }
 
+/// Every token the daemon holds for an online player (presence, queue, matches, sessions, loaded)
+fn online_tokens() -> HashSet<String> {
+    let mut cand: HashSet<String> = PRES.with(|p| p.players.keys().cloned().collect());
+    {
+        let g = MM.lock.lock();
+        cand.extend(g.queue.keys().cloned());
+        for pl in g.matches.values() {
+            cand.extend(pl.iter().cloned());
+        }
+    }
+    cand.extend(SESSIONS.with(|s| s.keys().cloned().collect::<Vec<_>>()));
+    cand.extend(LOADED.lock().iter().cloned());
+    cand.retain(|t| !t.is_empty());
+    cand
+}
+
+/// The ban key (steam id / identity / hwid / token / ip range / name) that covers an online token, its session's address included
+fn ban_key_online(tok: &str) -> Option<String> {
+    let ip = SESSIONS.conn(tok).map(|c| ip_of(&c.addr));
+    ext_k5::ban_key(tok, None, ip.as_deref())
+}
+
+static BANS_SWEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static BAN_SWEEPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// status_loop, every 10 s: bans.txt re-read when it changed (the admin ban button writes it); after a (re)load every online player the
+/// list covers is kicked like an admin kick (left its match, back to the menu, the ban text shown), its connection closed (own thread)
+pub fn ban_sweep_tick() {
+    use std::sync::atomic::Ordering::Relaxed;
+    _bans_load();
+    let g = BANS_GEN.load(Relaxed);
+    if g == BANS_SWEPT.load(Relaxed) || BAN_SWEEPING.swap(true, Relaxed) {
+        return;
+    }
+    BANS_SWEPT.store(g, Relaxed);
+    let r = std::thread::Builder::new().name("ban-sweep".into()).stack_size(2 << 20).spawn(|| {
+        let n = std::panic::catch_unwind(ban_sweep).unwrap_or_else(|_| {
+            dlog!("BAN-SWEEP failed");
+            0
+        });
+        if n > 0 {
+            dlog!("BAN-SWEEP", n, "player(s) kicked");
+        }
+        BAN_SWEEPING.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
+    if r.is_err() {
+        BAN_SWEEPING.store(false, Relaxed);
+        BANS_SWEPT.store(0, Relaxed); // (try again next tick)
+    }
+}
+
+/// Kick every online token a ban covers; the number kicked
+pub fn ban_sweep() -> usize {
+    let mut n = 0;
+    for tok in online_tokens() {
+        let Some(key) = ban_key_online(&tok) else { continue };
+        ban_kick(&tok, &key);
+        n += 1;
+    }
+    n
+}
+
+/// A banned player's kick: as an admin kick, without the "kicked - parts count, deficit forgiven" clan day (a ban kick books the
+/// normal left-early day), kept out of its match, the ban text shown, the connection closed
+pub fn ban_kick(tok: &str, key: &str) -> Vec<String> {
+    let name = tag(tok);
+    let conn = SESSIONS.conn(tok);
+    if let Some(m) = MM.mid_of(tok) {
+        clan_ban_note(tok, &m, key);
+    }
+    let ktxt = String::from_utf8_lossy(&ban_note(tok)).into_owned();
+    let did = kick_token(tok, "banned", &ktxt, "ban-kick", key, true, false);
+    if let Some(c) = conn {
+        c.close();
+    }
+    dlog!("BAN-KICK", name, key);
+    did
+}
+
 // py: daemon.py:10838 admin_kick (the stub signature of the other chunks: no reason)
 pub fn admin_kick(pid: &str, move_: bool) -> Value {
     admin_kick_reason(&Value::String(pid.to_string()), &Value::String(String::new()), move_)
@@ -979,22 +1058,19 @@ pub fn admin_kick_reason(pid: &Value, reason: &Value, move_: bool) -> Value {
         return json!({"ok": false, "error": "bad pid"});
     }
     let pid = p.to_lowercase();
-    let mut cand: HashSet<String> = PRES.with(|p| p.players.keys().cloned().collect());
-    {
-        let g = MM.lock.lock();
-        cand.extend(g.queue.keys().cloned());
-        for pl in g.matches.values() {
-            cand.extend(pl.iter().cloned());
-        }
-    }
-    cand.extend(SESSIONS.with(|s| s.keys().cloned().collect::<Vec<_>>()));
-    cand.extend(LOADED.lock().iter().cloned());
-    let toks: Vec<String> = cand.into_iter().filter(|t| !t.is_empty() && sha_hex(t).starts_with(&pid)).collect();
+    let toks: Vec<String> = online_tokens().into_iter().filter(|t| sha_hex(t).starts_with(&pid)).collect();
     if toks.len() != 1 {
         return json!({"ok": false, "error": if toks.is_empty() { "no such player" } else { "ambiguous pid" }});
     }
     let tok = &toks[0];
     let name = tag(tok);
+    if !move_ {
+        if let Some(key) = ban_key_online(tok) {
+            // a banned player: the ban kick (no "kicked (admin kick) - parts count, deficit forgiven" clan day)
+            let did = ban_kick(tok, &key);
+            return json!({"ok": true, "name": name, "did": did, "banned": key});
+        }
+    }
     let rs = reason.as_str().unwrap_or("");
     let ktxt = if move_ { srv_text("moved", &lang_of(tok), &[]) } else { kick_text(rs, &lang_of(tok)) };
     let did = kick_token(tok, if move_ { "team move" } else { "admin kick" }, &ktxt, "admin-kick", &kick_reason_clean(rs), false, !move_);
@@ -1211,7 +1287,20 @@ fn admin_get(path: &str, headers: &Headers, secret: &str, date: &str) -> Result<
         return Ok(json_resp(403, &json!({"ok": false, "error": "forbidden"}), date));
     }
     if path == "/notices" {
-        return Ok(json_resp(200, &json!({"ok": true, "notices": notices_public(), "target_version": update_target(), "now": clock::wall_time()}), date));
+        let d = clock::wall_time() - clock::now();
+        let personal: Vec<Value> = NOTICES
+            .personal_list()
+            .into_iter()
+            .map(|mut x| {
+                if let Some(o) = x.as_object_mut() {
+                    if let Some(v) = o.get("endsAt").and_then(|v| v.as_f64()) {
+                        o.insert("endsAt".into(), json!(v + d));
+                    }
+                }
+                x
+            })
+            .collect();
+        return Ok(json_resp(200, &json!({"ok": true, "notices": notices_public(), "personal": personal, "target_version": update_target(), "now": clock::wall_time()}), date));
     }
     if path == "/sizes" {
         return Ok(json_resp(200, &json!({"ok": true, "sizes": state_sizes(), "uptime_s": py::round0(clock::now() - started_at())}), date));
@@ -1301,6 +1390,37 @@ fn admin_post_path(path: &str, body: &Value) -> Result<Option<Value>, String> {
                 Some(n) if n != 0 => json!({"ok": true, "id": n}),
                 _ => json!({"ok": false, "error": "empty text"}),
             }))
+        }
+        "/notice/to" => {
+            // admin site: a personal notice to one player (all tokens of that person), shown like a server message on their screen only
+            let toks: Vec<String> = match get("tokens")? {
+                Some(Value::Array(a)) => a.iter().map(pystr).filter(|t| is_token(t)).take(32).collect(),
+                _ => Vec::new(),
+            };
+            if toks.is_empty() {
+                return Ok(Some(json!({"ok": false, "error": "no player token"})));
+            }
+            let text = pystr(&dflt("text", json!(""))?);
+            let seconds = bfloat(&dflt("seconds", json!(15))?)?;
+            let minutes = bfloat(&dflt("minutes", json!(60))?)?;
+            let online = toks.iter().filter(|t| PRES.has(t)).count();
+            Ok(Some(match NOTICES.add_personal(&toks, &text, seconds, minutes) {
+                Some(n) => {
+                    dlog!("ADMIN personal notice", n, "tokens", toks.len(), "online", online, "text", py::cut(&text, 60));
+                    json!({"ok": true, "id": n, "online": online})
+                }
+                None => json!({"ok": false, "error": "empty text"}),
+            }))
+        }
+        "/automod/clear" => {
+            // admin site UNMUTE: lift the automatic slur mute of these accounts ("s:<steam id>" / "t:<hash>")
+            let keys: Vec<String> = match get("keys")? {
+                Some(Value::Array(a)) => a.iter().map(pystr).filter(|k| (k.starts_with("s:") || k.starts_with("t:")) && k.len() <= 40).take(16).collect(),
+                _ => Vec::new(),
+            };
+            let n = SOCIAL.auto_clear(&keys);
+            dlog!("ADMIN automod clear", keys.join(","), "lifted", n);
+            Ok(Some(json!({"ok": true, "lifted": n})))
         }
         "/notice/clear" => {
             let id = bint(&dflt("id", json!(-1))?)?;
