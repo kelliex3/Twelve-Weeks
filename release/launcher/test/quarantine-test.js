@@ -117,12 +117,24 @@ T('a game archive of another size stops Play with the Steam file check; skipChec
 T('OptiScaler stays under its proxy names; other loaders next to it still move', () => {
   const gd = clean();
   put(gd, 'dxgi.dll', 'xx OptiScaler working as dxgi.dll yy');
-  put(gd, 'winhttp.dll', 'zz OptiScaler zz');
-  put(gd, 'OptiScaler.asi', 'OptiScaler');
+  put(gd, 'winhttp.dll', 'zz OptiScaler working as winhttp.dll zz');
+  put(gd, 'OptiScaler.asi', 'OptiScaler working as native upscaler');
   put(gd, 'modloader.asi', 'asi');
   put(gd, 'dinput8.dll', 'loader');
   assert.deepStrictEqual(q.quarantineForeignFiles(gd, log).moved.sort(), ['dinput8.dll', 'modloader.asi']);
   for (const k of ['dxgi.dll', 'winhttp.dll', 'OptiScaler.asi', 'OptiScaler.ini']) assert.ok(has(gd, k), k + ' must stay');
+});
+
+T('a loader that only mentions OptiScaler moves (SCSKiller as d3d12.dll)', () => {
+  const gd = clean();
+  // (SCSKiller's d3d12.dll names OptiScaler in its messages: "OptiScaler's %ls, System32's D3D12CreateDevice")
+  put(gd, 'd3d12.dll', "SCSKiller for Windows ... OptiScaler's %ls, System32's D3D12CreateDevice ... OptiScaler.ini");
+  put(gd, 'dsound.dll', 'zz OptiScaler zz');
+  // naming itself SCSKiller wins even over the OptiScaler phrase (a log string it may carry)
+  put(gd, 'winhttp.dll', 'SCSKiller ... OptiScaler working as winhttp.dll');
+  assert.deepStrictEqual(q.quarantineForeignFiles(gd, log).moved.sort(), ['d3d12.dll', 'dsound.dll', 'winhttp.dll']);
+  assert.ok(has(gd, q.MOVED_DIR + '/d3d12.dll'));
+  assert.ok(has(gd, 'd3d12/D3D12Core.dll'), "the game's own d3d12 folder stays");
 });
 
 T('a game folder without build/pc/main does not fail', () => {

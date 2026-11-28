@@ -10,7 +10,7 @@
  * - build/pc/main: every .psarc that is not a known game archive moves to <game>/twelve-weeks-moved/build/pc/main/...
  * - game folder: every *.asi, and every .dll with a DLL-proxy name (the names other loaders use), moves to
  *   <game>/twelve-weeks-moved/... (never winmm.dll, t2r-*.dll, a .dll of the clean install, or OptiScaler,
- *   the upscaler stays under any of its proxy names).
+ *   the upscaler stays under any of its proxy names; a loader that only mentions OptiScaler moves).
  * - A known archive of another size cannot be fixed by moving: Play stops and asks for a Steam file check.
  * Nothing is deleted. Files keep their relative path below the moved folder, so the player can put them back.
  */
@@ -110,14 +110,20 @@ function isSandboxDll(file) {
   }
 }
 
+// Other loaders that mention OptiScaler (they chain to it or name it in their messages) but are not OptiScaler. SCSKiller, a
+// D3D12 shader recorder, installs itself as d3d12.dll (and puts itself back after it is removed) and hooks the game's D3D12.
+const NOT_OPTISCALER = ['SCSKiller'];
+
 /**
- * True when a DLL / ASI is OptiScaler (kept: graphics only). Its binary names itself ("OptiScaler working as dxgi.dll").
+ * True when a DLL / ASI is OptiScaler (kept: graphics only). Its binary names itself under its proxy name ("OptiScaler working
+ * as dxgi.dll"); the bare word is not enough, other proxies carry it too.
  * @param {string} file
  * @returns {boolean}
  */
 function isOptiScaler(file) {
   try {
-    return fs.readFileSync(file).includes('OptiScaler');
+    const b = fs.readFileSync(file);
+    return b.includes('OptiScaler working as') && !NOT_OPTISCALER.some((m) => b.includes(m));
   } catch {
     return false;
   }
